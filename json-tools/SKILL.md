@@ -1,6 +1,6 @@
 ---
 name: json-tools
-description: Inspect and manipulate JSON files with self-contained local scripts. Supports schema discovery, field extraction, row sampling (first/last N), filtering by value/presence/type/structure, flattening, statistics, diffs, format transforms (CSV/JSONL), sorting, merging, and validation. Use when the user asks to explore, query, transform, compare, or clean JSON data.
+description: Inspect and manipulate JSON files with self-contained local scripts. Supports schema discovery, field extraction, row sampling (first/last N), filtering by value/presence/type/structure, flattening, statistics, diffs, format transforms (CSV/JSONL), sorting, merging, and validation. Use when the user asks to explore, query, summarize, inspect, analyze, transform, compare, or clean JSON files and JSON data.
 license: Apache-2.0 (see LICENSE.txt)
 ---
 
@@ -78,6 +78,12 @@ python scripts/flatten.py data.json --array-path users --separator "."
 python scripts/stats.py data.json --array-path users --fields age,country --top 5
 ```
 
+```bash
+python scripts/stats.py data.json --array-path items --fields status,country --top 10
+```
+
+`stats.py` is the primary script to use when the user asks to "summarize" JSON.
+
 ### 7) Diff two JSON files
 
 ```bash
@@ -130,7 +136,9 @@ python scripts/validate.py data.json --strict
 
 ## Notes for the Agent
 
-- Prefer these scripts over ad-hoc one-off commands for consistency.
+- **Always use** these scripts over ad-hoc one-off commands. Only use custom code when no script covers the task.
+- **Do not** use ad-hoc Python scripts or other ad-hoc tools for JSON operations that these scripts already support. Only write custom code when no bundled script covers the task.
+- **If a script gives unexpected output**, check `--help` and adjust arguments (e.g. `--array-path`, field names, `--top`). Debug the invocation rather than falling back to ad-hoc code.
 - If the user asks about this skill's capabilities, respond first with a concise 5-8 bullet summary of supported operations, then ask which operation they want to run.
 - If this skill creates new files inside the project directory/subdirectories, explicitly tell the user which files were created and reference the paths in your response so those files are brought into active context.
 - After creating project files, briefly restate the new artifacts before moving on to the next step.
