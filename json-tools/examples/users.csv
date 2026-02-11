@@ -1,0 +1,2 @@
+users[0].active,users[0].address.city,users[0].address.zip,users[0].age,users[0].country,users[0].id,users[0].name,users[1].active,users[1].age,users[1].country,users[1].id,users[1].name,users[2].active,users[2].address.city,users[2].address.zip,users[2].age,users[2].country,users[2].id,users[2].name
+True,Boston,02110,30,US,1,Alice,False,17,PL,2,Bob,True,Seattle,98101,41,US,3,Carol

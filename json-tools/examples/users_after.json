@@ -1,0 +1,29 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "name": "Alice",
+      "age": 31,
+      "active": true,
+      "country": "US",
+      "address": {
+        "city": "Boston",
+        "zip": "02110"
+      }
+    },
+    {
+      "id": 2,
+      "name": "Bob",
+      "age": 18,
+      "active": true,
+      "country": "PL"
+    },
+    {
+      "id": 4,
+      "name": "Dave",
+      "age": 25,
+      "active": true,
+      "country": "DE"
+    }
+  ]
+}
