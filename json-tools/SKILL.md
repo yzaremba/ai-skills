@@ -17,6 +17,10 @@ All scripts are in `json-tools/scripts/` and use Python stdlib only.
 - Run from the skill directory or use full paths.
 - Every script supports `--help`.
 - Most scripts accept input file path or `-` for stdin.
+- If a temporary file is needed, create it in the OS temp directory (not in the project tree).
+  - Shell: use `mktemp` (or equivalent) so files land under the system temp folder.
+  - Python: use `tempfile` (`tempfile.gettempdir()`, `NamedTemporaryFile`, or `TemporaryDirectory`).
+  - Clean up temp files/directories after use unless the user explicitly asks to keep them.
 - JSON path syntax:
   - Dot keys: `user.profile.name`
   - Array index: `users[0].id`
@@ -128,6 +132,9 @@ python scripts/validate.py data.json --strict
 
 - Prefer these scripts over ad-hoc one-off commands for consistency.
 - If the user asks about this skill's capabilities, respond first with a concise 5-8 bullet summary of supported operations, then ask which operation they want to run.
+- If this skill creates new files inside the project directory/subdirectories, explicitly tell the user which files were created and reference the paths in your response so those files are brought into active context.
+- After creating project files, briefly restate the new artifacts before moving on to the next step.
+- Be quiet about script execution details by default. Report concise outcomes, file artifacts, and actionable errors; only include per-command/script narration when the user asks for verbose output.
 - If the user asks for only a quick peek, start with:
   - `python scripts/validate.py <file>`
   - `python scripts/schema.py <file>`
