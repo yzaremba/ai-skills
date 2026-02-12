@@ -26,6 +26,7 @@ This skill provides a local, self-contained toolkit for JSON work.
   - Dot keys: `user.profile.name`
   - Array index: `users[0].id`
   - Wildcard: `users[*].email`
+- **Object-of-objects**: When `--array-path` resolves to an object (not an array), the scripts automatically treat its values as the array of records. Use `--array-path .` when the top-level document is an object whose values are the records you want to operate on.
 
 ## Quick Workflow
 
@@ -67,6 +68,15 @@ python scripts/extract.py data.json --array-path users --last 10
 ```bash
 python scripts/filter.py data.json --array-path users --where "age>=18" --exists email
 python scripts/filter.py data.json --array-path users --type "address=object" --not-exists deletedAt
+```
+
+Wildcards work inside `--where` field paths for array-contains checks:
+
+```bash
+# Keep records where tags.roles array contains "admin"
+python scripts/filter.py data.json --array-path users --where 'tags.roles[*]==admin'
+# Object-of-objects: top-level keys are IDs, values are records
+python scripts/filter.py data.json --array-path . --where 'config.features[*]==enabled:true'
 ```
 
 ### 5) Flatten nested JSON
@@ -166,3 +176,10 @@ python scripts/validate.py data.json --strict
   - `python scripts/schema.py <file>`
 - For large arrays, combine commands:
   - `extract.py --first/--last` then `stats.py` or `filter.py`.
+- **Pipelines**: Chain scripts via pipes for multi-step queries. Example — "top 5 most recently created datasets with feature X enabled":
+  ```bash
+  python scripts/filter.py data.json --array-path . --where 'tags.feature[*]==enabled:true' \
+    | python scripts/sort.py - --by createdAt --desc \
+    | python scripts/extract.py - --first 5 --fields name
+  ```
+- **Try scripts first**: Always attempt to solve the task with the bundled scripts before writing any custom code. If the data shape seems incompatible (e.g. object-of-objects instead of an array), use `--array-path .` or wildcard paths — these handle most non-standard layouts. Only fall back to custom code after confirming no combination of scripts and flags can cover the task.
