@@ -10,7 +10,8 @@ This skill provides a local, self-contained toolkit for JSON work.
 
 ## Location
 
-All scripts are in `json-tools/scripts/` and use Python stdlib only.
+- Python scripts are in `json-tools/scripts/` (Python stdlib only).
+- Node.js scripts are in `json-tools/scripts-node/` (Node built-ins only, no npm deps).
 
 ## Usage Conventions
 
@@ -39,6 +40,8 @@ python scripts/schema.py data.json --counts
 ```
 
 ## Command Reference
+
+If using Node.js, substitute `node scripts-node/X.mjs` for `python scripts/X.py` -- all arguments are identical.
 
 ### 1) Show schema
 
@@ -133,10 +136,26 @@ python scripts/validate.py data.json --strict
 - `sort.py`: deterministic ordering by fields.
 - `merge.py`: concat/shallow/deep merge modes.
 - `validate.py`: syntax and structural sanity checks.
+- `scripts-node/*.mjs`: Node.js equivalents for every script above with matching CLI flags and output shapes.
 
 ## Notes for the Agent
 
-- Determine whether to use python or python3 to run scripts and stick with it.
+- Runtime auto-selection (do this once per session and reuse the choice):
+  - Detect runtimes:
+    - `python3 --version 2>/dev/null || python --version 2>/dev/null`
+    - `node --version 2>/dev/null`
+  - Prefer Python when available:
+    - `python3 scripts/<tool>.py` (fallback to `python` if needed)
+  - If Python is unavailable but Node.js is available:
+    - `node scripts-node/<tool>.mjs`
+  - Do not ask the user which runtime to use; select automatically and continue.
+  - **Node.js stdout verification** (run once, only when Node.js will be used):
+    - Run: `node -e "console.log('__stdout_ok__')"`
+    - If the output contains `__stdout_ok__`, Node.js stdout works — proceed normally.
+    - If the output is empty (exit code 0 but no captured text), the execution environment is silently swallowing Node.js stdout. Inform the user and recommend one of:
+      1. Run Node.js commands with `required_permissions: ["all"]` to bypass sandbox restrictions.
+      2. Have scripts write output to a temp file, then read the file back.
+    - Ask the user which approach they prefer before proceeding. Reuse their choice for the rest of the session.
 - Do NOT narrate individual script invocations (e.g., avoid "Let me run stats.py..." or "Running the schema command..."). Do NOT display raw command lines or uninterpreted JSON output to the user. Execute scripts silently and present only the final interpreted results. Include per-command details only when the user asks for verbose output.
 - **Always use** these scripts over ad-hoc one-off commands. Only use custom code when no script covers the task.
 - **Do not** use ad-hoc Python scripts or other ad-hoc tools for JSON operations that these scripts already support. Only write custom code when no bundled script covers the task.
