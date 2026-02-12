@@ -48,6 +48,8 @@ If using Node.js, substitute `node scripts-node/X.mjs` for `python scripts/X.py`
 
 ```bash
 python scripts/schema.py data.json --depth 6 --counts
+# Object-of-objects: merge all records into one summarized schema
+python scripts/schema.py data.json --array-path . --counts
 ```
 
 ### 2) Extract fields

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { parseArgs } from "node:util";
-import { loadJson, typeName, writeJson } from "./common.mjs";
+import { loadJson, resolveArray, typeName, writeJson } from "./common.mjs";
 
 function inferSchema(value, depth, includeCounts) {
   if (depth < 0) {
@@ -60,6 +60,7 @@ function inferSchema(value, depth, includeCounts) {
 function main() {
   const { values, positionals } = parseArgs({
     options: {
+      "array-path": { type: "string" },
       depth: { type: "string", default: "6" },
       counts: { type: "boolean", default: false },
       compact: { type: "boolean", default: false },
@@ -69,7 +70,13 @@ function main() {
 
   const input = positionals[0] ?? "-";
   const depth = Number.parseInt(values.depth, 10);
-  const data = loadJson(input);
+  let data = loadJson(input);
+  if (values["array-path"]) {
+    const resolved = resolveArray(data, values["array-path"]);
+    if (resolved.length) {
+      data = resolved;
+    }
+  }
   const schema = inferSchema(data, depth, values.counts);
   writeJson(schema, values.compact);
 }

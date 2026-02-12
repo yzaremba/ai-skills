@@ -10,7 +10,7 @@ import argparse
 from collections import Counter
 from typing import Any
 
-from common import load_json, type_name, write_json
+from common import load_json, resolve_array, type_name, write_json
 
 
 def infer_schema(value: Any, depth: int, include_counts: bool) -> dict[str, Any]:
@@ -57,12 +57,17 @@ def infer_schema(value: Any, depth: int, include_counts: bool) -> dict[str, Any]
 def main() -> None:
     parser = argparse.ArgumentParser(description="Show inferred schema for a JSON file.")
     parser.add_argument("input", nargs="?", default="-", help="Input JSON file path or '-' for stdin.")
+    parser.add_argument("--array-path", help="Path to an array (or object-of-objects) to summarize.")
     parser.add_argument("--depth", type=int, default=6, help="Maximum nesting depth to inspect.")
     parser.add_argument("--counts", action="store_true", help="Include field presence/count metadata.")
     parser.add_argument("--compact", action="store_true", help="Emit compact JSON output.")
     args = parser.parse_args()
 
     data = load_json(args.input)
+    if args.array_path:
+        resolved = resolve_array(data, args.array_path)
+        if resolved:
+            data = resolved
     schema = infer_schema(data, args.depth, args.counts)
     write_json(schema, compact=args.compact)
 
