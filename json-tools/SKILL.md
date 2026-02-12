@@ -1,6 +1,6 @@
 ---
 name: json-tools
-description: Inspect and manipulate JSON files with self-contained local scripts. Supports schema discovery, field extraction, row sampling (first/last N), filtering by value/presence/type/structure, flattening, statistics, diffs, format transforms (CSV/JSONL), sorting, merging, and validation. Use when the user asks to explore, query, summarize, inspect, analyze, transform, compare, or clean JSON files and JSON data.
+description: Inspect, query, and manipulate JSON files with self-contained local scripts. Supports schema discovery, field extraction, row sampling (first/last N), filtering by value/presence/type/structure, flattening, statistics, diffs, format transforms (CSV/JSONL), sorting, merging, and validation. Use when the user references a .json file and wants to do anything with its contents, or asks to find, get, show, list, search, look up, filter, sort, count, explore, query, summarize, inspect, analyze, transform, compare, or clean records/fields/values in JSON data — including natural-language requests like "give me the top N", "which have X enabled", "most recent", or "find all where".
 license: Apache-2.0 (see LICENSE.txt)
 ---
 
@@ -74,15 +74,15 @@ python scripts/flatten.py data.json --array-path users --separator "."
 
 ### 6) Statistics
 
-```bash
-python scripts/stats.py data.json --array-path users --fields age,country --top 5
-```
+Output: `record_count`, `field_count`, and per-field breakdown with `presence` (e.g. `50/100`), `types`, `unique_values`, `top_values` (most frequent, controlled by `--top`), and `numeric` (min/max/mean) when applicable. Omit `--fields` to auto-discover all top-level fields.
 
 ```bash
+python scripts/stats.py data.json --array-path users
+python scripts/stats.py data.json --array-path users --fields age,country --top 5
 python scripts/stats.py data.json --array-path items --fields status,country --top 10
 ```
 
-`stats.py` is the primary script to use when the user asks to "summarize" JSON.
+When the user asks to "summarize" or "describe" a JSON dataset, use `stats.py` (optionally combined with `schema.py`). `stats.py` already provides per-field detail (with --fields flag) including presence, types, unique counts, top values, and numeric summaries — do NOT write custom code for these.  Please limit the summary to what stats.py provides unless the user explicitely asks for more.
 
 ### 7) Diff two JSON files
 
@@ -136,13 +136,12 @@ python scripts/validate.py data.json --strict
 
 ## Notes for the Agent
 
+- Determine whether to use python or python3 to run scripts and stick with it.
+- Do NOT narrate individual script invocations (e.g., avoid "Let me run stats.py..." or "Running the schema command..."). Do NOT display raw command lines or uninterpreted JSON output to the user. Execute scripts silently and present only the final interpreted results. Include per-command details only when the user asks for verbose output.
 - **Always use** these scripts over ad-hoc one-off commands. Only use custom code when no script covers the task.
 - **Do not** use ad-hoc Python scripts or other ad-hoc tools for JSON operations that these scripts already support. Only write custom code when no bundled script covers the task.
 - **If a script gives unexpected output**, check `--help` and adjust arguments (e.g. `--array-path`, field names, `--top`). Debug the invocation rather than falling back to ad-hoc code.
 - If the user asks about this skill's capabilities, respond first with a concise 5-8 bullet summary of supported operations, then ask which operation they want to run.
-- If this skill creates new files inside the project directory/subdirectories, explicitly tell the user which files were created and reference the paths in your response so those files are brought into active context.
-- After creating project files, briefly restate the new artifacts before moving on to the next step.
-- Be quiet about script execution details by default. Report concise outcomes, file artifacts, and actionable errors; only include per-command/script narration when the user asks for verbose output.
 - If the user asks for only a quick peek, start with:
   - `python scripts/validate.py <file>`
   - `python scripts/schema.py <file>`
