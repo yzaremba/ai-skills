@@ -13,7 +13,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable, Iterator, List
 
-PATH_TOKEN_RE = re.compile(r"([^.\\[\\]]+)|(\\[(\\*|\\d+)\\])")
+PATH_TOKEN_RE = re.compile(r"([^.\[\]]+)|(\[(\*|\d+)\])")
 
 
 def load_json(path: str | None) -> Any:

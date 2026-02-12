@@ -64,12 +64,18 @@ def main() -> None:
                 presence += 1
                 values.extend(found)
         freq = frequency(values)
-        field_stats[field] = {
+        has_complex = any(isinstance(v, (dict, list)) for v in values)
+        entry: dict[str, Any] = {
             "presence": f"{presence}/{len(records)}",
             "types": unique_types(values),
             "unique_values": len(freq),
-            "top_values": [{"value": key, "count": count} for key, count in freq.most_common(max(args.top, 0))],
         }
+        if not has_complex:
+            entry["top_values"] = [
+                {"value": key, "count": count}
+                for key, count in freq.most_common(max(args.top, 0))
+            ]
+        field_stats[field] = entry
         numeric = numeric_summary(values)
         if numeric:
             field_stats[field]["numeric"] = numeric
