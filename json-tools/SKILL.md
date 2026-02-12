@@ -1,7 +1,7 @@
 ---
 name: json-tools
 description: Inspect, query, and manipulate JSON files with self-contained local scripts. Supports schema discovery, field extraction, row sampling (first/last N), filtering by value/presence/type/structure, flattening, statistics, group-by/cross-tabulation with aggregations, diffs, format transforms (CSV/JSONL), sorting, merging, and validation. Use when the user references a .json file and wants to do anything with its contents, or asks to find, get, show, list, search, look up, filter, sort, group, aggregate, count, pivot, cross-tabulate, explore, query, summarize, inspect, analyze, transform, compare, or clean records/fields/values in JSON data — including natural-language requests like "give me the top N", "which have X enabled", "most recent", "count by", "group by", "breakdown by", or "find all where".
-license: Apache-2.0 (see LICENSE.txt)
+license: Apache-2.0 (see ../LICENSE.txt)
 ---
 
 # JSON Tools
