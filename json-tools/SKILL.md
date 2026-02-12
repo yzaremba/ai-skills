@@ -1,6 +1,6 @@
 ---
 name: json-tools
-description: Inspect, query, and manipulate JSON files with self-contained local scripts. Supports schema discovery, field extraction, row sampling (first/last N), filtering by value/presence/type/structure, flattening, statistics, diffs, format transforms (CSV/JSONL), sorting, merging, and validation. Use when the user references a .json file and wants to do anything with its contents, or asks to find, get, show, list, search, look up, filter, sort, count, explore, query, summarize, inspect, analyze, transform, compare, or clean records/fields/values in JSON data — including natural-language requests like "give me the top N", "which have X enabled", "most recent", or "find all where".
+description: Inspect, query, and manipulate JSON files with self-contained local scripts. Supports schema discovery, field extraction, row sampling (first/last N), filtering by value/presence/type/structure, flattening, statistics, group-by/cross-tabulation with aggregations, diffs, format transforms (CSV/JSONL), sorting, merging, and validation. Use when the user references a .json file and wants to do anything with its contents, or asks to find, get, show, list, search, look up, filter, sort, group, aggregate, count, pivot, cross-tabulate, explore, query, summarize, inspect, analyze, transform, compare, or clean records/fields/values in JSON data — including natural-language requests like "give me the top N", "which have X enabled", "most recent", "count by", "group by", "breakdown by", or "find all where".
 license: Apache-2.0 (see LICENSE.txt)
 ---
 
@@ -30,19 +30,27 @@ This skill provides a local, self-contained toolkit for JSON work.
 
 ## Quick Workflow
 
-1. Validate input JSON.
-2. Inspect schema.
-3. Extract/filter/sort/transform as needed.
-4. Use stats or diff for QA checks.
+1. **Probe first** — always start with `probe.py` to discover the file's layout, record count, field names, and the correct `--array-path`.
+2. Use the `recommended_array_path` from probe output for all subsequent commands.
+3. Extract/filter/sort/group/transform as needed.
+4. Use stats, schema, or diff for deeper inspection.
 
 ```bash
-python scripts/validate.py data.json --strict
-python scripts/schema.py data.json --counts
+python scripts/probe.py data.json
+# Then use the recommended_array_path in subsequent commands.
 ```
 
 ## Command Reference
 
 If using Node.js, substitute `node scripts-node/X.mjs` for `python scripts/X.py` -- all arguments are identical.
+
+### 0) Probe file structure
+
+Run this first on any new JSON file. Returns `layout` (array, nested-array, object-of-objects, object, scalar), `record_count`, `recommended_array_path`, `record_fields`, and `field_types` — everything the agent needs to choose the right `--array-path` and `--fields` for subsequent commands.
+
+```bash
+python scripts/probe.py data.json
+```
 
 ### 1) Show schema
 
@@ -129,7 +137,26 @@ python scripts/merge.py a.json b.json --mode shallow
 python scripts/merge.py a.json b.json --mode deep
 ```
 
-### 11) Validate JSON
+### 11) Group by / cross-tabulation
+
+Group records by one or more fields, with optional aggregations. Always includes `count` per group. Output: `total_records`, `total_groups`, and `groups` array.
+
+```bash
+# Count users per country (sorted by count desc)
+python scripts/group.py data.json --array-path users --by country
+# Cross-tab: group by two fields
+python scripts/group.py data.json --array-path users --by country,active
+# Aggregations: mean/min/max/sum/list/unique on a field
+python scripts/group.py data.json --array-path users --by country --agg "age:mean" --agg "age:max"
+# Top 3 groups only, sorted by key
+python scripts/group.py data.json --array-path users --by country --sort key --top 3
+# Object-of-objects
+python scripts/group.py data.json --array-path . --by status --agg "name:list"
+```
+
+Supported `--agg` functions: `count`, `sum`, `min`, `max`, `mean`, `list`, `unique`. Use `--sort count` (default, descending) or `--sort key` (ascending by group key).
+
+### 12) Validate JSON
 
 ```bash
 python scripts/validate.py data.json --strict
@@ -137,6 +164,7 @@ python scripts/validate.py data.json --strict
 
 ## Script Intent
 
+- `probe.py`: lightweight structural probe — run first to discover layout and optimal parameters.
 - `common.py`: shared path parsing, extraction, flattening, typing, output helpers.
 - `schema.py`: infer practical structure and field presence.
 - `extract.py`: select fields and sample rows.
@@ -147,6 +175,7 @@ python scripts/validate.py data.json --strict
 - `transform.py`: JSON<->CSV/JSONL conversion.
 - `sort.py`: deterministic ordering by fields.
 - `merge.py`: concat/shallow/deep merge modes.
+- `group.py`: group-by / cross-tabulation with aggregations.
 - `validate.py`: syntax and structural sanity checks.
 - `scripts-node/*.mjs`: Node.js equivalents for every script above with matching CLI flags and output shapes.
 
@@ -172,10 +201,8 @@ python scripts/validate.py data.json --strict
 - **Always use** these scripts over ad-hoc one-off commands. Only use custom code when no script covers the task.
 - **Do not** use ad-hoc Python scripts or other ad-hoc tools for JSON operations that these scripts already support. Only write custom code when no bundled script covers the task.
 - **If a script gives unexpected output**, check `--help` and adjust arguments (e.g. `--array-path`, field names, `--top`). Debug the invocation rather than falling back to ad-hoc code.
+- **Always probe first**: Before running any other script on a new JSON file, run `probe.py` to discover the layout and correct `--array-path`. Use the `recommended_array_path` from its output for all subsequent commands. This prevents wasted invocations and large output from running schema/stats on files with unexpected layouts.
 - If the user asks about this skill's capabilities, respond first with a concise 5-8 bullet summary of supported operations, then ask which operation they want to run.
-- If the user asks for only a quick peek, start with:
-  - `python scripts/validate.py <file>`
-  - `python scripts/schema.py <file>`
 - For large arrays, combine commands:
   - `extract.py --first/--last` then `stats.py` or `filter.py`.
 - **Pipelines**: Chain scripts via pipes for multi-step queries. Example — "top 5 most recently created datasets with feature X enabled":
