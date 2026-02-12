@@ -94,6 +94,10 @@ def resolve_array(data: Any, array_path: str | None) -> list[Any]:
         for value in values:
             if isinstance(value, list):
                 return value
+        # Fallback: treat object-of-objects as an array of its values.
+        for value in values:
+            if isinstance(value, dict):
+                return list(value.values())
         return []
     if isinstance(data, list):
         return data

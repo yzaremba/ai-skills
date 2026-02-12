@@ -121,6 +121,12 @@ export function resolveArray(data, arrayPath) {
         return value;
       }
     }
+    // Fallback: treat object-of-objects as an array of its values.
+    for (const value of values) {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        return Object.values(value);
+      }
+    }
     return [];
   }
   if (Array.isArray(data)) {
