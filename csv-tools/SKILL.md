@@ -1,6 +1,6 @@
 ---
 name: csv-tools
-description: Inspect, query, and manipulate CSV files with self-contained local scripts. Supports schema discovery, column extraction, row sampling (first/last N), filtering by value/presence, statistics, group-by/cross-tabulation with aggregations, diffs, format transforms (JSON/JSONL), sorting, merging, and validation. Use when the user references a .csv file and wants to find, get, show, list, search, filter, sort, group, aggregate, count, pivot, explore, query, summarize, inspect, analyze, transform, compare, or clean CSV data — including requests like "give me the top N", "which have X", "most recent", "count by", "group by", or "find all where".
+description: Inspect, query, and manipulate CSV files with self-contained local scripts. Supports schema discovery, column extraction, row sampling (first/last N), filtering by value/presence, statistics, group-by/cross-tabulation with aggregations, diffs, format transforms (JSON/JSONL), sorting, reversing, merging, and validation. Use when the user references a .csv file and wants to find, get, show, list, search, filter, sort, group, aggregate, count, pivot, explore, query, summarize, inspect, analyze, transform, compare, or clean CSV data — including requests like "give me the top N", "which have X", "most recent", "count by", "group by", or "find all where".
 license: Apache-2.0 (see LICENSE.txt)
 ---
 
@@ -121,7 +121,16 @@ python scripts/sort.py data.csv --by date,id --desc
 python scripts/sort.py data.csv --by amount --numeric --format json
 ```
 
-### 6) Group by / cross-tabulation
+### 6) Reverse row order
+
+Output is CSV by default; use `--format json` for JSON.
+
+```bash
+python scripts/reverse.py data.csv
+python scripts/reverse.py data.csv --format json
+```
+
+### 7) Group by / cross-tabulation
 
 ```bash
 python scripts/group.py data.csv --by region
@@ -131,7 +140,7 @@ python scripts/group.py data.csv --by region --sort key --top 5
 
 Supported `--agg` functions: `count`, `sum`, `min`, `max`, `mean`, `list`, `unique`. Use `--sort count` (default, descending) or `--sort key` (ascending).
 
-### 7) Merge (concat) CSVs
+### 8) Merge (concat) CSVs
 
 Output is CSV by default; use `--format json` for JSON.
 
@@ -140,7 +149,7 @@ python scripts/merge.py a.csv b.csv c.csv --unique-by id
 python scripts/merge.py a.csv b.csv --format json
 ```
 
-### 8) Transform to JSON / JSONL / CSV
+### 9) Transform to JSON / JSONL / CSV
 
 When `--to` is omitted, output format matches input (CSV in → CSV out, JSON in → JSON out) so pipelines stay consistent.
 
@@ -151,14 +160,14 @@ python scripts/transform.py data.json --from-format json --to csv > out.csv
 python scripts/transform.py -   # stdin CSV → stdout CSV (e.g. in a pipeline)
 ```
 
-### 9) Diff two CSVs
+### 10) Diff two CSVs
 
 ```bash
 python scripts/diff.py before.csv after.csv --key id
 python scripts/diff.py before.csv after.csv --format text
 ```
 
-### 10) Validate CSV
+### 11) Validate CSV
 
 Checks consistent column count, encoding, and optionally strict row length. Reports non-data rows (e.g. footer count).
 
@@ -176,6 +185,7 @@ python scripts/validate.py data.csv --strict
 - **filter.py**: Keep rows matching `--where`, `--in`, `--contains`, `--regex`, `--empty`, `--non-empty`. Default output CSV; `--format json` for JSON.
 - **stats.py**: Per-column summaries (presence, uniques, top values, numeric). Output JSON.
 - **sort.py**: Sort by one or more columns. Default output CSV; `--format json` for JSON.
+- **reverse.py**: Reverse the order of data rows. Default output CSV; `--format json` for JSON.
 - **group.py**: Group by column(s) with optional aggregations. Output JSON.
 - **merge.py**: Concat CSVs with optional deduplication by key column. Default output CSV; `--format json` for JSON.
 - **transform.py**: CSV to JSON/JSONL/CSV; JSON/JSONL to CSV. When `--to` is omitted, output format matches input.

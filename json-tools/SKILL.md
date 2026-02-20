@@ -1,6 +1,6 @@
 ---
 name: json-tools
-description: Inspect, query, and manipulate JSON files with self-contained local scripts. Supports schema discovery, field extraction, row sampling (first/last N), filtering by value/presence/type/structure, flattening, statistics, group-by/cross-tabulation with aggregations, diffs, format transforms (CSV/JSONL), sorting, merging, and validation. Use when the user references a .json file and wants to do anything with its contents, or asks to find, get, show, list, search, look up, filter, sort, group, aggregate, count, pivot, cross-tabulate, explore, query, summarize, inspect, analyze, transform, compare, or clean records/fields/values in JSON data — including natural-language requests like "give me the top N", "which have X enabled", "most recent", "count by", "group by", "breakdown by", or "find all where".
+description: Inspect, query, and manipulate JSON files with self-contained local scripts. Supports schema discovery, field extraction, row sampling (first/last N), filtering by value/presence/type/structure, flattening, statistics, group-by/cross-tabulation with aggregations, diffs, format transforms (CSV/JSONL), sorting, reversing, merging, and validation. Use when the user references a .json file and wants to do anything with its contents, or asks to find, get, show, list, search, look up, filter, sort, group, aggregate, count, pivot, cross-tabulate, explore, query, summarize, inspect, analyze, transform, compare, or clean records/fields/values in JSON data — including natural-language requests like "give me the top N", "which have X enabled", "most recent", "count by", "group by", "breakdown by", or "find all where".
 license: Apache-2.0 (see ../LICENSE.txt)
 ---
 
@@ -130,7 +130,14 @@ python scripts/sort.py data.json --array-path users --by age,name --numeric
 python scripts/sort.py data.json --array-path users --by createdAt --desc
 ```
 
-### 10) Merge files
+### 10) Reverse array order
+
+```bash
+python scripts/reverse.py data.json --array-path users
+python scripts/reverse.py data.json --array-path users --compact
+```
+
+### 11) Merge files
 
 ```bash
 python scripts/merge.py a.json b.json c.json --mode concat --unique-by id
@@ -138,7 +145,7 @@ python scripts/merge.py a.json b.json --mode shallow
 python scripts/merge.py a.json b.json --mode deep
 ```
 
-### 11) Group by / cross-tabulation
+### 12) Group by / cross-tabulation
 
 Group records by one or more fields, with optional aggregations. Always includes `count` per group. Output: `total_records`, `total_groups`, and `groups` array.
 
@@ -157,7 +164,7 @@ python scripts/group.py data.json --array-path . --by status --agg "name:list"
 
 Supported `--agg` functions: `count`, `sum`, `min`, `max`, `mean`, `list`, `unique`. Use `--sort count` (default, descending) or `--sort key` (ascending by group key).
 
-### 12) Validate JSON
+### 13) Validate JSON
 
 ```bash
 python scripts/validate.py data.json --strict
@@ -175,6 +182,7 @@ python scripts/validate.py data.json --strict
 - `diff.py`: structural change report.
 - `transform.py`: JSON<->CSV/JSONL conversion.
 - `sort.py`: deterministic ordering by fields.
+- `reverse.py`: reverse the order of array entries.
 - `merge.py`: concat/shallow/deep merge modes.
 - `group.py`: group-by / cross-tabulation with aggregations.
 - `validate.py`: syntax and structural sanity checks.
