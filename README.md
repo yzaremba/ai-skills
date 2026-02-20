@@ -7,6 +7,7 @@ A collection of [Cursor Agent Skills](https://docs.cursor.com/context/skills) â€
 | Skill | Description |
 |-------|-------------|
 | **json-tools** | Inspect, query, and manipulate JSON files using local scripts (Python & Node.js, no external dependencies). |
+| **csv-tools** | Inspect, query, and manipulate CSV files using local Python scripts (stdlib only). Probe, filter, sort, group, stats, transform to JSON/JSONL, diff, validate; ignores footer/comment lines. |
 
 ## Deployment
 
