@@ -78,6 +78,7 @@ python scripts/extract.py data.json --array-path users --last 10
 ```bash
 python scripts/filter.py data.json --array-path users --where "age>=18" --exists email
 python scripts/filter.py data.json --array-path users --type "address=object" --not-exists deletedAt
+python scripts/filter.py data.json --array-path users --contains name:Smith --regex email:"@example\\.com$"
 ```
 
 Wildcards work inside `--where` field paths for array-contains checks:

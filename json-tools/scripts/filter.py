@@ -89,6 +89,42 @@ def exists_condition(path: str, invert: bool = False) -> Callable[[Any], bool]:
     return predicate
 
 
+def contains_condition(spec: str) -> Callable[[Any], bool]:
+    if ":" not in spec:
+        raise ValueError("--contains must be field:substring")
+    field, substring = spec.split(":", 1)
+    field = field.strip()
+
+    def predicate(record: Any) -> bool:
+        values = extract_values(record, field)
+        for value in values:
+            if isinstance(value, str) and substring in value:
+                return True
+        return False
+
+    return predicate
+
+
+def regex_condition(spec: str) -> Callable[[Any], bool]:
+    if ":" not in spec:
+        raise ValueError("--regex must be field:pattern")
+    field, pattern = spec.split(":", 1)
+    field = field.strip()
+    try:
+        compiled = re.compile(pattern)
+    except re.error as e:
+        raise ValueError(f"Invalid --regex pattern: {e}") from e
+
+    def predicate(record: Any) -> bool:
+        values = extract_values(record, field)
+        for value in values:
+            if isinstance(value, str) and compiled.search(value):
+                return True
+        return False
+
+    return predicate
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Filter JSON rows by field conditions.")
     parser.add_argument("input", nargs="?", default="-", help="Input JSON file path or '-' for stdin.")
@@ -97,6 +133,8 @@ def main() -> None:
     parser.add_argument("--exists", action="append", default=[], help="Keep rows where path exists.")
     parser.add_argument("--not-exists", action="append", default=[], help="Keep rows where path does not exist.")
     parser.add_argument("--type", action="append", default=[], help="Type condition field=typename.")
+    parser.add_argument("--contains", action="append", default=[], help="Field:substring — keep records where any string value contains substring.")
+    parser.add_argument("--regex", action="append", default=[], help="Field:pattern — keep records where any string value matches regex.")
     parser.add_argument("--or", dest="use_or", action="store_true", help="Use OR logic instead of AND.")
     parser.add_argument("--compact", action="store_true", help="Emit compact JSON output.")
     args = parser.parse_args()
@@ -115,6 +153,10 @@ def main() -> None:
         predicates.append(exists_condition(path, invert=True))
     for spec in args.type:
         predicates.append(type_condition(spec))
+    for spec in args.contains:
+        predicates.append(contains_condition(spec))
+    for spec in args.regex:
+        predicates.append(regex_condition(spec))
 
     if not predicates:
         write_json(rows, compact=args.compact)

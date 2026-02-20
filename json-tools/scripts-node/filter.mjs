@@ -96,6 +96,36 @@ function existsCondition(path, invert = false) {
   };
 }
 
+function containsCondition(spec) {
+  if (!spec.includes(":")) {
+    throw new Error("--contains must be field:substring");
+  }
+  const [fieldRaw, substring] = spec.split(":", 2);
+  const field = fieldRaw.trim();
+  return (record) =>
+    extractValues(record, field).some(
+      (value) => typeof value === "string" && value.includes(substring)
+    );
+}
+
+function regexCondition(spec) {
+  if (!spec.includes(":")) {
+    throw new Error("--regex must be field:pattern");
+  }
+  const [fieldRaw, pattern] = spec.split(":", 2);
+  const field = fieldRaw.trim();
+  let re;
+  try {
+    re = new RegExp(pattern);
+  } catch (e) {
+    throw new Error(`Invalid --regex pattern: ${e.message}`);
+  }
+  return (record) =>
+    extractValues(record, field).some(
+      (value) => typeof value === "string" && re.test(value)
+    );
+}
+
 function main() {
   const { values, positionals } = parseArgs({
     options: {
@@ -104,6 +134,8 @@ function main() {
       exists: { type: "string", multiple: true, default: [] },
       "not-exists": { type: "string", multiple: true, default: [] },
       type: { type: "string", multiple: true, default: [] },
+      contains: { type: "string", multiple: true, default: [] },
+      regex: { type: "string", multiple: true, default: [] },
       or: { type: "boolean", default: false },
       compact: { type: "boolean", default: false },
     },
@@ -129,6 +161,12 @@ function main() {
   }
   for (const spec of values.type) {
     predicates.push(typeCondition(spec));
+  }
+  for (const spec of values.contains) {
+    predicates.push(containsCondition(spec));
+  }
+  for (const spec of values.regex) {
+    predicates.push(regexCondition(spec));
   }
 
   if (!predicates.length) {
