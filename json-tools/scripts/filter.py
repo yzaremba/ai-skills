@@ -129,7 +129,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Filter JSON rows by field conditions.")
     parser.add_argument("input", nargs="?", default="-", help="Input JSON file path or '-' for stdin.")
     parser.add_argument("--array-path", help="Path to the array to filter.")
-    parser.add_argument("--where", action="append", default=[], help='Comparison expression. Example: "age>=21"')
+    parser.add_argument("--where", action="append", default=[], help='Comparison expression. Example: "age>=21". In shell, escape $ (e.g. \\$0.00) or use single quotes: --where \'Fees!="$0.00"\'.')
     parser.add_argument("--exists", action="append", default=[], help="Keep rows where path exists.")
     parser.add_argument("--not-exists", action="append", default=[], help="Keep rows where path does not exist.")
     parser.add_argument("--type", action="append", default=[], help="Type condition field=typename.")

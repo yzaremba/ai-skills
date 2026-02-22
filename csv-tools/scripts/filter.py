@@ -86,7 +86,7 @@ def regex_condition(col: str, pattern: str) -> Callable[[dict[str, str]], bool]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Filter CSV rows by column conditions.")
     add_dialect_args(parser)
-    parser.add_argument("--where", action="append", default=[], help='Comparison e.g. "age>=18".')
+    parser.add_argument("--where", action="append", default=[], help='Comparison e.g. "age>=18". In shell, escape $ (e.g. \\$0.00) or use single quotes: --where \'Fees!="$0.00"\'.')
     parser.add_argument("--in", dest="in_spec", help="Column:value1,value2 — keep rows where column in values.")
     parser.add_argument("--contains", action="append", default=[], help="Column:substring — keep rows where column contains substring.")
     parser.add_argument("--regex", action="append", default=[], help="Column:pattern — keep rows where column matches regex.")

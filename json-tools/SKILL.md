@@ -90,6 +90,8 @@ python scripts/filter.py data.json --array-path users --where 'tags.roles[*]==ad
 python scripts/filter.py data.json --array-path . --where 'config.features[*]==enabled:true'
 ```
 
+**Shell escaping**: Values for `--where`, `--regex`, and similar options are interpreted by the shell first. If a value contains `$` (e.g. `$0.00`), use **single-quoted** arguments so the shell does not expand variables: `--where 'Fees!="$0.00"'`. Otherwise the filter may receive the wrong string and return incorrect results.
+
 ### 5) Flatten nested JSON
 
 ```bash
@@ -220,4 +222,5 @@ python scripts/validate.py data.json --strict
     | python scripts/sort.py - --by createdAt --desc \
     | python scripts/extract.py - --first 5 --fields name
   ```
+- **Escaping in filter/where**: When `--where` (or `--regex`, etc.) values contain shell-special characters like `$`, use single-quoted arguments (e.g. `--where 'Fees!="$0.00"'`) so the shell does not expand variables; otherwise the script may receive a different string and return incorrect results.
 - **Try scripts first**: Always attempt to solve the task with the bundled scripts before writing any custom code. If the data shape seems incompatible (e.g. object-of-objects instead of an array), use `--array-path .` or wildcard paths — these handle most non-standard layouts. Only fall back to custom code after confirming no combination of scripts and flags can cover the task.

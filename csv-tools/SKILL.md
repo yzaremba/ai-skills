@@ -103,6 +103,8 @@ python scripts/filter.py data.csv --contains description:urgent --regex id:"^A[0
 python scripts/filter.py data.csv --non-empty email --format json
 ```
 
+**Shell escaping**: Values for `--where`, `--in`, `--contains`, `--regex` are interpreted by the shell before the script sees them. If a value contains `$` (e.g. `$0.00`), the shell expands it as a variable and the filter can return wrong results. Use **single-quoted** arguments so the shell does not expand: `--where 'Fees!="$0.00"'`. Alternatively escape `$` in double-quoted strings: `--where "Fees!='\$0.00'"`.
+
 ### 4) Statistics
 
 Per-column: presence, unique count, top values, min/max/mean for numeric. Only schema-conforming rows are included.
@@ -218,3 +220,4 @@ python scripts/validate.py data.csv --strict
 - **Footers/comments**: CSV files often have footer or comment lines that don't match the schema (usually at the bottom). All scripts ignore such lines for meaningful operations — only schema-conforming rows are counted, filtered, grouped, etc. Tell the user when this is relevant.
 - Pipelines: chain scripts via pipes; row-data scripts default to CSV so `filter.py ... | sort.py - --by col` works without a transform step. Use `--format json` on the final step when JSON is needed. Same with Node: `node scripts-node/filter.mjs ... | node scripts-node/sort.mjs - --by col`.
 - If a script gives unexpected output, check `--help` and adjust `--delimiter`, `--no-header`, or `--comment-char`.
+- **Escaping in filter/where**: When `--where` (or `--in`, `--contains`, `--regex`) values contain shell-special characters like `$`, use single-quoted arguments (e.g. `--where 'Fees!="$0.00"'`) so the shell does not expand variables. Otherwise the script may receive a different string and return incorrect results (e.g. everything matching).
