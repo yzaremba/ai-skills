@@ -34,7 +34,7 @@ Legacy files matching `docs/PRD-*.md` without a sprint prefix may still exist; p
 - Content is **intentionally unstructured**: bullets, one-liners, half-thoughts. Optional grouping under headers (e.g. `## Bugs`, `## Features`, `## UX`) is fine but not required — do not impose structure the user did not ask for.
 - Create the file if it does not exist the first time an item needs to be added.
 - **Starting a new sprint:** the user picks one or more items from `BACKLOG.md` that form a coherent theme. Those items seed the new `SPRINTXX-THOUGHTS-<slug>.md` (Stage 1). **Delete** the plucked items from `BACKLOG.md` in the same change — traceability lives in the new THOUGHTS file, which should quote or paraphrase the original idea.
-- Items not yet picked up stay in `BACKLOG.md` indefinitely. No expiry, no priority field — keep it lightweight.
+- Items not yet picked up stay in `BACKLOG.md` indefinitely. No expiry — keep it lightweight. Priority tagging is optional; when used, prefix the bullet with `**[HIGH]** / **[MED]** / **[LOW]**`. Older un-tagged entries are grandfathered.
 - **Gate:** Do not start a sprint (THOUGHTS file) without an explicit user signal about which backlog items to pluck, or explicit direction that the sprint theme comes from outside the backlog.
 
 ## Stage 1 — THOUGHTS (brainstorm)
@@ -82,6 +82,21 @@ Legacy files matching `docs/PRD-*.md` without a sprint prefix may still exist; p
 - **Skipped**: `- [x] ~~**P2.5** — …~~ (skipped: reason)`
 - New steps discovered during implementation: add to **both** PLAN and TASKS with the next ID in that phase; bump PLAN “Last Updated”
 - After bug fixes on completed steps: add `> Bug fix YYYY-MM-DD: …` on the PLAN step; if the PRD requirement changed, update the PRD header/date
+
+### TASKS-line discipline
+
+- **TASKS lines stay at the original "short description" forever.** Do not append shipping detail, bug-fix notes, deviation context, or shakedown observations on `[ ]→[~]→[x]` transitions. The bracket character is the only thing that changes. New TASKS lines are *also* short — do not duplicate PLAN-step bodies onto the line.
+- **Implementation context belongs on the PLAN step**, via `> Landed YYYY-MM-DD: <≤2-line note>` (same blockquote convention as the existing `> Bug fix YYYY-MM-DD: …` annotation). Use it when something genuinely diverged from plan, surfaced a follow-up, or shipped a notable detail. Cap each at 2 lines; later annotations replace earlier ones rather than accumulate.
+- **Sprint closure with residuals**: when closing a sprint that still has open `[ ]` tasks, annotate each affected PLAN step with `> Audit YYYY-MM-DD: <verdict>: <≤2-line evidence>` (same blockquote family as `> Bug fix` / `> Landed`). Verdicts: `PARTIAL`, `NOT DONE`, `MOSTLY WIRED`, etc.; cite file:line for evidence. The matching TASKS line flips to `[x] ~~strikethrough~~ (skipped: moved to BACKLOG / <other reason>)`.
+- **Beyond PLAN annotations, git log is the chronological record.** Don't introduce a parallel narrative file unless a genuine cross-step gap surfaces — and even then, prefer fixing it in the relevant PLAN step. Project-specific files (e.g. `docs/RESEARCH-LOG.md`) have their own scoped purposes; do not co-opt them for build/ops chronology.
+- Rule of thumb: if you're tempted to write more than ~150 chars on a TASKS line, you're writing PLAN content — put it there.
+
+### "Last updated" hygiene
+
+- Format: `**Last updated:** YYYY-MM-DD — <≤2-line summary of what changed in *this* rev>`. Nothing more.
+- **Do not append running history** — no "Earlier:" cascades, no concatenated prior-rev paragraphs. Each rev replaces the prior summary; git log carries the history.
+- If a prior rev's context is genuinely load-bearing for understanding the current state, it belongs in the relevant PLAN step's body or a `> Bug fix YYYY-MM-DD: …` annotation, not the header.
+- Same rule applies to PLAN, TASKS, and PRD header dates.
 
 ## Completion and archiving
 
