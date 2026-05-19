@@ -64,7 +64,7 @@ Legacy files matching `docs/PRD-*.md` without a sprint prefix may still exist; p
 
 - **Header**: title, links to THOUGHTS, PRD, TASKS, status, last-updated date
 - **Phases**: logical groups (e.g. data, logic, API, UI)
-- **Steps**: unique IDs `P<phase>.<step>` (e.g. `P1.1`, `P3.4`)
+- **Steps**: unique IDs `P<phase>.<step>` where `<phase>` and `<step>` are **integers** (e.g. `P1.1`, `P3.4`). Do **not** use letters or words for `<phase>` (no `PA.1`, `PWATCHDOG.1`) — phases can still be *named* conceptually in the heading (e.g. "Phase 2 — API"), but the ID is always numeric.
 - **Step content**: what to do, files to touch, snippets or SQL if helpful, edge cases; use `> Depends on: P1.2` when order matters
 - **Cross-cutting concerns**: transactions, errors, performance, etc.
 
