@@ -8,6 +8,8 @@ paths:
 
 When the user asks to brainstorm, plan, or implement sprint documentation, follow this flow. Work proceeds in **stages with explicit gates** (Backlog → THOUGHTS → PRD → PLAN + TASKS); do not skip ahead without confirmation at each gate.
 
+A sprint may stand alone or belong to a larger multi-sprint **epic** (see `epic-implementation.md`). When it does, tag its THOUGHTS header with `Epic: NN` (below) — that line is the only coupling; the rest of this flow is unchanged.
+
 ## Sprint numbering (`docs/SPRINT-INDEX.md`)
 
 - **`docs/SPRINT-INDEX.md` is the preferred source** for which two-digit sprint number `NN` to use next. Read it before creating a new sprint set.
@@ -22,7 +24,7 @@ All related files for one sprint feature use this pattern:
 
 - **SPRINTXX** — two-digit sprint number (`01`, `02`, …). Take `NN` from **SPRINT-INDEX** (see above); only fall back to scanning `docs/` and `docs/DONE/` if needed.
 - **TYPE** — one of: `THOUGHTS`, `PRD`, `PLAN`, `TASKS` (uppercase as shown).
-- **Description** — short kebab-case slug; **use the same slug** for every file in the set so they group together (e.g. `mobile-layout`). It should match the **Slug** line in THOUGHTS (normalize casing to kebab-case).
+- **Description** — short kebab-case slug; **use the same slug** for every file in the set so they group together (e.g. `mobile-layout`). It should match the **Slug** line in THOUGHTS (normalize casing to kebab-case). Prefer **domain-qualified** slugs over generic ones (`mobile-layout`, not bare `layout`) so they stay distinct across the flat `docs/` — not enforced globally, but it avoids ambiguous `*-<slug>.md` families. For sprints that belong to an epic, the slug must be unique **within that epic's ROADMAP** (see `epic-implementation.md`).
 
 Examples: `docs/SPRINT01-THOUGHTS-mobile-layout.md`, `docs/SPRINT01-PRD-mobile-layout.md`.
 
@@ -41,9 +43,10 @@ Legacy files matching `docs/PRD-*.md` without a sprint prefix may still exist; p
 
 - THOUGHTS for a new sprint typically starts by plucking items from `docs/BACKLOG.md` (Stage 0). The plucked items should be **deleted from the backlog** as part of the same change that creates this file.
 - The user may create `SPRINTXX-THOUGHTS-<Description>.md` themselves or ask you to create it.
-- Put these two lines at the **top** of the file (before freeform notes), then a blank line:
+- Put these lines at the **top** of the file (before freeform notes), then a blank line:
   - `Sprint: NN` (match the filename’s sprint)
   - `Slug: <kebab-case-slug>` (must match the `<Description>` segment in all four filenames)
+  - `Epic: NN` *(optional)* — include only when this sprint belongs to a multi-sprint epic; this is the up-link to `epic-implementation.md`. Omit for standalone sprints.
 - Content below is **intentionally unstructured**: bullets, questions, rough ideas, unordered notes. No need for full sections or IDs.
 - **Gate:** Before writing a PRD, **confirm with the user** that THOUGHTS are ready to turn into requirements. If they want more brainstorming, stay in this stage.
 
