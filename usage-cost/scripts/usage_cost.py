@@ -9,9 +9,11 @@ CLI:
     python3 usage_cost.py [--days N] [--top N] [--no-per-day] [--no-top]
 
 Cost is computed from public Anthropic API list prices (Opus / Sonnet /
-Haiku families). On Claude Pro / Max plans actual billing is the flat
-subscription, so these numbers are a *relative-burn* reference, not an
-invoice preview.
+Haiku families). Model ids not in the table fall back to the most-expensive
+known tier (so a freshly released id isn't silently counted as $0); a NOTE
+in the output lists any ids that hit the fallback. On Claude Pro / Max plans
+actual billing is the flat subscription, so these numbers are a
+*relative-burn* reference, not an invoice preview.
 """
 from __future__ import annotations
 
@@ -22,18 +24,33 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-# USD per 1M tokens. Keep families flat (not per-snapshot) — date-suffixed
-# model ids (...-20251001) collapse to the family.
+# USD per 1M tokens — list prices verified against platform.claude.com 2026-06-17.
+# Families are flat (date-suffixed ids ...-20251001 collapse to the family), but
+# note Opus has TWO tiers: 4.5/4.6/4.7/4.8 are $5/$25; 4.0/4.1 stayed $15/$75.
+# Cache rates follow the standard ratios: read 0.1x input, write-5m 1.25x, write-1h 2x.
 PRICING = {
-    "claude-opus-4-7":   dict(inp=15.00, out=75.00, cache_read=1.50, cache_write_5m=18.75, cache_write_1h=30.00),
-    "claude-opus-4-6":   dict(inp=15.00, out=75.00, cache_read=1.50, cache_write_5m=18.75, cache_write_1h=30.00),
-    "claude-opus-4-5":   dict(inp=15.00, out=75.00, cache_read=1.50, cache_write_5m=18.75, cache_write_1h=30.00),
+    "claude-fable-5":    dict(inp=10.00, out=50.00, cache_read=1.00, cache_write_5m=12.50, cache_write_1h=20.00),
+    "claude-opus-4-8":   dict(inp=5.00,  out=25.00, cache_read=0.50, cache_write_5m=6.25,  cache_write_1h=10.00),
+    "claude-opus-4-7":   dict(inp=5.00,  out=25.00, cache_read=0.50, cache_write_5m=6.25,  cache_write_1h=10.00),
+    "claude-opus-4-6":   dict(inp=5.00,  out=25.00, cache_read=0.50, cache_write_5m=6.25,  cache_write_1h=10.00),
+    "claude-opus-4-5":   dict(inp=5.00,  out=25.00, cache_read=0.50, cache_write_5m=6.25,  cache_write_1h=10.00),
+    "claude-opus-4-1":   dict(inp=15.00, out=75.00, cache_read=1.50, cache_write_5m=18.75, cache_write_1h=30.00),
     "claude-opus-4":     dict(inp=15.00, out=75.00, cache_read=1.50, cache_write_5m=18.75, cache_write_1h=30.00),
     "claude-sonnet-4-6": dict(inp=3.00,  out=15.00, cache_read=0.30, cache_write_5m=3.75,  cache_write_1h=6.00),
     "claude-sonnet-4-5": dict(inp=3.00,  out=15.00, cache_read=0.30, cache_write_5m=3.75,  cache_write_1h=6.00),
     "claude-sonnet-4":   dict(inp=3.00,  out=15.00, cache_read=0.30, cache_write_5m=3.75,  cache_write_1h=6.00),
-    "claude-haiku-4-5":  dict(inp=0.80,  out=4.00,  cache_read=0.08, cache_write_5m=1.00,  cache_write_1h=1.60),
-    "claude-haiku-4":    dict(inp=0.80,  out=4.00,  cache_read=0.08, cache_write_5m=1.00,  cache_write_1h=1.60),
+    "claude-haiku-4-5":  dict(inp=1.00,  out=5.00,  cache_read=0.10, cache_write_5m=1.25,  cache_write_1h=2.00),
+    "claude-haiku-4":    dict(inp=1.00,  out=5.00,  cache_read=0.10, cache_write_5m=1.25,  cache_write_1h=2.00),
+}
+
+# Fallback for unrecognized model ids (e.g. a freshly released id not yet mapped
+# above, like claude-opus-4-8): the most expensive known rate for each token
+# type, so a new/unmapped model is priced at the top tier rather than silently
+# counting as $0. Per-field max ⇒ a guaranteed upper bound; self-adapts if
+# PRICING grows. Today this equals the Opus tier ($15/$75/$1.50 in/out/cache).
+_FALLBACK_PRICING = {
+    field: max(p[field] for p in PRICING.values())
+    for field in ("inp", "out", "cache_read", "cache_write_5m", "cache_write_1h")
 }
 
 
@@ -47,9 +64,10 @@ def normalize_model(m: str | None) -> str:
 
 
 def cost(model: str, inp: int, out: int, cache_read: int, cw5: int, cw1h: int) -> float:
-    p = PRICING.get(model)
-    if not p:
-        return 0.0
+    # Unknown/unmapped model ids fall back to the most-expensive known tier
+    # (see _FALLBACK_PRICING) instead of $0, so newly released models aren't
+    # silently free in the totals.
+    p = PRICING.get(model) or _FALLBACK_PRICING
     return (
         inp * p["inp"] + out * p["out"] + cache_read * p["cache_read"]
         + cw5 * p["cache_write_5m"] + cw1h * p["cache_write_1h"]
@@ -77,6 +95,7 @@ def main() -> None:
     session_meta: dict[str, tuple[str, float, float]] = {}
     per_day: dict[str, float] = defaultdict(float)
     per_project: dict[str, dict] = defaultdict(lambda: dict(cost=0.0, msgs=0, sessions=set()))
+    unknown_models: set[str] = set()  # model ids priced via the top-tier fallback
 
     for jsonl in projects_dir.rglob("*.jsonl"):
         try:
@@ -121,6 +140,8 @@ def main() -> None:
                     continue
 
                 model = normalize_model(msg.get("model"))
+                if model not in PRICING:
+                    unknown_models.add(model)
                 cw = u.get("cache_creation", {}) or {}
                 inp = u.get("input_tokens") or 0
                 out = u.get("output_tokens") or 0
@@ -206,10 +227,22 @@ def main() -> None:
     print(f"  cache read:             {totals['cache_read']:>15,}")
     print(f"  cache write 5m:         {totals['cw5']:>15,}")
     print(f"  cache write 1h:         {totals['cw1h']:>15,}")
+    if unknown_models:
+        fb = _FALLBACK_PRICING
+        listed = ", ".join(sorted(unknown_models))
+        print()
+        print(
+            f"NOTE: {len(unknown_models)} unrecognized model id(s) priced at the "
+            f"most-expensive known tier"
+        )
+        print(
+            f"      (${fb['inp']:g}/${fb['out']:g}/${fb['cache_read']:g} in/out/cache-read "
+            f"per 1M): {listed}"
+        )
     print()
-    print("List-price reference: Opus $15/$75/$1.50 (in/out/cache-read), $18.75 5m write,")
-    print("$30 1h write per 1M. Sonnet $3/$15/$0.30 ($3.75/$6 writes). Haiku $0.80/$4/")
-    print("$0.08 ($1/$1.60). On Pro/Max plans actual billing is the subscription.")
+    print("List-price ref (per 1M, in/out/cache-read): Fable5 $10/$50/$1.00, Opus 4.5+")
+    print("$5/$25/$0.50, Sonnet $3/$15/$0.30, Haiku 4.5 $1/$5/$0.10 (Opus 4.0/4.1 still")
+    print("$15/$75). On Pro/Max plans actual billing is the subscription, not an invoice.")
 
 
 if __name__ == "__main__":
