@@ -8,7 +8,7 @@ paths:
 
 When the user asks to brainstorm, plan, or run an **epic** — a large effort spanning several sprints toward one outcome — follow this flow. Work proceeds in **stages with explicit gates** (Backlog → EPIC THOUGHTS → EPIC PRD → EPIC ROADMAP → sprints); do not skip ahead without confirmation at each gate.
 
-This rule sits **above** the sprint workflow in `prd-implementation.md`. An epic is a *container + roadmap*, not a bigger PRD: capture the vision and success criteria once, then decompose the work into ordinary sprints. Each sprint runs the full `prd-implementation.md` flow (THOUGHTS → PRD → PLAN → TASKS), tagged with its parent epic. **Keep the epic layer thin** — granular how/checklist lives in each sprint's PLAN/TASKS and is never duplicated here.
+This rule sits **above** the sprint workflow in `prd-implementation.md`. An epic is a *container + roadmap*, not a bigger PRD: capture the vision and success criteria once, then decompose the work into ordinary sprints. Each sprint runs the full `prd-implementation.md` flow (THOUGHTS → PRD → PLAN → TASKS → Implementation), tagged with its parent epic. **Keep the epic layer thin** — granular how/checklist lives in each sprint's PLAN/TASKS and is never duplicated here.
 
 ## Hierarchy at a glance
 
@@ -70,6 +70,10 @@ After confirmation, create `EPICXX-PRD-<Description>.md` from THOUGHTS (and verb
 - **Non-goals** — explicit out-of-scope items, to limit creep across the whole effort.
 - **Risks / assumptions / dependencies** — for a multi-sprint effort these matter; note cross-sprint ordering constraints.
 - **Rough sequencing** — narrative of the intended phasing, referring to sprints by **slug / feature name, not number** (numbers aren't assigned until each sprint is created, so a number written here would go stale). The detailed sprint table belongs in the ROADMAP, not here.
+
+**Promote, don't copy — trim EPIC THOUGHTS as the charter absorbs the defining substance.** Moving to the charter is a *migration*: the vision, success criteria, scope, and sequencing that **define** the epic go into the PRD. In the same change, edit EPIC THOUGHTS down to only its **defining points** (the core problem and the decisive framing that justified an epic in the first place). The candidate-sprint breakdown becomes **short ROADMAP rows** — the ROADMAP is the epic's TASKS-equivalent tracker, so rows carry only slug / feature / dependency / status, never narrative. The **detailed** per-sprint thinking and implementation hunches belong in neither the thin charter nor those terse rows — they migrate into the individual sprint docs as each sprint is planned (don't fold them into the charter or the ROADMAP just to preserve them). EPIC THOUGHTS should end up a short, high-signal record of *why this epic exists and what defines it* — not a parallel charter.
+
+**Critical pass (default).** Once the draft charter exists, **take a critical pass over it by default** (no need to ask first) — testing each piece for **efficacy** (do the success criteria and in-scope capabilities actually drive the vision/outcome?), **consistency** (no internal contradictions; aligns with EPIC THOUGHTS), and **need** (genuinely required vs. scope creep across the whole effort). **Fold minutia automatically** (wording, redundant or overlapping bullets, tightening, obvious small gaps) and **bubble up the material findings** — questionable or unneeded scope, conflicts, missing pieces, things worth cutting — to the user for a decision rather than changing them silently. This is a quality check on the charter itself, distinct from the user's own review below; skip it only if the user explicitly opts out.
 
 The user reviews and edits until satisfied. **Gate:** Do **not** create the ROADMAP until the user signals the charter is final (e.g. "charter is good" / "generate the roadmap").
 
@@ -135,7 +139,7 @@ From there the sprint runs entirely under `prd-implementation.md`. This rule doe
 When **every ROADMAP row** is resolved (`Done` or `Skipped`) and the PRD's success criteria are met:
 
 1. **Offer** to move the epic set (THOUGHTS, PRD, ROADMAP) to `docs/DONE/`.
-2. After the user agrees, move them and add a row to the **Epics** table in `docs/DONE/README.md`. Constituent sprints archive on their own schedule per `prd-implementation.md`; update the ROADMAP's Docs links to wherever each sprint set now lives (e.g. `../DONE/`).
+2. After the user agrees, move them and add a row to the **Epics** table in `docs/DONE/README.md`. Constituent sprints archive on their own schedule per `prd-implementation.md`; update the ROADMAP's Docs links to be relative to its new `docs/DONE/` location — sprint sets archived alongside it are bare filenames, sprints still in `docs/` need a `../` prefix.
 3. Ensure `docs/EPIC-INDEX.md` still reflects the highest epic `NN` in use.
 
 ### `docs/DONE/README.md` — Epics table

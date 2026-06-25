@@ -6,7 +6,7 @@ paths:
 
 # PRD Implementation Workflow (Sprint docs)
 
-When the user asks to brainstorm, plan, or implement sprint documentation, follow this flow. Work proceeds in **stages with explicit gates** (Backlog → THOUGHTS → PRD → PLAN + TASKS); do not skip ahead without confirmation at each gate.
+When the user asks to brainstorm, plan, or implement a sprint, follow this flow. Work proceeds in **stages with explicit gates** (Backlog → THOUGHTS → PRD → PLAN + TASKS → Implementation); do not skip ahead without confirmation at each gate.
 
 A sprint may stand alone or belong to a larger multi-sprint **epic** (see `epic-implementation.md`). When it does, tag its THOUGHTS header with `Epic: NN` (below) — that line is the only coupling; the rest of this flow is unchanged.
 
@@ -53,11 +53,13 @@ Legacy files matching `docs/PRD-*.md` without a sprint prefix may still exist; p
 ## Stage 2 — PRD
 
 - After confirmation, create `SPRINTXX-PRD-<Description>.md` from THOUGHTS (and any verbal direction). Cross-link THOUGHTS and PRD in headers.
+- **Promote, don't copy — trim THOUGHTS as the PRD absorbs the meat.** Moving to a PRD is a *migration*: the substance — requirements, intended behavior, rationale, and any implementation thinking — goes **into** the PRD. In the same change, edit the THOUGHTS file down to only its **defining points** (the core problem, the decisive ideas/constraints that shaped the sprint, key questions that framed it). Strip implementation detail and anything the PRD now captures better. THOUGHTS should end up a short, high-signal record of *why this sprint exists and what defines it* — not a parallel spec that duplicates or drifts from the PRD.
 - Include a **Non-goals** section (short bullet list): explicit **out of scope** items to limit scope creep before PLAN/TASKS. Keep it concrete (what we are *not* doing in this sprint).
+- **Critical pass (default).** Once the draft exists, **take a critical pass over it by default** (no need to ask first) — testing each requirement for **efficacy** (does it actually move the sprint's goal?), **consistency** (no internal contradictions; aligns with THOUGHTS), and **need** (genuinely required vs. scope creep). **Fold minutia automatically** (wording, redundant or overlapping bullets, tightening, obvious small gaps) and **bubble up the material findings** — questionable or unneeded requirements, conflicts, missing pieces, things worth cutting — to the user for a decision rather than changing them silently. This is a quality check on the PRD itself, distinct from the user's own review below; skip it only if the user explicitly opts out.
 - The user reviews and edits the PRD until they are satisfied.
 - **Gate:** Do **not** create PLAN or TASKS until the user explicitly signals the PRD is final enough to proceed (e.g. “PRD is good” / “generate PLAN and TASKS”).
 
-## Stage 3 — PLAN and TASKS
+## Stage 3 — PLAN, TASKS, and Implementation
 
 - **Explore the codebase** before writing the plan so steps reference real paths and patterns.
 - Create `SPRINTXX-PLAN-<Description>.md` and `SPRINTXX-TASKS-<Description>.md`.
@@ -83,7 +85,7 @@ Legacy files matching `docs/PRD-*.md` without a sprint prefix may still exist; p
 - **In progress**: `- [~]`
 - **Done**: `- [x]`
 - **Skipped**: `- [x] ~~**P2.5** — …~~ (skipped: reason)`
-- New steps discovered during implementation: add to **both** PLAN and TASKS with the next ID in that phase; bump PLAN “Last Updated”
+- New steps discovered during implementation: add to **both** PLAN and TASKS with the next ID in that phase; bump PLAN “Last updated”
 - After bug fixes on completed steps: add `> Bug fix YYYY-MM-DD: …` on the PLAN step; if the PRD requirement changed, update the PRD header/date
 
 ### TASKS-line discipline
@@ -100,6 +102,24 @@ Legacy files matching `docs/PRD-*.md` without a sprint prefix may still exist; p
 - **Do not append running history** — no "Earlier:" cascades, no concatenated prior-rev paragraphs. Each rev replaces the prior summary; git log carries the history.
 - If a prior rev's context is genuinely load-bearing for understanding the current state, it belongs in the relevant PLAN step's body or a `> Bug fix YYYY-MM-DD: …` annotation, not the header.
 - Same rule applies to PLAN, TASKS, and PRD header dates.
+
+### Implementation (executing the sprint)
+
+When the user asks to **implement** a sprint — write code against an existing PLAN/TASKS set — resolve the choices below (ask interactively only for what the user didn't already state; prefer a *single consolidated* prompt over separate round-trips), then **print a summary** and proceed. This is the implementation half of Stage 3; it honors the **task lifecycle** and **TASKS-line discipline** above.
+
+1. **Target** — if no specific task/phase was named, ask: (a) next implementable task, (b) next implementable phase, (c) all remaining phases. *Implementable* = the next not-done item whose `> Depends on:` prerequisites are all `[x]`; skip done/skipped items.
+2. **Workspace** — if the user wasn't explicit, ask: (a) a new git worktree, (b) in place where the repo currently sits (current branch, or master/main). For (a), the orchestrator creates a **persistent** worktree on a new branch (`git worktree add ../sprint-NN-slug -b <branch>`), points the implementer at that path, and commits there — **not** the Agent tool's throwaway `isolation: worktree`, which auto-cleans and would discard the work. For (b) on the default branch, branch first before any commit.
+3. **Adversarial pass** — an *independent, adversarial* review of the just-written code that actively tries to break it (hunt bugs, gaps, missed edge cases), distinct from the implementer's own self-verify. If unstated, ask: (a) after each phase *(recommended)*, (b) after each task, (c) at completion, (d) none. Run the adversarial pass whatever way fits — an adversarial review skill or a reviewer agent prompted to refute the change — and for a pass that runs after commits have already landed, scope it to the branch diff (vs the fork point), not just the uncommitted working tree.
+4. **Commit cadence** — if unstated, ask: (a) after each phase *(recommended)*, (b) after each task, (c) at completion, (d) don't commit. The chosen cadence **is** the user's commit authorization.
+5. **Implementer** — default to the **`sprint-coder` agent** unless the user says otherwise (e.g. implement inline yourself).
+6. **Summary first** — before any code, print the resolved choices: target (expanded to the concrete ordered list of steps/phases in scope), workspace, adversarial-pass cadence, commit cadence, implementer. This print is the final go-ahead checkpoint.
+
+Then loop over the in-scope units:
+
+- **Per unit** the implementer flips the TASKS line `[ ] → [~]`, implements + self-verifies, closes `[~] → [x]`. The **orchestrator (main session)** then runs the adversarial pass and/or commits whenever their cadence fires on that boundary — `sprint-coder` is barred from committing, so commits are always the orchestrator's.
+- **Adversarial before commit** — when both fire on the same boundary, run the pass and **land its fixes before committing** so commits stay clean; when the pass runs less often than commits, its fixes simply arrive as follow-up commits.
+- **Stay observable** — under "all remaining phases," emit a brief progress checkpoint at each phase boundary (what landed, what's next).
+- **Stop on trouble — ask, don't guess.** If a unit can't be completed, a dependency isn't actually `[x]`, or the adversarial pass finds a blocking issue, **pause and put a clear, specific question to the user** — state the problem and offer concrete resolution options (e.g. fix now / skip and continue / amend PLAN / abort) — so their choice drives the resolution and execution can resume. Never silently route around it or press on, even under "all remaining phases."
 
 ## Completion and archiving
 
