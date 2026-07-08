@@ -12,7 +12,9 @@ A collection of [Cursor Agent Skills](https://docs.cursor.com/context/skills) �
 
 ## Docs
 
-- [PRD Implementation Workflow (slide)](docs/prd-implementation-slide.html) — one-page overview of the [`prd-implementation.md`](prd-implementation.md) / [`epic-implementation.md`](epic-implementation.md) sprint & epic doc workflow.
+[![PRD Implementation Workflow slide preview](docs/prd-implementation-slide-preview.png)](https://yzaremba.github.io/ai-skills/prd-implementation-slide.html)
+
+- [PRD Implementation Workflow (slide)](https://yzaremba.github.io/ai-skills/prd-implementation-slide.html) — one-page overview of the [`prd-implementation.md`](prd-implementation.md) / [`epic-implementation.md`](epic-implementation.md) sprint & epic doc workflow.
 
 ## Deployment
 
