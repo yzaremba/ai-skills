@@ -118,6 +118,7 @@ Then loop over the in-scope units:
 
 - **Per unit** the implementer flips the TASKS line `[ ] → [~]`, implements + self-verifies, closes `[~] → [x]`. The **orchestrator (main session)** then runs the adversarial pass and/or commits whenever their cadence fires on that boundary — `sprint-coder` is barred from committing, so commits are always the orchestrator's.
 - **Adversarial before commit** — when both fire on the same boundary, run the pass and **land its fixes before committing** so commits stay clean; when the pass runs less often than commits, its fixes simply arrive as follow-up commits.
+- **Commit message prefix** — lead every sprint commit with its sprint-qualified ID: `S<sprint>P<phase>` (e.g. `S12P3`) for a phase-boundary commit, `S<sprint>P<phase>.<step>` (e.g. `S12P3.4`) for a task-boundary commit. Same `P<phase>.<step>` as the PLAN/TASKS ID, with the sprint number prepended — a bare `P3.4` doesn't say which sprint it's from.
 - **Stay observable** — under "all remaining phases," emit a brief progress checkpoint at each phase boundary (what landed, what's next).
 - **Stop on trouble — ask, don't guess.** If a unit can't be completed, a dependency isn't actually `[x]`, or the adversarial pass finds a blocking issue, **pause and put a clear, specific question to the user** — state the problem and offer concrete resolution options (e.g. fix now / skip and continue / amend PLAN / abort) — so their choice drives the resolution and execution can resume. Never silently route around it or press on, even under "all remaining phases."
 
@@ -160,3 +161,5 @@ TASKS:
 ```
 
 After done: `- [x] **P2.3** — …`
+
+Commit message (task-boundary, this is sprint 2): `S2P2.3 — Add getTradesByPosition() to MariaDbTradeRepositoryApi`. A phase-boundary commit covering all of Phase 2 would instead lead with `S2P2`.

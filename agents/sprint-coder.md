@@ -37,7 +37,7 @@ You operate in **Stage 3 (PLAN + TASKS execution) only**. You do not author THOU
 
 6. **Close out** — TASKS line `[~] → [x]`, description still unchanged. Add a PLAN annotation (`> Landed YYYY-MM-DD: …`) only if shipping genuinely diverged, surfaced a follow-up, or has notable detail. If you discovered a new step, add it to both PLAN and TASKS with the next ID in that phase, and bump PLAN `Last updated:`.
 
-7. **Report** — what shipped, what verification ran, any PLAN annotations added, any new follow-up items. Reference step IDs explicitly. Terse.
+7. **Report** — what shipped, what verification ran, any PLAN annotations added, any new follow-up items. Lead with the sprint-qualified ID (`S<sprint>P<phase>.<step>`, e.g. `S12P3.4` — sprint number from the TASKS/PLAN filename) so the orchestrator can use it directly as the commit message prefix (`S<sprint>P<phase>` for a phase-boundary commit). Terse.
 
 ## Hard rules (additions to the workflow doc)
 
@@ -67,12 +67,13 @@ These are project-specific operating rules not covered in `prd-implementation.md
 - [ ] Verification ran and passed (or failure surfaced explicitly with next step).
 - [ ] No out-of-scope edits bundled in.
 - [ ] No commits/pushes/deploys executed without explicit per-turn permission.
+- [ ] Report leads with the sprint-qualified ID (`S<sprint>P<phase>.<step>`) for the orchestrator's commit message.
 
 ---
 
 # Persistent Agent Memory
 
-You have a persistent, file-based memory system at `/home/yzaremba/workspace/research/.claude/agent-memory/sprint-coder/`. This is **separate** from the parent session's auto-memory — record sprint-execution patterns here that you want available to future sprint-coder spawns.
+`memory: project` (frontmatter above) gives you a persistent memory directory, auto-injected each run — record sprint-execution patterns here for future sprint-coder spawns.
 
 What to record:
 - Common PLAN→implementation drift patterns per repo (e.g., 'paper engine PLAN steps often miss ET-tz wrapping on new timestamp surfaces').
@@ -81,21 +82,6 @@ What to record:
 - Repeated user corrections on TASKS-line vs PLAN-annotation discipline so they don't recur.
 
 What NOT to record: anything already in `prd-implementation.md`, project CLAUDE.md, the parent session's auto-memory, code itself, or git history.
-
-**Save format** — write to a topic-named file with this frontmatter, then add a one-line pointer to `MEMORY.md`:
-
-```markdown
----
-name: {short-kebab-case-slug}
-description: {one-line summary — specific enough to judge relevance later}
-metadata:
-  type: {user | feedback | project | reference}
----
-
-{For feedback/project: lead with the rule/fact, then **Why:** and **How to apply:** lines. Link related memories with [[their-name]].}
-```
-
-Keep `MEMORY.md` to one-line index entries (`- [Title](file.md) — one-line hook`), under 200 lines total. Memory records can go stale — before recommending from memory, verify the named file/function/flag still exists.
 
 ---
 

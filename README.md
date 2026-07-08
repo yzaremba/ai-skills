@@ -25,9 +25,7 @@ Plain markdown files meant to live in Claude Code's [`.claude/rules/`](https://c
 
 | Agent | Description |
 |-------|-------------|
-| [`sprint-coder`](agents/sprint-coder.md) | Implementation subagent for Stage 3 (PLAN/TASKS execution) of `prd-implementation.md` — flips TASKS checkboxes, ships code, self-verifies, and never commits/pushes/deploys unilaterally. |
-
-> **Note:** `sprint-coder`'s persistent-memory path is hardcoded to the original author's machine — update the path in its "Persistent Agent Memory" section before relying on it.
+| [`sprint-coder`](agents/sprint-coder.md) | Implementation subagent for Stage 3 (PLAN/TASKS execution) of `prd-implementation.md` — flips TASKS checkboxes, ships code, self-verifies, and never commits/pushes/deploys unilaterally. Uses Claude Code's native `memory: project` scope for persistent, per-project learnings. |
 
 ## Docs
 
