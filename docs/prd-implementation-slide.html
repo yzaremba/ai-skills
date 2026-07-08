@@ -1,0 +1,478 @@
+<title>PRD Implementation Workflow</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+
+  :root {
+    --ink: #12161c;
+    --ink-soft: #55616c;
+    --paper: #f2f4f6;
+    --card: #ffffff;
+    --border: #d7dde1;
+    --rail: #2e6b6e;
+    --rail-strong: #204d50;
+    --tag-bg: #e4eeed;
+    --gate: #c2803a;
+    --gate-ink: #8a5a24;
+    --done-bg: #c2803a;
+    --done-fg: #fff9f2;
+    --epic-line: #a9c3c4;
+    --shadow: 0 1px 2px rgba(18, 22, 28, 0.07), 0 4px 10px rgba(18, 22, 28, 0.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e7eaec;
+      --ink-soft: #97a3ab;
+      --paper: #12161c;
+      --card: #1a2027;
+      --border: #2a323b;
+      --rail: #4fa3a8;
+      --rail-strong: #6cc0c5;
+      --tag-bg: #17393b;
+      --gate: #e3a15c;
+      --gate-ink: #e3a15c;
+      --done-bg: #e3a15c;
+      --done-fg: #241505;
+      --epic-line: #2f5457;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 6px 16px rgba(0, 0, 0, 0.28);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ink: #e7eaec;
+    --ink-soft: #97a3ab;
+    --paper: #12161c;
+    --card: #1a2027;
+    --border: #2a323b;
+    --rail: #4fa3a8;
+    --rail-strong: #6cc0c5;
+    --tag-bg: #17393b;
+    --gate: #e3a15c;
+    --gate-ink: #e3a15c;
+    --done-bg: #e3a15c;
+    --done-fg: #241505;
+    --epic-line: #2f5457;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 6px 16px rgba(0, 0, 0, 0.28);
+  }
+
+  :root[data-theme="light"] {
+    --ink: #12161c;
+    --ink-soft: #55616c;
+    --paper: #f2f4f6;
+    --card: #ffffff;
+    --border: #d7dde1;
+    --rail: #2e6b6e;
+    --rail-strong: #204d50;
+    --tag-bg: #e4eeed;
+    --gate: #c2803a;
+    --gate-ink: #8a5a24;
+    --done-bg: #c2803a;
+    --done-fg: #fff9f2;
+    --epic-line: #a9c3c4;
+    --shadow: 0 1px 2px rgba(18, 22, 28, 0.07), 0 4px 10px rgba(18, 22, 28, 0.05);
+  }
+
+  html, body { height: 100%; }
+  body { margin: 0; }
+
+  .slide {
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+    min-height: 100vh;
+    max-width: 1440px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: clamp(14px, 2vh, 24px);
+    padding: clamp(24px, 4vh, 48px) clamp(28px, 4.5vw, 64px);
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+  }
+
+  /* ---------- header ---------- */
+  .head { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
+  .head-main { max-width: 900px; }
+  .eyebrow {
+    margin: 0 0 6px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--rail-strong);
+  }
+  .head-main h1 {
+    margin: 0 0 8px;
+    font-size: clamp(26px, 3.2vw, 40px);
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  .thesis {
+    margin: 0;
+    max-width: 66ch;
+    font-size: clamp(12.5px, 1.05vw, 15px);
+    line-height: 1.45;
+    color: var(--ink-soft);
+  }
+  .thesis em { font-style: normal; font-weight: 700; color: var(--gate-ink); }
+  .head-scope { text-align: right; flex: 0 0 auto; }
+  .scope-label {
+    margin: 0 0 3px;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  .scope-path { margin: 0; font-family: var(--font-mono); font-size: 11px; color: var(--rail-strong); }
+
+  /* ---------- tracks layout ---------- */
+  .rail-wrap { display: flex; flex-direction: column; gap: 10px; }
+  .tracks { display: flex; align-items: center; gap: 18px; }
+
+  .backlog-col { flex: 0 0 auto; width: 118px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .backlog-pill {
+    width: 100%;
+    box-sizing: border-box;
+    text-align: center;
+    padding: 8px 8px;
+    border: 1.5px dashed var(--rail);
+    border-radius: 10px;
+  }
+  .backlog-title { margin: 0; font-size: 11px; font-weight: 700; color: var(--rail-strong); }
+  .backlog-tag { margin: 2px 0 0; font-family: var(--font-mono); font-size: 8.5px; color: var(--ink-soft); }
+  .backlog-note { margin: 0; font-size: 8.5px; text-align: center; line-height: 1.3; color: var(--ink-soft); }
+
+  .tracks-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: clamp(12px, 1.8vh, 20px); }
+
+  .track { display: flex; flex-direction: column; gap: 8px; }
+  .track-epic { padding: 10px 14px 14px; border: 1.5px dashed var(--epic-line); border-radius: 10px; }
+  .track-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .track-name { margin: 0; font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+  .track-epic .track-name { color: var(--ink-soft); }
+  .track-sprint .track-name { color: var(--rail-strong); }
+  .track-sub { margin: 0; font-size: 10px; color: var(--ink-soft); }
+
+  /* ---------- rail / stations (shared by both tracks) ---------- */
+  .rail { position: relative; }
+  .line { position: absolute; top: 9px; left: 0; right: 0; height: 2px; background: var(--rail); opacity: .55; }
+  .line-mini { top: 6px; height: 1.5px; opacity: .4; }
+
+  .stations { position: relative; display: flex; align-items: stretch; }
+
+  .station { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 6px; }
+
+  .node {
+    width: 18px; height: 18px; margin-bottom: 14px;
+    border-radius: 50%; background: var(--card); border: 3px solid var(--rail);
+    box-shadow: var(--shadow); flex: 0 0 auto;
+  }
+  .node.mini { width: 12px; height: 12px; border-width: 2px; margin-bottom: 10px; box-shadow: none; }
+
+  .card {
+    flex: 1; width: 100%; min-height: 132px;
+    display: flex; flex-direction: column; justify-content: space-between; gap: 8px;
+    padding: 12px 10px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: var(--shadow); position: relative;
+  }
+  .card.mini { min-height: 80px; padding: 8px 8px; gap: 5px; box-shadow: none; }
+  .station.roadmap .card.mini { background: var(--tag-bg); }
+
+  .card-top { display: flex; flex-direction: column; gap: 4px; }
+  .card-bottom { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+
+  .stage-eyebrow {
+    margin: 0; font-size: 10px; font-weight: 700; letter-spacing: .11em;
+    text-transform: uppercase; color: var(--ink-soft);
+  }
+  .card.mini .stage-eyebrow { font-size: 8.5px; }
+
+  .card h2 { margin: 0; font-size: clamp(14px, 1.3vw, 17px); font-weight: 800; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+  .card.mini h2 { font-size: clamp(10.5px, 0.95vw, 12.5px); }
+  .card h2.with-icon { display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .loop-icon { width: 14px; height: 14px; flex: 0 0 auto; color: var(--rail-strong); }
+
+  .desc { margin: 0; font-size: clamp(10.5px, 0.9vw, 12px); line-height: 1.35; color: var(--ink-soft); }
+  .card.mini .desc { font-size: clamp(8px, 0.72vw, 9.5px); }
+
+  .tag {
+    margin: 0; padding: 2px 7px; font-family: var(--font-mono); font-size: 10.5px;
+    color: var(--rail-strong); background: var(--tag-bg); border-radius: 4px;
+  }
+  .card.mini .tag { font-size: 8.5px; padding: 1px 6px; }
+  .station.roadmap .card.mini .tag { background: var(--card); }
+
+  .note {
+    margin: 0; padding-top: 4px; border-top: 1px dashed var(--border);
+    font-size: 9px; line-height: 1.3; color: var(--gate-ink); font-weight: 600; text-align: center;
+  }
+
+  .epic-tag {
+    position: absolute; top: -10px; right: 8px;
+    padding: 2px 7px; font-family: var(--font-mono); font-size: 9px;
+    color: var(--rail-strong); background: var(--paper);
+    border: 1px dashed var(--rail); border-radius: 10px;
+  }
+
+  .gate { flex: 0 0 auto; width: clamp(28px, 3vw, 44px); display: flex; flex-direction: column; align-items: center; padding-top: 3px; }
+  .gate.mini { width: clamp(20px, 2.2vw, 32px); padding-top: 1px; }
+  .gate-glyph { width: 12px; height: 12px; margin-bottom: 14px; background: var(--gate); box-shadow: var(--shadow); transform: rotate(45deg); }
+  .gate.mini .gate-glyph { width: 10px; height: 10px; margin-bottom: 10px; box-shadow: none; }
+  .gate-label { margin: 0; font-size: 8.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--gate-ink); white-space: nowrap; }
+  .gate.mini .gate-label { font-size: 7px; }
+
+  .station.done .card { background: var(--done-bg); border-color: var(--done-bg); }
+  .station.done .stage-eyebrow, .station.done .desc { color: var(--done-fg); opacity: .82; }
+  .station.done h2 { color: var(--done-fg); }
+  .station.done .tag { background: rgba(0, 0, 0, 0.14); color: var(--done-fg); }
+  .station.done .node { background: var(--done-bg); border-color: var(--done-bg); }
+
+  .rail-caption { margin: 0; text-align: center; font-size: 11.5px; color: var(--ink-soft); }
+  .rail-caption b { color: var(--gate-ink); font-weight: 700; }
+
+  /* ---------- footer chips ---------- */
+  .chips { display: flex; gap: 16px; }
+  .chip {
+    flex: 1; display: flex; flex-direction: column; gap: 3px;
+    padding: 10px 14px; background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: var(--shadow);
+  }
+  .chip-label { margin: 0; font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); }
+  .chip-main { margin: 0; font-family: var(--font-mono); font-size: clamp(12px, 1.05vw, 14px); font-variant-numeric: tabular-nums; }
+  .chip-main .var { color: var(--gate-ink); font-weight: 800; }
+  .chip-sub { margin: 0; font-size: 10.5px; color: var(--ink-soft); }
+
+  @media (max-width: 760px) {
+    .slide { justify-content: flex-start; }
+    .head { flex-direction: column; align-items: flex-start; gap: 10px; }
+    .head-scope { text-align: left; }
+
+    .tracks { flex-direction: column; align-items: stretch; gap: 14px; }
+    .backlog-col { flex-direction: row; width: auto; justify-content: flex-start; gap: 10px; }
+    .backlog-pill { width: auto; flex: 0 0 auto; }
+
+    .stations { flex-direction: column; align-items: stretch; }
+    .line { display: none; }
+    .station { flex-direction: row; align-items: center; text-align: left; gap: 12px; padding: 6px 0; }
+    .node { margin-bottom: 0; }
+    .card { min-height: 0; }
+    .card-bottom { align-items: flex-start; }
+    .gate { flex-direction: row; width: auto; justify-content: flex-start; gap: 8px; padding: 4px 0 4px 9px; }
+    .gate-glyph { margin-bottom: 0; }
+
+    .chips { flex-direction: column; }
+  }
+</style>
+
+<div class="slide">
+
+  <header class="head">
+    <div class="head-main">
+      <p class="eyebrow">Sprint &amp; Epic Doc Workflow</p>
+      <h1>PRD Implementation</h1>
+      <p class="thesis">A sprint ships one feature through gated stages. An epic is the thin, multi-sprint container above it — <em>neither advances without the user's go-ahead.</em></p>
+    </div>
+    <div class="head-scope">
+      <p class="scope-label">Auto-loads on</p>
+      <p class="scope-path">docs/SPRINT*-*.md</p>
+      <p class="scope-path">docs/SPRINT-INDEX.md</p>
+    </div>
+  </header>
+
+  <section class="rail-wrap" aria-label="Epic and Sprint workflow tracks">
+    <div class="tracks">
+
+      <div class="backlog-col">
+        <div class="backlog-pill">
+          <p class="backlog-title">Backlog</p>
+          <p class="backlog-tag">docs/BACKLOG.md</p>
+        </div>
+        <p class="backlog-note">optional seed for either track</p>
+      </div>
+
+      <div class="tracks-main">
+
+        <div class="track track-epic">
+          <div class="track-head">
+            <p class="track-name">Epic</p>
+            <p class="track-sub">multi-sprint container — kept thin</p>
+          </div>
+          <div class="rail">
+            <div class="line line-mini"></div>
+            <div class="stations">
+
+              <div class="station mini">
+                <span class="node mini"></span>
+                <div class="card mini">
+                  <div class="card-top">
+                    <p class="stage-eyebrow">Stage E1</p>
+                    <h2>Epic Thoughts</h2>
+                    <p class="desc">Vision, rough scope, candidate sprints</p>
+                  </div>
+                  <div class="card-bottom">
+                    <p class="tag">EPICXX-THOUGHTS-slug.md</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="gate mini"><span class="gate-glyph"></span><span class="gate-label">Gate</span></div>
+
+              <div class="station mini">
+                <span class="node mini"></span>
+                <div class="card mini">
+                  <div class="card-top">
+                    <p class="stage-eyebrow">Stage E2</p>
+                    <h2>Epic PRD</h2>
+                    <p class="desc">Charter — success criteria, non-goals</p>
+                  </div>
+                  <div class="card-bottom">
+                    <p class="tag">EPICXX-PRD-slug.md</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="gate mini"><span class="gate-glyph"></span><span class="gate-label">Gate</span></div>
+
+              <div class="station mini roadmap">
+                <span class="node mini"></span>
+                <div class="card mini">
+                  <div class="card-top">
+                    <p class="stage-eyebrow">Stage E3</p>
+                    <h2>Roadmap</h2>
+                    <p class="desc">Living tracker — one row per sprint</p>
+                  </div>
+                  <div class="card-bottom">
+                    <p class="tag">EPICXX-ROADMAP-slug.md</p>
+                    <p class="note">↓ each row becomes a Sprint track</p>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        <div class="track track-sprint">
+          <div class="track-head">
+            <p class="track-name">Sprint</p>
+            <p class="track-sub">one feature, ~one sprint · or spawned from an Epic Roadmap row</p>
+          </div>
+          <div class="rail">
+            <div class="line"></div>
+            <div class="stations">
+
+              <div class="station">
+                <span class="node"></span>
+                <div class="card">
+                  <span class="epic-tag">+ Epic: NN</span>
+                  <div class="card-top">
+                    <p class="stage-eyebrow">Stage 1</p>
+                    <h2 class="with-icon">
+                      <svg class="loop-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M4 12a8 8 0 0 1 13.66-5.66" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path>
+                        <path d="M17 3v4h-4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+                        <path d="M20 12a8 8 0 0 1-13.66 5.66" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path>
+                        <path d="M7 21v-4h4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+                      </svg>
+                      Thoughts
+                    </h2>
+                    <p class="desc">Back-and-forth brainstorm with the agent</p>
+                  </div>
+                  <div class="card-bottom">
+                    <p class="tag">SPRINTXX-THOUGHTS-slug.md</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="gate"><span class="gate-glyph"></span><span class="gate-label">Gate</span></div>
+
+              <div class="station">
+                <span class="node"></span>
+                <div class="card">
+                  <div class="card-top">
+                    <p class="stage-eyebrow">Stage 2</p>
+                    <h2>PRD</h2>
+                    <p class="desc">Requirements + Non‑goals</p>
+                  </div>
+                  <div class="card-bottom">
+                    <p class="tag">SPRINTXX-PRD-slug.md</p>
+                    <p class="note">↺ critical pass trims &amp; refines Thoughts</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="gate"><span class="gate-glyph"></span><span class="gate-label">Gate</span></div>
+
+              <div class="station">
+                <span class="node"></span>
+                <div class="card">
+                  <div class="card-top">
+                    <p class="stage-eyebrow">Stage 3</p>
+                    <h2>Plan + Tasks</h2>
+                    <p class="desc">Phases of numbered steps, P&lt;phase&gt;.&lt;step&gt;</p>
+                  </div>
+                  <div class="card-bottom">
+                    <p class="tag">PLAN / TASKS</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="gate"><span class="gate-glyph"></span><span class="gate-label">Gate</span></div>
+
+              <div class="station">
+                <span class="node"></span>
+                <div class="card">
+                  <div class="card-top">
+                    <p class="stage-eyebrow">Stage 3 · Execute</p>
+                    <h2>Implementation</h2>
+                    <p class="desc">5 quick choices, then code</p>
+                  </div>
+                  <div class="card-bottom">
+                    <p class="tag">sprint-coder agent</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="gate"><span class="gate-glyph"></span><span class="gate-label">Gate</span></div>
+
+              <div class="station done">
+                <span class="node"></span>
+                <div class="card">
+                  <div class="card-top">
+                    <p class="stage-eyebrow">Archived</p>
+                    <h2>Done</h2>
+                    <p class="desc">All tasks [x] → moved to docs/DONE/</p>
+                  </div>
+                  <div class="card-bottom">
+                    <p class="tag">docs/DONE/</p>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <p class="rail-caption">Every diamond is a gate — the assistant waits for <b>explicit go‑ahead</b> before advancing, in either track.</p>
+  </section>
+
+  <footer class="chips">
+    <div class="chip">
+      <p class="chip-label">File naming</p>
+      <p class="chip-main">docs/SPRINT<span class="var">XX</span>-<span class="var">TYPE</span>-slug.md</p>
+      <p class="chip-sub">TYPE = THOUGHTS · PRD · PLAN · TASKS, one shared slug per sprint</p>
+    </div>
+    <div class="chip">
+      <p class="chip-label">Task lifecycle</p>
+      <p class="chip-main">[ ] &nbsp;→&nbsp; [~] &nbsp;→&nbsp; [x]</p>
+      <p class="chip-sub">not started → in progress → done · skipped: ~~[x]~~ (reason)</p>
+    </div>
+  </footer>
+
+</div>
