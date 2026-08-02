@@ -21,6 +21,7 @@ This rule sits **above** the sprint workflow in `prd-implementation.md`. An epic
 ## Epic numbering (`docs/EPIC-INDEX.md`)
 
 - **`docs/EPIC-INDEX.md` is the preferred source** for which two-digit epic number `NN` to use next. Read it before creating a new epic set. It is **separate** from `docs/SPRINT-INDEX.md`.
+- **The index is a pointer, not a historical log** — same rule (and same recurring drift) as SPRINT-INDEX, see `prd-implementation.md` §Sprint numbering. It carries the latest assigned `NN` and nothing else; assigning a number overwrites that value. No per-epic descriptions, no "what `NN` was" history.
 - If the index is missing, outdated, or contradicts filenames, **reconcile**: set **Latest assigned epic `NN`** to the maximum `NN` in any `EPICNN-*` file under `docs/` and `docs/DONE/`, then use `NN + 1` (two digits) for a brand-new epic. Update the index after creating the first file of a new epic.
 - If absent, create it when starting or tidying epic docs.
 - **Sprints keep their own global numbering** via `docs/SPRINT-INDEX.md`. An epic does **not** renumber sprints — it *claims* sprint numbers as its roadmap sprints are created (recorded in the ROADMAP). A sprint belongs to **at most one** epic.

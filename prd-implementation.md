@@ -13,6 +13,8 @@ A sprint may stand alone or belong to a larger multi-sprint **epic** (see `epic-
 ## Sprint numbering (`docs/SPRINT-INDEX.md`)
 
 - **`docs/SPRINT-INDEX.md` is the preferred source** for which two-digit sprint number `NN` to use next. Read it before creating a new sprint set.
+- **The index is a pointer, not a historical log.** It carries exactly one fact — the latest assigned `NN` — plus the update rules. Assigning a new number **overwrites that value**; it never appends. Do **not** add per-sprint descriptions, slugs, scope summaries, "what `NN` was" history, or a derived "next sprint = `NN+1`" field (a second copy of the same fact drifts from the first). Filenames already map `NN` → slug, each sprint's own docs carry its scope, `docs/DONE/README.md` lists completed work, and `git log` carries the chronology — an index entry is a fourth copy that outlives and contradicts all three.
+- This is a **recurring drift**: sessions keep appending a line about the sprint they just opened. If you find accumulated history here, **delete it in the same change** as whatever else you are doing to the file — do not preserve it "for context" and do not migrate it elsewhere; it is already recorded.
 - If the index is missing, outdated, or contradicts filenames, **reconcile**: set **Latest assigned sprint `NN`** to the maximum `NN` appearing in any `SPRINTNN-*` file under `docs/` and `docs/DONE/`, then use `NN + 1` (two digits) for a **brand-new** sprint. After creating the first file of a new sprint, update the index.
 - If the index is absent, create it when starting or tidying sprint docs.
 
@@ -136,10 +138,18 @@ Create the file if missing. Use a table that includes THOUGHTS:
 ```markdown
 # Completed features (sprints)
 
+> **Index, not a changelog.** `Feature` is a short name (≤ ~100 chars) — what shipped, in a phrase. Scope, deviations, bugs found, live-verification notes and residuals live on the sprint's PLAN steps (`> Landed` / `> Bug fix` / `> Audit`) and in `git log`. Never extend a row.
+
 | Sprint | Feature | THOUGHTS | PRD | Plan | Tasks | Completed |
 |--------|---------|----------|-----|------|-------|-----------|
 | 01 | Short name | [THOUGHTS](SPRINT01-THOUGHTS-slug.md) | [PRD](SPRINT01-PRD-slug.md) | [PLAN](SPRINT01-PLAN-slug.md) | [TASKS](SPRINT01-TASKS-slug.md) | YYYY-MM-DD |
 ```
+
+Carry that blockquote into the file — the guard belongs where the drift happens, same as in SPRINT-INDEX.
+
+**Feature is a short name, not a changelog.** A row records *that* a sprint shipped and *where its docs are*; the sprint's own docs record *what happened*. Outcome qualifiers (`Abandoned` / `Retracted` / `Superseded` / `Concluded`) go in the **Completed** cell, so the name stays a name. This table is an archive **index**; a row that grows into a paragraph is the same drift as a SPRINT-INDEX history log. **Trim rows you notice; never extend one** — and trim by cutting, not by relocating: the prose is already in the sprint docs and `git log`, so do not "rescue" it into an archived PLAN/PRD.
+
+Long cells are also **fragile**, not just noisy: one unescaped `|` — easy to slip in inside inline code like `` `--flag-a|--flag-b` `` — splits the cell and silently shifts every link in that row into the wrong column. A short name has nowhere to hide one.
 
 ## Example (PLAN step and TASKS line)
 
