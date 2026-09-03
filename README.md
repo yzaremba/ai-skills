@@ -19,7 +19,7 @@ Plain markdown files meant to live in Claude Code's [`.claude/rules/`](https://c
 |------|-----------|-------------|
 | [`prd-implementation.md`](prd-implementation.md) | Working with `docs/SPRINT*-*.md`, `docs/SPRINT-INDEX.md` (`paths:` frontmatter) | Gated Backlog → THOUGHTS → PRD → PLAN/TASKS → Implementation workflow for feature sprints. See the [one-page overview](docs/prd-implementation-slide.html). |
 | [`epic-implementation.md`](epic-implementation.md) | Working with `docs/EPIC*-*.md`, `docs/EPIC-INDEX.md` (`paths:` frontmatter) | Multi-sprint EPIC container — THOUGHTS → PRD (charter) → ROADMAP — that decomposes into ordinary sprints run under the rule above. |
-| [`avoid-bash-injection-heuristics.md`](avoid-bash-injection-heuristics.md) | Every session (no `paths:` field) | Reference for reshaping Bash commands to dodge Claude Code's "too-complex" parser heuristics instead of fighting them with permission rules. |
+| [`avoid-bash-injection-heuristics.md`](avoid-bash-injection-heuristics.md) | Every session (no `paths:` field) | Reference for reshaping Bash commands to dodge the two permission gates that ignore your allowlist: the "too-complex" parser heuristics, and the `deniedPathInsideDirectory` circuit breaker that fires whenever a `Read()` deny rule exists. |
 
 ## Agents (Claude Code)
 

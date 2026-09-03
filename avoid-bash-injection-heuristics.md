@@ -86,3 +86,44 @@ If the command's syntax tree contains **any** of these nodes, the parser returns
 ## Escape hatch (only if rewriting is impossible)
 
 A `PreToolUse:Bash` hook can auto-approve a narrow custom safe-list, bypassing the heuristic entirely. Use only for shapes explicitly vetted; this weakens defense-in-depth.
+
+## The `deniedPathInsideDirectory` circuit breaker (a *different* mechanism)
+
+Separate from the bash parser heuristics above, Claude Code ≥ 2.1.25x has a **permission circuit breaker** that fires on read-capable commands whenever *any* `Read()` deny rule exists in settings. Its result carries `classifierApprovable: false`, so **no allow rule and no auto-mode classifier can clear it — only a human click**. Wildcards in `permissions.allow` are useless here; so is the `Bash(grep *)` entry.
+
+Gated commands (`vuo`): **`grep` `egrep` `fgrep` `rg` `diff` `git` `cp` `mv`**.
+
+It has two branches, and they need different fixes.
+
+### Branch 1 — "would read '<dir>', which the deny rule `Read(...)` covers"
+
+Fires when a deny pattern's **literal prefix** resolves to a directory that contains the command's target. A pattern whose first segment is a glob (`Read(**/.env)`) has an *empty* literal prefix, so it collapses to the **current working directory** — making *every* `grep -r … .` anywhere trip the prompt, even in directories with no `.env`.
+
+**Fix (settings-level, already applied):** anchor every `Read()` deny pattern to a real root — `Read(//home/yzaremba/**/.env)`, not `Read(**/.env)`. The deny still blocks the Read tool *and* `cat .env` via Bash; only the breaker's false positive goes away. Cost: a `.env` under an unlisted root (`/opt`, `/srv`) is no longer denied — add an anchored rule if that ever matters.
+
+### Branch 2 — "after a cd would search a directory that cannot be determined here"
+
+```js
+let De = isCompoundWithCd && !isAbsolute(arg) && !arg.startsWith("~")
+         ? undefined                       // ← unconditional ask
+         : UEn(resolve(cwd, arg), settings);
+```
+
+Fires on the **combination** of (a) a `cd` somewhere in the compound command and (b) a **relative** path argument to one of the gated commands. It does **not** consult the deny rule's paths at all — only that *some* `Read()` deny rule exists. **No settings change can suppress it** short of deleting every `Read()` deny rule, which is not worth it.
+
+**Fix — reshape the command. Either drop the `cd` or make the paths absolute:**
+
+| Shape | Result |
+|---|---|
+| `cd /repo && grep -n "x" business/foo.py` | ❌ prompts |
+| `cd /repo && grep -n "x" /repo/business/foo.py` | ✅ clean |
+| `grep -n "x" business/foo.py` *(no cd)* | ✅ clean |
+| `grep -rn "x" business/` *(no cd)* | ✅ clean |
+
+Verified empirically on 2.1.259 in this workspace — all four shapes above, plus the parallel `rg`/`git`/`cp`/`mv` cases.
+
+### Rules
+
+11. **Never pair a `cd` with a relative path argument to `grep`/`egrep`/`fgrep`/`rg`/`diff`/`git`/`cp`/`mv`.** Prefer dropping the `cd` entirely and letting paths resolve against the session cwd — that is shorter *and* clean. If a `cd` is genuinely needed (a script or tool that must run from a directory), spell every gated command's path arguments absolutely.
+12. **Prefer `git -C <dir>` over `cd <dir> && git …`** — same reason, and it avoids leaving the shell cwd moved.
+13. Deny patterns in `permissions.deny` must **start with a literal path segment**, never `**`.
