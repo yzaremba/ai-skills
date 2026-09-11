@@ -92,6 +92,30 @@ def load_json(path: Path, default: Any) -> Any:
         raise UserError(f"invalid JSON at {path}: {exc}") from exc
 
 
+def original_config_bytes(
+    metadata: dict[str, Any], target: Path, chat_root: Path,
+) -> bytes | None:
+    originals = metadata.get("original_config", {})
+    if not isinstance(originals, dict):
+        return None
+    record = originals.get(str(target))
+    if not isinstance(record, dict):
+        return None
+    backup_value = record.get("backup")
+    digest = record.get("sha256")
+    if not isinstance(backup_value, str) or not isinstance(digest, str):
+        return None
+    backup = expand(backup_value)
+    backup_root = expand(chat_root / "_backups")
+    try:
+        backup.relative_to(backup_root)
+    except ValueError:
+        raise UserError(f"config backup escapes backup root: {backup}")
+    if not backup.is_file() or sha256_file(backup) != digest:
+        raise UserError(f"config backup is missing or corrupt: {backup}")
+    return backup.read_bytes()
+
+
 def selected_agents(value: str) -> tuple[str, ...]:
     if value == "both":
         return AGENTS
@@ -399,12 +423,14 @@ def setup(args: argparse.Namespace) -> int:
     if not index.exists():
         ops.write(index, b"# Archived tasks\n")
 
+    config_targets: set[str] = set()
     for agent in agents:
         link = home / f".{agent}" / "skills" / SKILL_NAME
         ops.symlink(skill_root, link)
         if agent == "codex":
             agents_md = home / ".codex" / "AGENTS.md"
             agents_target = config_target(agents_md, args.follow_config_symlinks)
+            config_targets.add(str(agents_target))
             original = agents_target.read_text(encoding="utf-8") if agents_target.exists() else ""
             updated = put_managed_block(original, managed_guidance(chat_root))
             ops.write(agents_md, updated.encode("utf-8"), config=True)
@@ -412,17 +438,22 @@ def setup(args: argparse.Namespace) -> int:
         else:
             hooks_path = home / ".claude" / "settings.json"
         hooks_target = config_target(hooks_path, args.follow_config_symlinks)
+        config_targets.add(str(hooks_target))
         default_hooks = {"description": "User-level Codex hooks.", "hooks": {}} if agent == "codex" else {}
         hooks_data = load_json(hooks_target, default_hooks)
         merged = merge_hooks(hooks_data, skill_root, chat_root, agent)
         ops.write(hooks_path, json_bytes(merged), config=True)
 
     metadata_path = chat_root / "_runtime" / "install.json"
-    metadata = load_json(metadata_path, {})
-    installed = set(metadata.get("agents", []))
+    prior_metadata = load_json(metadata_path, {})
+    installed = set(prior_metadata.get("agents", []))
     installed.update(agents)
-    created_config = set(metadata.get("created_config", []))
+    created_config = set(prior_metadata.get("created_config", []))
     created_config.update(ops.created_config)
+    original_config = dict(prior_metadata.get("original_config", {}))
+    for record in ops.backups:
+        if record["source"] in config_targets and record["source"] not in original_config:
+            original_config[record["source"]] = record
     metadata = {
         "skill_root": str(skill_root),
         "chat_root": str(chat_root),
@@ -430,6 +461,7 @@ def setup(args: argparse.Namespace) -> int:
         "protocol_sha256": sha256_file(asset),
         "agents": sorted(installed),
         "created_config": sorted(created_config),
+        "original_config": original_config,
     }
     ops.write(metadata_path, json_bytes(metadata), mode=0o600)
     ops.finish()
@@ -447,14 +479,25 @@ def uninstall(args: argparse.Namespace) -> int:
     metadata_path = chat_root / "_runtime" / "install.json"
     metadata = load_json(metadata_path, {}) if metadata_path.exists() else {}
     created_config = set(metadata.get("created_config", []))
+    processed_config: set[str] = set()
     for agent in agents:
         ops.unlink_managed(skill_root, home / f".{agent}" / "skills" / SKILL_NAME)
         if agent == "codex":
             agents_md = home / ".codex" / "AGENTS.md"
             agents_target = config_target(agents_md, args.follow_config_symlinks)
+            processed_config.add(str(agents_target))
             if agents_target.exists():
-                updated = remove_managed_block(agents_target.read_text(encoding="utf-8"))
-                if str(agents_target) in created_config and not updated.strip():
+                current = agents_target.read_bytes()
+                original = original_config_bytes(metadata, agents_target, chat_root)
+                expected = None
+                if original is not None:
+                    expected = put_managed_block(
+                        original.decode("utf-8"), managed_guidance(chat_root),
+                    ).encode("utf-8")
+                updated = remove_managed_block(current.decode("utf-8"))
+                if original is not None and current == expected:
+                    ops.write(agents_md, original, config=True)
+                elif str(agents_target) in created_config and not updated.strip():
                     ops.remove_file(agents_md, config=True)
                 else:
                     ops.write(agents_md, updated.encode("utf-8"), config=True)
@@ -463,9 +506,21 @@ def uninstall(args: argparse.Namespace) -> int:
             hooks_path = home / ".claude" / "settings.json"
         if hooks_path.exists():
             hooks_target = config_target(hooks_path, args.follow_config_symlinks)
+            processed_config.add(str(hooks_target))
+            current = hooks_target.read_bytes()
+            original = original_config_bytes(metadata, hooks_target, chat_root)
+            expected = None
+            if original is not None:
+                try:
+                    original_data = json.loads(original.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise UserError(f"invalid original config backup for {hooks_target}") from exc
+                expected = json_bytes(merge_hooks(original_data, skill_root, chat_root, agent))
             data = remove_hooks(load_json(hooks_target, {}), agent)
             empty_managed = data in ({}, {"hooks": {}}, {"description": "User-level Codex hooks.", "hooks": {}})
-            if str(hooks_target) in created_config and empty_managed:
+            if original is not None and current == expected:
+                ops.write(hooks_path, original, config=True)
+            elif str(hooks_target) in created_config and empty_managed:
                 ops.remove_file(hooks_path, config=True)
             else:
                 ops.write(hooks_path, json_bytes(data), config=True)
@@ -473,6 +528,12 @@ def uninstall(args: argparse.Namespace) -> int:
         metadata["agents"] = [agent for agent in metadata.get("agents", []) if agent not in agents]
         removed_prefixes = tuple(str(home / f".{agent}") for agent in agents)
         metadata["created_config"] = [path for path in metadata.get("created_config", []) if not path.startswith(removed_prefixes)]
+        originals = metadata.get("original_config", {})
+        if isinstance(originals, dict):
+            metadata["original_config"] = {
+                path: record for path, record in originals.items()
+                if path not in processed_config
+            }
         ops.write(metadata_path, json_bytes(metadata), mode=0o600)
     ops.finish()
     for action in ops.actions:
@@ -999,7 +1060,16 @@ def bind(args: argparse.Namespace, *, rebind: bool) -> int:
                 raise UserError(f"{args.agent} binding is {state}; explicit rebind required")
             stop_binding(chat_root, args.agent, None, force=True)
         pending = binding_record(args, 0)
-        fresh_state = {"session_id": args.session_id, "notified": {}, "attempts": {}, "failed": [], "unverified": [], "stale": []}
+        fresh_state = {
+            "session_id": args.session_id,
+            "notified": {},
+            "attempts": {},
+            "failed": [],
+            "unverified": [],
+            "stale": [],
+            "malformed": {},
+            "malformed_surfaced": {},
+        }
         atomic_write(binding_path.parent / "watch-state.json", json_bytes(fresh_state), 0o600)
         atomic_write(binding_path, json_bytes(pending), 0o600)
         pid = spawn_watcher(chat_root, pending)
@@ -1057,6 +1127,17 @@ def append_alert(runtime: Path, message: str) -> None:
     runtime.mkdir(parents=True, exist_ok=True)
     with (runtime / "alerts.log").open("a", encoding="utf-8") as handle:
         handle.write(f"{now_iso()} {message}\n")
+
+
+def malformed_fingerprint(target: Path, detail: str) -> str:
+    evidence = [detail]
+    for name in ("TASK.md", "BATON.md"):
+        path = target / name
+        try:
+            evidence.append(f"{name}:{sha256_file(path)}" if path.is_file() else f"{name}:missing")
+        except OSError as exc:
+            evidence.append(f"{name}:{type(exc).__name__}")
+    return sha256_bytes("\n".join(evidence).encode("utf-8"))
 
 
 def attempt_wake(
@@ -1153,15 +1234,70 @@ def scan_once(chat_root: Path, binding: dict[str, Any], state: dict[str, Any]) -
     changed = False
     if state.get("session_id") != binding.get("session_id"):
         state.clear()
-        state.update({"session_id": binding.get("session_id"), "notified": {}, "attempts": {}, "failed": [], "unverified": [], "stale": []})
+        state.update({
+            "session_id": binding.get("session_id"),
+            "notified": {},
+            "attempts": {},
+            "failed": [],
+            "unverified": [],
+            "stale": [],
+            "malformed": {},
+            "malformed_surfaced": {},
+        })
         changed = True
+    malformed = state.setdefault("malformed", {})
+    surfaced = state.setdefault("malformed_surfaced", {})
+    seen: set[str] = set()
     for target in sorted(chat_root.iterdir() if chat_root.exists() else []):
         if not target.is_dir() or target.name.startswith("_") or not TASK_ID_RE.fullmatch(target.name):
             continue
+        seen.add(target.name)
         try:
             changed = scan_task(chat_root, target, binding, state) or changed
+            if target.name in malformed or target.name in surfaced:
+                prior = malformed.pop(target.name, None)
+                surfaced.pop(target.name, None)
+                prefix = f"malformed:{target.name}:"
+                attempts = state.setdefault("attempts", {})
+                for key in [key for key in attempts if key.startswith(prefix)]:
+                    attempts.pop(key, None)
+                state["failed"] = [key for key in state.get("failed", []) if not key.startswith(prefix)]
+                if prior is not None:
+                    changed = True
         except Exception as exc:
-            append_alert(runtime, f"ignored malformed task {target.name}: {type(exc).__name__}: {exc}")
+            detail = f"{type(exc).__name__}: {exc}"
+            fingerprint = malformed_fingerprint(target, detail)
+            if malformed.get(target.name) != fingerprint:
+                prefix = f"malformed:{target.name}:"
+                attempts = state.setdefault("attempts", {})
+                for key in [key for key in attempts if key.startswith(prefix)]:
+                    attempts.pop(key, None)
+                state["failed"] = [key for key in state.get("failed", []) if not key.startswith(prefix)]
+                malformed[target.name] = fingerprint
+                surfaced.pop(target.name, None)
+                append_alert(runtime, f"ignored malformed task {target.name}: {detail}")
+                changed = True
+            if surfaced.get(target.name) != fingerprint and binding.get("wake_verified"):
+                attempt_key = f"malformed:{target.name}:{fingerprint}"
+                message = (
+                    f"multiagent-collab ignored malformed task {target.name}: {detail}. "
+                    "Notify the operator or repair the task contract before continuing."
+                )
+                before = json.dumps(state, sort_keys=True)
+                if attempt_wake(binding, runtime, state, attempt_key, message):
+                    surfaced[target.name] = fingerprint
+                    if attempt_key in state.get("failed", []):
+                        state["failed"].remove(attempt_key)
+                changed = changed or before != json.dumps(state, sort_keys=True)
+    for task_id in set(malformed) - seen:
+        malformed.pop(task_id, None)
+        surfaced.pop(task_id, None)
+        prefix = f"malformed:{task_id}:"
+        attempts = state.setdefault("attempts", {})
+        for key in [key for key in attempts if key.startswith(prefix)]:
+            attempts.pop(key, None)
+        state["failed"] = [key for key in state.get("failed", []) if not key.startswith(prefix)]
+        changed = True
     return changed
 
 

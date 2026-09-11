@@ -139,6 +139,18 @@ class SetupTests(unittest.TestCase):
         self.assertEqual((codex / "AGENTS.md").read_bytes(), agents_before)
         self.assertEqual((codex / "hooks.json").read_bytes(), hooks_before)
 
+    def test_uninstall_preserves_untracked_empty_hooks_file(self):
+        codex = self.home / ".codex"
+        codex.mkdir()
+        hooks = codex / "hooks.json"
+        hooks.write_bytes(b"{}\n")
+        mc.setup(self.args("setup", agent="codex"))
+        metadata = json.loads((self.chat / "_runtime/install.json").read_text())
+        self.assertNotIn(str(hooks), metadata["created_config"])
+        mc.uninstall(self.args("uninstall", agent="codex"))
+        self.assertTrue(hooks.is_file())
+        self.assertEqual(hooks.read_bytes(), b"{}\n")
+
     def test_uninstall_keeps_user_edits_to_created_codex_config(self):
         mc.setup(self.args("setup", agent="codex"))
         agents = self.home / ".codex/AGENTS.md"
@@ -264,6 +276,15 @@ class BatonTests(unittest.TestCase):
         quote = self.root / "operator.md"
         quote.write_text('Operator response: "migrate and approve"\n', encoding="utf-8")
         task_hash = mc.sha256_file(task / "TASK.md")
+        with self.assertRaises(mc.UserError):
+            mc.operator_relay(
+                Args(
+                    chat_root=str(self.chat), task_id=self.task_id, agent="codex",
+                    expected_seq=1, action="ruling", next_holder="codex",
+                    log_file=str(quote), ask="Continue.", break_stale_lock=False,
+                    task_sha256=None,
+                )
+            )
         mc.operator_relay(
             Args(
                 chat_root=str(self.chat), task_id=self.task_id, agent="codex",
@@ -708,7 +729,10 @@ class BatonTests(unittest.TestCase):
     def test_operator_relay_approve_returns_baton_to_owner(self):
         task = self.chat / self.task_id
         baton = mc.parse_baton(task / "BATON.md")
-        baton["holder"] = "operator"
+        baton.update(
+            holder="operator", verdict="PASS",
+            owner_ready=True, reviewer_ready=True,
+        )
         mc.atomic_text(task / "BATON.md", mc.dump_baton(baton))
         words = self.root / "operator.md"
         words.write_text('Operator response: "approved"\n', encoding="utf-8")
@@ -740,7 +764,7 @@ class BatonTests(unittest.TestCase):
             expected_seq=1, action="approve", next_holder="codex",
             log_file=str(quote), ask="Implement.", break_stale_lock=False,
         )
-        for candidate in (None, "0" * 64):
+        for candidate in (None, "0" * 64, presented.upper(), f" {presented}", f"{presented} "):
             with self.subTest(candidate=candidate):
                 with self.assertRaises(mc.UserError):
                     mc.operator_relay(Args(**base, task_sha256=candidate))
@@ -965,6 +989,46 @@ class BatonTests(unittest.TestCase):
         self.assertEqual((task / "LOG.md").read_bytes(), before_log)
         self.assertTrue(lock.is_dir())
 
+    def test_operator_relay_sequence_check_isolated(self):
+        task = self.chat / self.task_id
+        baton = mc.parse_baton(task / "BATON.md")
+        baton["holder"] = "operator"
+        mc.atomic_text(task / "BATON.md", mc.dump_baton(baton))
+        quote = self.root / "operator.md"
+        quote.write_text('Operator response: "approved"\n', encoding="utf-8")
+        before = (task / "BATON.md").read_bytes()
+        with self.assertRaisesRegex(mc.UserError, "sequence changed"):
+            mc.operator_relay(
+                Args(
+                    chat_root=str(self.chat), task_id=self.task_id,
+                    agent="codex", expected_seq=99, action="approve",
+                    next_holder="codex", log_file=str(quote), ask="Implement.",
+                    task_sha256=mc.sha256_file(task / "TASK.md"),
+                    break_stale_lock=False,
+                )
+            )
+        self.assertEqual((task / "BATON.md").read_bytes(), before)
+
+    def test_operator_close_nonowner_target_check_isolated(self):
+        task = self.chat / self.task_id
+        baton = mc.parse_baton(task / "BATON.md")
+        baton.update(
+            holder="operator", task_sha256=mc.sha256_file(task / "TASK.md"),
+            verdict="PASS", owner_ready=True, reviewer_ready=True,
+        )
+        mc.atomic_text(task / "BATON.md", mc.dump_baton(baton))
+        quote = self.root / "operator.md"
+        quote.write_text('Operator response: "CLOSE"\n', encoding="utf-8")
+        with self.assertRaisesRegex(mc.UserError, "cleanup turn to the task owner"):
+            mc.operator_relay(
+                Args(
+                    chat_root=str(self.chat), task_id=self.task_id,
+                    agent="claude", expected_seq=1, action="close",
+                    next_holder="claude", log_file=str(quote), ask="Archive.",
+                    break_stale_lock=False, task_sha256=None,
+                )
+            )
+
     def test_operator_close_requires_each_review_gate(self):
         task = self.chat / self.task_id
         quote = self.root / "operator.md"
@@ -1158,10 +1222,103 @@ class WatcherAndArchiveTests(unittest.TestCase):
             "session_id": "s", "notified": {}, "attempts": {},
             "failed": [], "unverified": [], "stale": [],
         }
-        self.assertFalse(mc.scan_once(self.chat, binding, state))
+        self.assertTrue(mc.scan_once(self.chat, binding, state))
         self.assertNotIn(task.name, state["notified"])
-        self.assertFalse((runtime / "monitor.inbox").exists())
+        self.assertIn("operator-approved contract hash", (runtime / "monitor.inbox").read_text())
         self.assertIn("operator-approved contract hash", (runtime / "alerts.log").read_text())
+
+    def test_malformed_alert_is_logged_and_surfaced_once_per_fingerprint(self):
+        task = self.make_task(holder="claude")
+        original_task = (task / "TASK.md").read_text()
+        (task / "TASK.md").write_text(original_task + "\nDrift one.\n", encoding="utf-8")
+        runtime = self.chat / "_runtime/codex"
+        runtime.mkdir(parents=True)
+        binding = {
+            "agent": "codex", "session_id": "s",
+            "wake_mode": "command", "wake_verified": True,
+        }
+        state = {
+            "session_id": "s", "notified": {}, "attempts": {},
+            "failed": [], "unverified": [], "stale": [],
+        }
+        with mock.patch.object(mc, "wake", return_value=True) as wake:
+            self.assertTrue(mc.scan_once(self.chat, binding, state))
+            for _ in range(99):
+                self.assertFalse(mc.scan_once(self.chat, binding, state))
+        alerts = (runtime / "alerts.log").read_text()
+        self.assertEqual(alerts.count("ignored malformed task"), 1)
+        self.assertEqual(wake.call_count, 1)
+        self.assertEqual(state["malformed"].keys(), {task.name})
+        self.assertEqual(state["malformed_surfaced"].keys(), {task.name})
+
+        (task / "TASK.md").write_text(original_task + "\nDrift two.\n", encoding="utf-8")
+        with mock.patch.object(mc, "wake", return_value=True) as changed_wake:
+            self.assertTrue(mc.scan_once(self.chat, binding, state))
+        self.assertEqual((runtime / "alerts.log").read_text().count("ignored malformed task"), 2)
+        changed_wake.assert_called_once()
+
+        (task / "TASK.md").write_text(original_task, encoding="utf-8")
+        self.assertTrue(mc.scan_once(self.chat, binding, state))
+        self.assertEqual(state["malformed"], {})
+        self.assertEqual(state["malformed_surfaced"], {})
+        (task / "TASK.md").write_text(original_task + "\nDrift two.\n", encoding="utf-8")
+        with mock.patch.object(mc, "wake", return_value=True):
+            self.assertTrue(mc.scan_once(self.chat, binding, state))
+        self.assertEqual((runtime / "alerts.log").read_text().count("ignored malformed task"), 3)
+
+    def test_unverified_malformed_alert_surfaces_after_wake_verification(self):
+        task = self.make_task(holder="claude")
+        (task / "TASK.md").write_text(
+            (task / "TASK.md").read_text() + "\nDrift.\n",
+            encoding="utf-8",
+        )
+        runtime = self.chat / "_runtime/codex"
+        runtime.mkdir(parents=True)
+        binding = {
+            "agent": "codex", "session_id": "s",
+            "wake_mode": "command", "wake_verified": False,
+        }
+        state = {
+            "session_id": "s", "notified": {}, "attempts": {},
+            "failed": [], "unverified": [], "stale": [],
+        }
+        self.assertTrue(mc.scan_once(self.chat, binding, state))
+        self.assertEqual((runtime / "alerts.log").read_text().count("ignored malformed task"), 1)
+        self.assertEqual(state["malformed_surfaced"], {})
+        binding["wake_verified"] = True
+        with mock.patch.object(mc, "wake", return_value=True) as wake:
+            self.assertTrue(mc.scan_once(self.chat, binding, state))
+        wake.assert_called_once()
+        self.assertIn(task.name, state["malformed_surfaced"])
+        self.assertEqual((runtime / "alerts.log").read_text().count("ignored malformed task"), 1)
+
+    def test_removed_malformed_task_clears_dedupe_and_retry_state(self):
+        task = self.make_task(holder="claude")
+        (task / "TASK.md").write_text("# Task\n\nOwner: Claude\n", encoding="utf-8")
+        runtime = self.chat / "_runtime/codex"
+        runtime.mkdir(parents=True)
+        binding = {
+            "agent": "codex", "session_id": "s",
+            "wake_mode": "command", "wake_verified": True,
+        }
+        state = {
+            "session_id": "s", "notified": {}, "attempts": {},
+            "failed": [], "unverified": [], "stale": [],
+        }
+        with mock.patch.object(mc, "wake", return_value=False):
+            mc.scan_once(self.chat, binding, state)
+        self.assertIn(task.name, state["malformed"])
+        attempt_key = next(
+            key for key in state["attempts"]
+            if key.startswith(f"malformed:{task.name}:")
+        )
+        state["failed"] = [attempt_key]
+        original_rmtree = mc.shutil.rmtree
+        original_rmtree(task)
+        self.assertTrue(mc.scan_once(self.chat, binding, state))
+        self.assertNotIn(task.name, state["malformed"])
+        self.assertFalse(any(key.startswith(f"malformed:{task.name}:") for key in state["attempts"]))
+        self.assertNotIn(attempt_key, state["failed"])
 
     def test_wake_failures_are_bounded_and_alert_once(self):
         self.make_task()
