@@ -10,6 +10,7 @@ A collection of extensions for AI coding agents: self-contained **Skills** (comp
 | **csv-tools** | Inspect, query, and manipulate CSV files using local Python scripts (stdlib only). Probe, filter, sort, group, stats, transform to JSON/JSONL, diff, validate; ignores footer/comment lines. |
 | **usage-cost** | Aggregate Claude Code session usage + list-price cost over a configurable window from `~/.claude/projects/`. Per-day bar chart, per-project totals, top-N sessions, token totals (Python stdlib only). *Claude Code only — reads Claude Code's own session logs.* |
 | **self-reflection** | End-of-conversation self-review that surfaces only genuinely critical observations — lessons learned, memory candidates, workflow recommendations. High bar: silent if there's nothing worth saying. Invoked explicitly, not auto-triggered. |
+| **multiagent-collab** | Coordinate a Codex/Claude owner-reviewer workflow through a shared filesystem baton, including setup, watchers, diagnosis, and verified archival. |
 
 ## Rules (Claude Code)
 
