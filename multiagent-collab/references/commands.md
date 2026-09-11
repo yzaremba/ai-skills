@@ -29,6 +29,7 @@ task-init --task-id ID --owner codex|claude --task-file PATH
 status --task-id ID [--json]
 pass --task-id ID --agent codex|claude --expected-seq N \
   --next-holder codex|claude|operator|none --log-file PATH [baton fields]
+signoff --task-id ID --agent OWNER --expected-seq N --log-file PATH
 archive --task-id ID --expected-seq N
 ```
 
@@ -43,9 +44,12 @@ bind --agent codex|claude --session-id ID --project PATH [wake options]
 rebind --agent codex|claude --session-id ID --project PATH [wake options]
 release --agent codex|claude --session-id ID
 watch --agent codex|claude --session-id ID
+probe-wake --agent codex|claude --session-id ID
+verify-wake --agent codex|claude --session-id ID --nonce NONCE
 hook --agent codex|claude --event session-start|session-end
 ```
 
 Only one live binding per agent is allowed. Dead bindings are reported and require
 explicit `rebind`; they are never stolen automatically. `doctor` reports protocol,
-hook, skill-link, binding, heartbeat, and wake-path state.
+hook, skill-link, binding, heartbeat, and nonce-verified wake-path state. Claude's
+monitor-file fallback must be explicitly armed before `probe-wake`.
