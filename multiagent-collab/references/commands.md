@@ -31,7 +31,8 @@ pass --task-id ID --agent codex|claude --expected-seq N \
   --next-holder codex|claude|operator|none --log-file PATH [baton fields]
 signoff --task-id ID --agent OWNER --expected-seq N --log-file PATH
 operator-relay --task-id ID --agent RELAY --expected-seq N \
-  --action approve|stop|ruling|amend|close --next-holder HOLDER --log-file PATH
+  --action approve|stop|ruling|amend|close --next-holder HOLDER --log-file PATH \
+  [--task-sha256 SHA256]
 archive --task-id ID --agent OWNER --expected-seq N
 ```
 
@@ -40,7 +41,10 @@ log entry, and atomically replaces the baton. Never edit the baton by hand durin
 agent pass. `task-init` pins the owner/reviewer roles; operator approval pins the
 approved `TASK.md` hash. Later role or unapproved contract drift is rejected.
 `operator-relay --log-file` must name a non-empty file containing the operator's
-verbatim instruction; the helper preserves that text in `LOG.md`.
+verbatim instruction; the helper preserves that text in `LOG.md`. Approve and amend
+also require the exact current `--task-sha256` shown to the operator.
+An unpinned legacy baton is inert until one of those hash-checked operator relays
+establishes its role and contract pins.
 
 ## Session binding and watchers
 

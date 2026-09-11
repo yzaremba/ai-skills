@@ -623,12 +623,12 @@ def bool_choice(value: str, current: bool) -> bool:
 
 def contract_roles(
     target: Path, baton: dict[str, Any], *, allow_task_hash_change: bool = False,
+    allow_unpinned: bool = False,
 ) -> tuple[str, str]:
     """Return pinned roles and reject TASK.md drift after approval.
 
-    Batons created before role pinning are migrated from the current contract on
-    their next holder-controlled transition. Those legacy tasks are already past
-    contract approval; their current TASK.md hash is therefore pinned immediately.
+    An unpinned legacy baton can be migrated only by an operator approve/amend
+    relay carrying an exact current TASK.md hash.
     """
     task_md = target / "TASK.md"
     current_owner = task_owner(task_md)
@@ -637,9 +637,11 @@ def contract_roles(
     pinned = {"owner", "reviewer", "task_sha256"}
     present = pinned & baton.keys()
     if not present:
+        if not allow_unpinned:
+            raise UserError("task contract is unpinned; operator approve or amend is required")
         baton["owner"] = current_owner
         baton["reviewer"] = "claude" if current_owner == "codex" else "codex"
-        baton["task_sha256"] = sha256_file(task_md)
+        baton["task_sha256"] = "pending"
     elif present != pinned:
         raise UserError("baton has incomplete contract pins")
     owner = str(baton["owner"])
@@ -732,6 +734,8 @@ def baton_pass(args: argparse.Namespace) -> int:
                 raise UserError("only owner may present signoff")
             if baton["status"] != "active":
                 raise UserError("signoff requires an active task")
+            if baton["task_sha256"] == "pending":
+                raise UserError("signoff requires an operator-approved TASK.md hash")
             if baton["verdict"] != "PASS" or not baton["owner_ready"] or not baton["reviewer_ready"]:
                 raise UserError("signoff requires PASS and both readiness flags")
         if args.next_holder == "operator":
@@ -786,10 +790,20 @@ def operator_relay(args: argparse.Namespace) -> int:
             raise UserError("operator quote must be valid UTF-8") from exc
         if not operator_words.strip():
             raise UserError("operator relay requires a non-empty verbatim operator quote")
+        task_sha256 = getattr(args, "task_sha256", None)
+        if args.action in {"approve", "amend"}:
+            if not isinstance(task_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", task_sha256):
+                raise UserError(f"operator {args.action} requires --task-sha256")
+            if task_sha256 != sha256_file(target / "TASK.md"):
+                raise UserError("TASK.md changed after the hash presented to the operator")
+        elif task_sha256 is not None:
+            raise UserError("--task-sha256 is valid only for operator approve or amend")
         owner = None
         if args.action != "stop":
             owner, _ = contract_roles(
-                target, baton, allow_task_hash_change=args.action == "amend",
+                target, baton,
+                allow_task_hash_change=args.action == "amend",
+                allow_unpinned=args.action in {"approve", "amend"},
             )
         if args.action == "stop":
             if args.next_holder != "operator":
@@ -801,6 +815,8 @@ def operator_relay(args: argparse.Namespace) -> int:
         elif args.action == "close":
             if owner not in AGENTS or args.next_holder != owner:
                 raise UserError("CLOSE must give the cleanup turn to the task owner")
+            if baton["task_sha256"] == "pending":
+                raise UserError("CLOSE requires an operator-approved TASK.md hash")
             if baton["verdict"] != "PASS" or not baton["owner_ready"] or not baton["reviewer_ready"]:
                 raise UserError("CLOSE requires PASS and both readiness flags")
             baton["status"] = "done"
@@ -808,7 +824,7 @@ def operator_relay(args: argparse.Namespace) -> int:
             if owner not in AGENTS or args.next_holder != owner:
                 raise UserError("approval must return baton to the task owner")
             baton["status"] = "active"
-            baton["task_sha256"] = sha256_file(target / "TASK.md")
+            baton["task_sha256"] = task_sha256
             baton["verdict"] = "none"
             baton["owner_ready"] = False
             baton["reviewer_ready"] = False
@@ -817,7 +833,7 @@ def operator_relay(args: argparse.Namespace) -> int:
                 raise UserError(f"{args.action} must assign an agent")
             baton["status"] = "active"
             if args.action == "amend":
-                baton["task_sha256"] = sha256_file(target / "TASK.md")
+                baton["task_sha256"] = task_sha256
             baton["verdict"] = "none"
             baton["owner_ready"] = False
             baton["reviewer_ready"] = False
@@ -829,7 +845,11 @@ def operator_relay(args: argparse.Namespace) -> int:
         baton["updated_at"] = now_iso()
         baton_text = dump_baton(baton)
         existing = log_path.read_text(encoding="utf-8").rstrip()
-        heading = f"## Seq {baton['seq'] - 1} — operator {args.action} via {args.agent} to {args.next_holder}"
+        approved_hash = f" task_sha256={task_sha256}" if task_sha256 is not None else ""
+        heading = (
+            f"## Seq {baton['seq'] - 1} — operator {args.action} via {args.agent} "
+            f"to {args.next_holder}{approved_hash}"
+        )
         entry = f"{existing}\n\n{heading}\n\n".encode("utf-8") + operator_data
         if not entry.endswith(b"\n"):
             entry += b"\n"
@@ -1370,6 +1390,7 @@ def archive_task(args: argparse.Namespace) -> int:
             or owner not in AGENTS
             or baton["holder"] != owner
             or args.agent != owner
+            or baton["task_sha256"] == "pending"
             or baton["verdict"] != "PASS"
             or not baton["owner_ready"]
             or not baton["reviewer_ready"]
@@ -1510,6 +1531,7 @@ def build_parser() -> argparse.ArgumentParser:
     item.add_argument("--expected-seq", type=int, required=True)
     item.add_argument("--action", choices=("approve", "stop", "ruling", "amend", "close"), required=True)
     item.add_argument("--next-holder", choices=(*AGENTS, "operator"), required=True)
+    item.add_argument("--task-sha256")
     item.add_argument("--log-file", required=True)
     item.add_argument("--ask", required=True)
     item.add_argument("--break-stale-lock", action="store_true")
