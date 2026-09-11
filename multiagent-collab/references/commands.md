@@ -30,7 +30,9 @@ status --task-id ID [--json]
 pass --task-id ID --agent codex|claude --expected-seq N \
   --next-holder codex|claude|operator|none --log-file PATH [baton fields]
 signoff --task-id ID --agent OWNER --expected-seq N --log-file PATH
-archive --task-id ID --expected-seq N
+operator-relay --task-id ID --agent RELAY --expected-seq N \
+  --action approve|stop|ruling|amend|close --next-holder HOLDER --log-file PATH
+archive --task-id ID --agent OWNER --expected-seq N
 ```
 
 `pass` takes the shared `.baton.lock`, rechecks the sequence, appends the supplied

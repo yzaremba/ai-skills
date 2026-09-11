@@ -30,6 +30,7 @@ TASK_ID_RE = re.compile(r"^[0-9]{8}-[0-9]{3}-[a-z0-9][a-z0-9-]*$")
 AGENTS = ("codex", "claude")
 WAKE_TIMEOUT_SECONDS = 10
 WAKE_BACKOFF_SECONDS = (0, 5, 30)
+WAKE_RECOVERY_INTERVAL_SECONDS = 300
 
 
 class UserError(RuntimeError):
@@ -127,6 +128,7 @@ class FileOps:
         self.backup_root = chat_root / "_backups" / stamp
         self.backups: list[dict[str, str]] = []
         self._backed_up: set[Path] = set()
+        self.created_config: set[str] = set()
 
     def note(self, action: str) -> None:
         self.actions.append(action)
@@ -160,10 +162,24 @@ class FileOps:
         if target.exists() and not target.is_symlink() and target.read_bytes() == data:
             return
         if config:
+            if not target.exists():
+                self.created_config.add(str(target))
             self.backup(target)
         self.note(f"write {target}")
         if not self.dry_run:
             atomic_write(target, data, mode)
+
+    def remove_file(self, path: Path, *, config: bool = False) -> None:
+        target = config_target(path, self.follow_symlinks) if config else path
+        if not target.exists():
+            return
+        if target.is_dir():
+            raise UserError(f"refusing to remove directory as file: {target}")
+        if config:
+            self.backup(target)
+        self.note(f"unlink {target}")
+        if not self.dry_run:
+            target.unlink()
 
     def symlink(self, target: Path, link: Path) -> None:
         if link.is_symlink() and symlink_target(link) == target:
@@ -190,7 +206,11 @@ class FileOps:
         manifest = self.backup_root / "manifest.json"
         self.note(f"write {manifest}")
         if not self.dry_run:
-            atomic_write(manifest, json_bytes({"backups": self.backups}), 0o600)
+            atomic_write(
+                manifest,
+                json_bytes({"backups": self.backups, "created_config": sorted(self.created_config)}),
+                0o600,
+            )
 
 
 def managed_guidance(chat_root: Path) -> str:
@@ -400,12 +420,15 @@ def setup(args: argparse.Namespace) -> int:
     metadata = load_json(metadata_path, {})
     installed = set(metadata.get("agents", []))
     installed.update(agents)
+    created_config = set(metadata.get("created_config", []))
+    created_config.update(ops.created_config)
     metadata = {
         "skill_root": str(skill_root),
         "chat_root": str(chat_root),
         "protocol_version": protocol_version(asset.read_bytes()),
         "protocol_sha256": sha256_file(asset),
         "agents": sorted(installed),
+        "created_config": sorted(created_config),
     }
     ops.write(metadata_path, json_bytes(metadata), mode=0o600)
     ops.finish()
@@ -420,6 +443,9 @@ def uninstall(args: argparse.Namespace) -> int:
     skill_root = expand(Path(__file__).parent.parent)
     agents = selected_agents(args.agent)
     ops = FileOps(dry_run=args.dry_run, chat_root=chat_root, follow_symlinks=args.follow_config_symlinks)
+    metadata_path = chat_root / "_runtime" / "install.json"
+    metadata = load_json(metadata_path, {}) if metadata_path.exists() else {}
+    created_config = set(metadata.get("created_config", []))
     for agent in agents:
         ops.unlink_managed(skill_root, home / f".{agent}" / "skills" / SKILL_NAME)
         if agent == "codex":
@@ -427,18 +453,25 @@ def uninstall(args: argparse.Namespace) -> int:
             agents_target = config_target(agents_md, args.follow_config_symlinks)
             if agents_target.exists():
                 updated = remove_managed_block(agents_target.read_text(encoding="utf-8"))
-                ops.write(agents_md, updated.encode("utf-8"), config=True)
+                if str(agents_target) in created_config and not updated.strip():
+                    ops.remove_file(agents_md, config=True)
+                else:
+                    ops.write(agents_md, updated.encode("utf-8"), config=True)
             hooks_path = home / ".codex" / "hooks.json"
         else:
             hooks_path = home / ".claude" / "settings.json"
         if hooks_path.exists():
             hooks_target = config_target(hooks_path, args.follow_config_symlinks)
             data = remove_hooks(load_json(hooks_target, {}), agent)
-            ops.write(hooks_path, json_bytes(data), config=True)
-    metadata_path = chat_root / "_runtime" / "install.json"
+            empty_managed = data in ({}, {"hooks": {}}, {"description": "User-level Codex hooks.", "hooks": {}})
+            if str(hooks_target) in created_config and empty_managed:
+                ops.remove_file(hooks_path, config=True)
+            else:
+                ops.write(hooks_path, json_bytes(data), config=True)
     if metadata_path.exists():
-        metadata = load_json(metadata_path, {})
         metadata["agents"] = [agent for agent in metadata.get("agents", []) if agent not in agents]
+        removed_prefixes = tuple(str(home / f".{agent}") for agent in agents)
+        metadata["created_config"] = [path for path in metadata.get("created_config", []) if not path.startswith(removed_prefixes)]
         ops.write(metadata_path, json_bytes(metadata), mode=0o600)
     ops.finish()
     for action in ops.actions:
@@ -589,7 +622,7 @@ def baton_pass(args: argparse.Namespace) -> int:
         baton = parse_baton(baton_path)
         if baton["seq"] != args.expected_seq:
             raise UserError(f"sequence changed: expected {args.expected_seq}, found {baton['seq']}")
-        if baton["holder"] != args.agent and not args.ministerial:
+        if baton["holder"] != args.agent:
             raise UserError(f"baton held by {baton['holder']}, not {args.agent}")
         owner = task_owner(target / "TASK.md")
         if owner not in AGENTS:
@@ -599,20 +632,16 @@ def baton_pass(args: argparse.Namespace) -> int:
         reviewer_ready_arg = getattr(args, "reviewer_ready", "keep")
         verdict_arg = getattr(args, "verdict", None)
         operator_reason = getattr(args, "operator_reason", None)
-        if args.ministerial:
-            if args.next_holder != "operator":
-                raise UserError("ministerial pass may only return control to operator")
-            if args.revision is not None or args.round is not None or owner_ready_arg != "keep" or reviewer_ready_arg != "keep":
-                raise UserError("ministerial pass cannot change revision, round, or readiness")
-            if verdict_arg not in {None, "none", "BLOCKED"}:
-                raise UserError("ministerial pass may only keep verdict or block")
-        else:
-            if args.agent == owner and reviewer_ready_arg != "keep":
-                raise UserError("owner cannot set reviewer readiness")
-            if args.agent == reviewer and owner_ready_arg != "keep":
-                raise UserError("reviewer cannot set owner readiness")
-            if verdict_arg not in {None, "none"} and args.agent != reviewer:
-                raise UserError("only reviewer may set a review verdict")
+        if getattr(args, "ministerial", False):
+            raise UserError("use operator-relay for operator-directed baton changes")
+        if args.agent == owner and reviewer_ready_arg != "keep":
+            raise UserError("owner cannot set reviewer readiness")
+        if args.agent == reviewer and owner_ready_arg != "keep":
+            raise UserError("reviewer cannot set owner readiness")
+        if verdict_arg not in {None, "none"} and args.agent != reviewer:
+            raise UserError("only reviewer may set a review verdict")
+        if args.status == "done" or args.next_holder == "none":
+            raise UserError("only operator CLOSE and archive may complete a task")
         if args.next_holder == "operator" and operator_reason not in {"contract", "blocked", "signoff"}:
             raise UserError("pass to operator requires --operator-reason")
         old_revision = baton["revision"]
@@ -621,6 +650,7 @@ def baton_pass(args: argparse.Namespace) -> int:
         if baton["revision"] != old_revision:
             baton["owner_ready"] = False
             baton["reviewer_ready"] = False
+            baton["verdict"] = "none"
         if verdict_arg in {"CHANGES_REQUIRED", "BLOCKED"}:
             baton["owner_ready"] = False
             baton["reviewer_ready"] = False
@@ -638,12 +668,17 @@ def baton_pass(args: argparse.Namespace) -> int:
         if operator_reason == "signoff":
             if args.agent != owner:
                 raise UserError("only owner may present signoff")
+            if baton["status"] != "active":
+                raise UserError("signoff requires an active task")
             if baton["verdict"] != "PASS" or not baton["owner_ready"] or not baton["reviewer_ready"]:
                 raise UserError("signoff requires PASS and both readiness flags")
+        if args.next_holder == "operator":
+            baton["ask"] = f"[{operator_reason}] {args.ask}"
         baton_text = dump_baton(baton)
         turn = expand(args.log_file).read_text(encoding="utf-8").rstrip()
         existing = log_path.read_text(encoding="utf-8").rstrip()
-        heading = f"## Seq {baton['seq'] - 1} — {args.agent} to {args.next_holder}"
+        reason = f" ({operator_reason})" if args.next_holder == "operator" else ""
+        heading = f"## Seq {baton['seq'] - 1} — {args.agent} to {args.next_holder}{reason}"
         if heading in existing:
             turn = f"Supersedes an incomplete prior LOG entry for this sequence.\n\n{turn}"
         if broken:
@@ -667,6 +702,57 @@ def signoff(args: argparse.Namespace) -> int:
     args.ministerial = False
     args.operator_reason = "signoff"
     return baton_pass(args)
+
+
+def operator_relay(args: argparse.Namespace) -> int:
+    chat_root = expand(args.chat_root)
+    target = task_path(chat_root, args.task_id)
+    baton_path = target / "BATON.md"
+    log_path = target / "LOG.md"
+    lock = target / ".baton.lock"
+    acquire_baton_lock(lock, f"operator-via-{args.agent}", args.break_stale_lock)
+    try:
+        baton = parse_baton(baton_path)
+        if baton["seq"] != args.expected_seq:
+            raise UserError(f"sequence changed: expected {args.expected_seq}, found {baton['seq']}")
+        if args.action != "stop" and baton["holder"] != "operator":
+            raise UserError(f"operator relay {args.action} requires holder operator")
+        owner = task_owner(target / "TASK.md") if args.action != "stop" else None
+        if args.action == "stop":
+            if args.next_holder != "operator":
+                raise UserError("STOP must leave baton with operator")
+            baton["status"] = "blocked"
+            baton["verdict"] = "BLOCKED"
+            baton["owner_ready"] = False
+            baton["reviewer_ready"] = False
+        elif args.action == "close":
+            if owner not in AGENTS or args.next_holder != owner:
+                raise UserError("CLOSE must give the cleanup turn to the task owner")
+            if baton["verdict"] != "PASS" or not baton["owner_ready"] or not baton["reviewer_ready"]:
+                raise UserError("CLOSE requires PASS and both readiness flags")
+            baton["status"] = "done"
+        elif args.action == "approve":
+            if owner not in AGENTS or args.next_holder != owner:
+                raise UserError("approval must return baton to the task owner")
+            baton["status"] = "active"
+        elif args.action in {"amend", "ruling"}:
+            if args.next_holder not in AGENTS:
+                raise UserError(f"{args.action} must assign an agent")
+            baton["status"] = "active"
+        baton["seq"] += 1
+        baton["holder"] = args.next_holder
+        baton["ask"] = args.ask
+        baton["updated_at"] = now_iso()
+        baton_text = dump_baton(baton)
+        operator_words = expand(args.log_file).read_text(encoding="utf-8").rstrip()
+        existing = log_path.read_text(encoding="utf-8").rstrip()
+        heading = f"## Seq {baton['seq'] - 1} — operator {args.action} via {args.agent} to {args.next_holder}"
+        atomic_text(log_path, f"{existing}\n\n{heading}\n\n{operator_words}\n")
+        atomic_text(baton_path, baton_text)
+    finally:
+        shutil.rmtree(lock, ignore_errors=True)
+    print(f"{args.task_id}: seq {baton['seq']} holder {baton['holder']} action {args.action}")
+    return 0
 
 
 def pid_alive(pid: int) -> bool:
@@ -702,15 +788,26 @@ def watcher_pid_matches(pid: int, agent: str, session_id: str, chat_root: str = 
     if not command_path.exists():
         return False
     try:
-        command = command_path.read_bytes().replace(b"\0", b" ").decode("utf-8", "replace")
+        command = [
+            item.decode("utf-8", "replace")
+            for item in command_path.read_bytes().split(b"\0")
+            if item
+        ]
     except OSError:
         return False
+
+    def exact_option(name: str, expected: str) -> bool:
+        return any(
+            item == name and index + 1 < len(command) and command[index + 1] == expected
+            for index, item in enumerate(command)
+        )
+
     return (
-        "multiagent_collab.py" in command
-        and " watch " in f" {command} "
-        and agent in command
-        and session_id in command
-        and (not chat_root or str(expand(chat_root)) in command)
+        any(Path(item).name == "multiagent_collab.py" for item in command)
+        and "watch" in command
+        and exact_option("--agent", agent)
+        and exact_option("--session-id", session_id)
+        and (not chat_root or exact_option("--chat-root", str(expand(chat_root))))
     )
 
 
@@ -737,6 +834,7 @@ def stop_binding(chat_root: Path, agent: str, session_id: str | None, *, force: 
     heartbeat.unlink(missing_ok=True)
     (binding_path.parent / "wake-challenge.json").unlink(missing_ok=True)
     (binding_path.parent / "monitor.inbox").unlink(missing_ok=True)
+    (binding_path.parent / "watch-state.json").unlink(missing_ok=True)
 
 
 def binding_record(args: argparse.Namespace, pid: int) -> dict[str, Any]:
@@ -795,6 +893,8 @@ def bind(args: argparse.Namespace, *, rebind: bool) -> int:
                 raise UserError(f"{args.agent} binding is {state}; explicit rebind required")
             stop_binding(chat_root, args.agent, None, force=True)
         pending = binding_record(args, 0)
+        fresh_state = {"session_id": args.session_id, "notified": {}, "attempts": {}, "failed": [], "unverified": [], "stale": []}
+        atomic_write(binding_path.parent / "watch-state.json", json_bytes(fresh_state), 0o600)
         atomic_write(binding_path, json_bytes(pending), 0o600)
         pid = spawn_watcher(chat_root, pending)
         pending["pid"] = pid
@@ -839,7 +939,11 @@ def wake(binding: dict[str, Any], runtime: Path, message: str) -> bool:
 
 
 def task_owner(task_md: Path) -> str | None:
-    match = re.search(r"^Owner:\s*(Codex|Claude)\s*$", task_md.read_text(encoding="utf-8"), re.MULTILINE | re.IGNORECASE)
+    match = re.search(
+        r"^\s*(?:\*\*)?Owner:(?:\*\*)?\s*(?:\*\*)?(Codex|Claude)(?:\*\*)?\s*$",
+        task_md.read_text(encoding="utf-8"),
+        re.MULTILINE | re.IGNORECASE,
+    )
     return match.group(1).lower() if match else None
 
 
@@ -855,13 +959,14 @@ def attempt_wake(
 ) -> bool:
     attempts = state.setdefault("attempts", {})
     record = attempts.setdefault(key, {"count": 0, "next_at": 0.0})
-    if record["count"] >= len(WAKE_BACKOFF_SECONDS) or time.time() < record["next_at"]:
+    if time.time() < record["next_at"]:
         return False
     record["count"] += 1
     if not binding.get("wake_verified"):
         succeeded = False
     else:
-        succeeded = wake(binding, runtime, message)
+        recovery = "Previous wake attempts failed; transport has recovered. " if key in state.get("failed", []) else ""
+        succeeded = wake(binding, runtime, recovery + message)
     if succeeded:
         attempts.pop(key, None)
         return True
@@ -870,6 +975,8 @@ def attempt_wake(
         if key not in failed:
             failed.append(key)
             append_alert(runtime, f"wake failed after {record['count']} attempts: {key}")
+        record["count"] = 0
+        record["next_at"] = time.time() + WAKE_RECOVERY_INTERVAL_SECONDS
     else:
         record["next_at"] = time.time() + WAKE_BACKOFF_SECONDS[record["count"]]
     return False
@@ -993,10 +1100,11 @@ def hook(args: argparse.Namespace) -> int:
     if not binding_path.exists():
         return 0
     binding = load_json(binding_path, {})
-    if binding.get("session_id") != session_id:
-        return 0
-    if not binding_live(binding, heartbeat):
+    live = binding_live(binding, heartbeat)
+    if not live:
         context = "multiagent-collab binding is stale; run an explicit rebind."
+    elif binding.get("session_id") != session_id:
+        context = f"multiagent-collab is bound to another live session: {binding.get('session_id')}"
     elif args.agent == "claude" and binding.get("wake_mode") == "monitor-file":
         monitor = binding_path.parent / "monitor.inbox"
         context = (
@@ -1019,7 +1127,7 @@ def verify_wake(args: argparse.Namespace) -> int:
         raise UserError("binding is not live")
     challenge_path = binding_path.parent / "wake-challenge.json"
     challenge = load_json(challenge_path, {})
-    if challenge.get("session_id") != args.session_id or challenge.get("nonce") != args.nonce:
+    if challenge.get("session_id") != args.session_id or challenge.get("nonce_sha256") != sha256_bytes(args.nonce.encode("utf-8")):
         raise UserError("wake verification nonce mismatch")
     if time.time() > float(challenge.get("expires_at", 0)):
         raise UserError("wake verification nonce expired")
@@ -1031,6 +1139,7 @@ def verify_wake(args: argparse.Namespace) -> int:
     state_path = binding_path.parent / "watch-state.json"
     state = load_json(state_path, {}) if state_path.exists() else {}
     if state.get("session_id") == args.session_id:
+        state["notified"] = {}
         state["attempts"] = {}
         state["failed"] = []
         state["unverified"] = []
@@ -1046,7 +1155,11 @@ def probe_wake(args: argparse.Namespace) -> int:
         raise UserError("probe requires this live bound session")
     nonce = secrets.token_hex(16)
     challenge_path = binding_path.parent / "wake-challenge.json"
-    challenge = {"session_id": args.session_id, "nonce": nonce, "expires_at": time.time() + 120}
+    challenge = {
+        "session_id": args.session_id,
+        "nonce_sha256": sha256_bytes(nonce.encode("utf-8")),
+        "expires_at": time.time() + 120,
+    }
     binding["wake_verified"] = False
     atomic_write(binding_path, json_bytes(binding), 0o600)
     atomic_write(challenge_path, json_bytes(challenge), 0o600)
@@ -1061,7 +1174,7 @@ def probe_wake(args: argparse.Namespace) -> int:
     if not wake(binding, binding_path.parent, f"multiagent-collab wake probe nonce {nonce}. Run: {echo_command}"):
         challenge_path.unlink(missing_ok=True)
         raise UserError("wake probe transport failed")
-    print(nonce)
+    print("wake probe sent; nonce is available only through the wake transport")
     return 0
 
 
@@ -1082,7 +1195,7 @@ def doctor(args: argparse.Namespace) -> int:
         check("protocol_hash", sha256_file(asset) == sha256_file(installed), f"packaged={sha256_file(asset)} installed={sha256_file(installed)}")
     for agent in selected_agents(args.agent):
         link = home / f".{agent}" / "skills" / SKILL_NAME
-        check(f"{agent}_skill_link", link.is_symlink() and expand(os.readlink(link)) == skill_root, str(link))
+        check(f"{agent}_skill_link", link.is_symlink() and symlink_target(link) == skill_root, str(link))
         hooks_path = home / (".codex/hooks.json" if agent == "codex" else ".claude/settings.json")
         hooks = load_json(hooks_path, {}) if hooks_path.exists() else {}
         groups = hooks.get("hooks", {}) if isinstance(hooks, dict) else {}
@@ -1139,9 +1252,8 @@ def verify_manifest(task: Path) -> None:
 def task_summary(task_md: Path) -> tuple[str, str]:
     text = task_md.read_text(encoding="utf-8")
     title_match = re.search(r"^# Task:\s*(.+)$", text, re.MULTILINE)
-    owner_match = re.search(r"^Owner:\s*(Codex|Claude)\s*$", text, re.MULTILINE | re.IGNORECASE)
     title = title_match.group(1).strip() if title_match else task_md.parent.name
-    owner = owner_match.group(1).lower() if owner_match else "unknown"
+    owner = task_owner(task_md) or "unknown"
     return title.replace("|", "-"), owner
 
 
@@ -1164,9 +1276,26 @@ def archive_task(args: argparse.Namespace) -> int:
         baton = parse_baton(task / "BATON.md")
         if baton["seq"] != args.expected_seq:
             raise UserError("archive sequence changed")
-        if baton["status"] != "done" or baton["holder"] != "none":
-            raise UserError("archive requires status done and holder none")
+        owner = task_owner(task / "TASK.md")
+        if (
+            baton["status"] != "done"
+            or owner not in AGENTS
+            or baton["holder"] != owner
+            or args.agent != owner
+            or baton["verdict"] != "PASS"
+            or not baton["owner_ready"]
+            or not baton["reviewer_ready"]
+        ):
+            raise UserError("archive requires operator CLOSE and the owner's cleanup turn")
         started = True
+        existing_log = (task / "LOG.md").read_text(encoding="utf-8").rstrip()
+        heading = f"## Seq {baton['seq']} — {owner} cleanup to none"
+        atomic_text(task / "LOG.md", f"{existing_log}\n\n{heading}\n\nArchive-and-remove cleanup started after operator CLOSE.\n")
+        baton["seq"] += 1
+        baton["holder"] = "none"
+        baton["ask"] = "Task closed and archived."
+        baton["updated_at"] = now_iso()
+        atomic_text(task / "BATON.md", dump_baton(baton))
         atomic_text(task / "MANIFEST.sha256", manifest_text(manifest_entries(task)))
         archive_dir.mkdir(parents=True, exist_ok=True)
         if final.exists():
@@ -1188,7 +1317,7 @@ def archive_task(args: argparse.Namespace) -> int:
         )
         atomic_text(index, original + "\n" + row + "\n")
         current = parse_baton(task / "BATON.md")
-        if current["seq"] != args.expected_seq:
+        if current["seq"] != args.expected_seq + 1 or current["holder"] != "none":
             raise UserError("archive sequence changed before removal")
         shutil.rmtree(task)
         for agent in AGENTS:
@@ -1274,7 +1403,6 @@ def build_parser() -> argparse.ArgumentParser:
     item.add_argument("--owner-ready", choices=("keep", "true", "false"), default="keep")
     item.add_argument("--reviewer-ready", choices=("keep", "true", "false"), default="keep")
     item.add_argument("--ask", required=True)
-    item.add_argument("--ministerial", action="store_true")
     item.add_argument("--break-stale-lock", action="store_true")
     item.add_argument("--operator-reason", choices=("contract", "blocked", "signoff"))
     item.set_defaults(func=baton_pass)
@@ -1287,6 +1415,17 @@ def build_parser() -> argparse.ArgumentParser:
     item.add_argument("--ask", default="Review and close this completed task.")
     item.add_argument("--break-stale-lock", action="store_true")
     item.set_defaults(func=signoff)
+
+    item = sub.add_parser("operator-relay", parents=[common])
+    item.add_argument("--task-id", required=True)
+    item.add_argument("--agent", choices=AGENTS, required=True)
+    item.add_argument("--expected-seq", type=int, required=True)
+    item.add_argument("--action", choices=("approve", "stop", "ruling", "amend", "close"), required=True)
+    item.add_argument("--next-holder", choices=(*AGENTS, "operator"), required=True)
+    item.add_argument("--log-file", required=True)
+    item.add_argument("--ask", required=True)
+    item.add_argument("--break-stale-lock", action="store_true")
+    item.set_defaults(func=operator_relay)
 
     for name in ("bind", "rebind"):
         item = sub.add_parser(name, parents=[common])
@@ -1327,6 +1466,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     item = sub.add_parser("archive", parents=[common])
     item.add_argument("--task-id", required=True)
+    item.add_argument("--agent", choices=AGENTS, required=True)
     item.add_argument("--expected-seq", type=int, required=True)
     item.set_defaults(func=archive_task)
     return parser
