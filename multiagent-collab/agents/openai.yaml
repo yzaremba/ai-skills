@@ -1,0 +1,4 @@
+interface:
+  display_name: "Multi-agent collaboration"
+  short_description: "Coordinate Codex-Claude owner/reviewer work"
+  default_prompt: "Use $multiagent-collab to coordinate this task with the other agent as an adversarial reviewer."
