@@ -77,6 +77,14 @@ class SetupTests(unittest.TestCase):
         backup_data = json.loads(manifests[0].read_text())
         self.assertEqual(len(backup_data["backups"]), 1)
         self.assertEqual(backup_data["backups"][0]["source"], str(self.home / ".claude/settings.json"))
+        install_data = json.loads((self.chat / "_runtime/install.json").read_text())
+        self.assertEqual(
+            set(install_data["created_config"]),
+            {
+                str(self.home / ".codex/AGENTS.md"),
+                str(self.home / ".codex/hooks.json"),
+            },
+        )
         first = {
             path: path.read_bytes()
             for path in (
@@ -101,12 +109,16 @@ class SetupTests(unittest.TestCase):
         mc.uninstall(self.args("uninstall"))
         self.assertFalse((self.home / ".codex/skills/multiagent-collab").exists())
         self.assertFalse((self.home / ".claude/skills/multiagent-collab").exists())
+        self.assertFalse((self.home / ".codex/AGENTS.md").exists())
+        self.assertFalse((self.home / ".codex/hooks.json").exists())
         self.assertTrue((self.chat / "PROTOCOL.md").is_file())
         self.assertEqual((self.chat / "task-data/result.txt").read_text(), "keep")
         claude = json.loads((self.home / ".claude/settings.json").read_text())
         self.assertEqual(claude["hooks"]["Stop"], self.existing_hook["hooks"]["Stop"])
         self.assertNotIn("SessionStart", claude["hooks"])
         self.assertEqual((self.home / ".claude/settings.json").read_bytes(), self.original_settings)
+        install_data = json.loads((self.chat / "_runtime/install.json").read_text())
+        self.assertEqual(install_data["created_config"], [])
 
     def test_protocol_upgrade_is_compare_and_swap(self):
         mc.setup(self.args("setup", agent="codex"))
@@ -130,6 +142,18 @@ class SetupTests(unittest.TestCase):
         with self.assertRaises(mc.UserError):
             mc.setup(self.args("setup", agent="claude"))
         self.assertEqual(target.read_text(), "{}\n")
+
+    def test_refuses_config_under_symlinked_parent(self):
+        settings = self.home / ".claude/settings.json"
+        settings.unlink()
+        (self.home / ".claude").rmdir()
+        real = self.root / "real-claude"
+        real.mkdir()
+        (real / "settings.json").write_bytes(self.original_settings)
+        (self.home / ".claude").symlink_to(real, target_is_directory=True)
+        with self.assertRaises(mc.UserError):
+            mc.setup(self.args("setup", agent="claude"))
+        self.assertEqual((real / "settings.json").read_bytes(), self.original_settings)
 
     def test_preflight_conflict_leaves_no_partial_install(self):
         conflict = self.home / ".claude/skills/multiagent-collab"
@@ -161,6 +185,64 @@ class BatonTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_task_init_pins_roles_and_rejects_owner_mismatch(self):
+        baton = mc.parse_baton(self.chat / self.task_id / "BATON.md")
+        self.assertEqual(
+            (baton["owner"], baton["reviewer"], baton["task_sha256"]),
+            ("codex", "claude", "pending"),
+        )
+        other = self.root / "other-task.md"
+        other.write_text("# Task\n\nOwner: Claude\n", encoding="utf-8")
+        with self.assertRaises(mc.UserError):
+            mc.task_init(
+                Args(
+                    chat_root=str(self.chat), task_id="20260911-002-owner-mismatch",
+                    owner="codex", task_file=str(other),
+                )
+            )
+        self.assertFalse((self.chat / "20260911-002-owner-mismatch").exists())
+
+    def test_role_pin_and_approved_task_hash_reject_contract_tampering(self):
+        task = self.chat / self.task_id
+        turn = self.root / "turn.md"
+        turn.write_text("Result: attempted transition.\n", encoding="utf-8")
+        original = (task / "TASK.md").read_text()
+        (task / "TASK.md").write_text(original.replace("Owner: Codex", "Owner: Claude"), encoding="utf-8")
+        with self.assertRaises(mc.UserError):
+            mc.baton_pass(
+                Args(
+                    chat_root=str(self.chat), task_id=self.task_id, agent="claude",
+                    expected_seq=1, next_holder="codex", log_file=str(turn), status=None,
+                    round=None, revision=None, verdict="PASS", owner_ready="keep",
+                    reviewer_ready="true", ask="No.", ministerial=False,
+                )
+            )
+        (task / "TASK.md").write_text(original, encoding="utf-8")
+        baton = mc.parse_baton(task / "BATON.md")
+        baton["holder"] = "operator"
+        mc.atomic_text(task / "BATON.md", mc.dump_baton(baton))
+        quote = self.root / "operator.md"
+        quote.write_text('Operator response: "approved"\n', encoding="utf-8")
+        mc.operator_relay(
+            Args(
+                chat_root=str(self.chat), task_id=self.task_id, agent="codex",
+                expected_seq=1, action="approve", next_holder="codex",
+                log_file=str(quote), ask="Implement.", break_stale_lock=False,
+            )
+        )
+        approved = mc.parse_baton(task / "BATON.md")
+        self.assertEqual(approved["task_sha256"], mc.sha256_file(task / "TASK.md"))
+        (task / "TASK.md").write_text(original + "\nChanged without approval.\n", encoding="utf-8")
+        with self.assertRaises(mc.UserError):
+            mc.baton_pass(
+                Args(
+                    chat_root=str(self.chat), task_id=self.task_id, agent="codex",
+                    expected_seq=2, next_holder="claude", log_file=str(turn), status=None,
+                    round=1, revision="sha256:new", verdict=None, owner_ready="true",
+                    reviewer_ready="keep", ask="Review.", ministerial=False,
+                )
+            )
 
     def test_pass_is_sequence_checked_and_atomic(self):
         task = self.chat / self.task_id
@@ -281,6 +363,21 @@ class BatonTests(unittest.TestCase):
         baton_path.write_text(baton_path.read_text() + "holder: operator\n", encoding="utf-8")
         with self.assertRaises(mc.UserError):
             mc.parse_baton(baton_path)
+
+    def test_parser_rejects_incomplete_or_invalid_contract_pins(self):
+        baton_path = self.chat / self.task_id / "BATON.md"
+        original = mc.parse_baton(baton_path)
+        complete = mc.dump_baton(original)
+        cases = (
+            complete.replace("reviewer: claude\n", ""),
+            complete.replace("reviewer: claude", "reviewer: codex"),
+            complete.replace("task_sha256: pending", "task_sha256: not-a-hash"),
+        )
+        for text in cases:
+            with self.subTest(text=text[:80]):
+                mc.atomic_text(baton_path, text)
+                with self.assertRaises(mc.UserError):
+                    mc.parse_baton(baton_path)
 
     def test_roles_own_only_their_readiness_flag(self):
         task = self.chat / self.task_id
@@ -436,6 +533,78 @@ class BatonTests(unittest.TestCase):
         self.assertEqual(baton["ask"], "[signoff] Review and close.")
         self.assertIn("to operator (signoff)", (task / "LOG.md").read_text())
 
+    def test_signoff_cannot_reactivate_blocked_or_done_task(self):
+        task = self.chat / self.task_id
+        turn = self.root / "turn.md"
+        turn.write_text("Result: invalid signoff.\n", encoding="utf-8")
+        args = Args(
+            chat_root=str(self.chat), task_id=self.task_id, agent="codex",
+            expected_seq=1, log_file=str(turn), ask="Close.",
+            break_stale_lock=False,
+        )
+        for status in ("blocked", "done"):
+            with self.subTest(status=status):
+                baton = mc.parse_baton(task / "BATON.md")
+                baton.update(
+                    holder="codex", status=status, verdict="PASS",
+                    owner_ready=True, reviewer_ready=True,
+                )
+                mc.atomic_text(task / "BATON.md", mc.dump_baton(baton))
+                before = (task / "BATON.md").read_bytes()
+                with self.assertRaises(mc.UserError):
+                    mc.signoff(args)
+                self.assertEqual((task / "BATON.md").read_bytes(), before)
+
+    def test_signoff_rejects_nonowner_and_each_missing_review_gate(self):
+        task = self.chat / self.task_id
+        turn = self.root / "turn.md"
+        turn.write_text("Result: invalid signoff.\n", encoding="utf-8")
+        cases = (
+            ("nonowner", {"holder": "claude", "agent": "claude"}),
+            ("no pass", {"verdict": "none"}),
+            ("owner unready", {"owner_ready": False}),
+            ("reviewer unready", {"reviewer_ready": False}),
+        )
+        for label, changes in cases:
+            with self.subTest(label=label):
+                baton = mc.parse_baton(task / "BATON.md")
+                baton.update(
+                    holder="codex", status="active", verdict="PASS",
+                    owner_ready=True, reviewer_ready=True,
+                )
+                values = dict(changes)
+                agent = values.pop("agent", "codex")
+                baton.update(values)
+                mc.atomic_text(task / "BATON.md", mc.dump_baton(baton))
+                with self.assertRaises(mc.UserError):
+                    mc.signoff(
+                        Args(
+                            chat_root=str(self.chat), task_id=self.task_id,
+                            agent=agent, expected_seq=1, log_file=str(turn),
+                            ask="Close.", break_stale_lock=False,
+                        )
+                    )
+
+    def test_closed_or_blocked_task_cannot_be_reopened_by_normal_pass(self):
+        task = self.chat / self.task_id
+        turn = self.root / "turn.md"
+        turn.write_text("Result: invalid reopen.\n", encoding="utf-8")
+        for current_status in ("blocked", "done"):
+            with self.subTest(current_status=current_status):
+                baton = mc.parse_baton(task / "BATON.md")
+                baton.update(holder="codex", status=current_status)
+                mc.atomic_text(task / "BATON.md", mc.dump_baton(baton))
+                with self.assertRaises(mc.UserError):
+                    mc.baton_pass(
+                        Args(
+                            chat_root=str(self.chat), task_id=self.task_id,
+                            agent="codex", expected_seq=1, next_holder="claude",
+                            log_file=str(turn), status="active", round=None,
+                            revision=None, verdict=None, owner_ready="keep",
+                            reviewer_ready="keep", ask="Reopen.", ministerial=False,
+                        )
+                    )
+
     def test_operator_relay_approve_returns_baton_to_owner(self):
         task = self.chat / self.task_id
         baton = mc.parse_baton(task / "BATON.md")
@@ -452,10 +621,76 @@ class BatonTests(unittest.TestCase):
         )
         baton = mc.parse_baton(task / "BATON.md")
         self.assertEqual((baton["seq"], baton["holder"]), (2, "codex"))
+        self.assertEqual(baton["task_sha256"], mc.sha256_file(task / "TASK.md"))
+        self.assertEqual((baton["verdict"], baton["owner_ready"], baton["reviewer_ready"]), ("none", False, False))
         self.assertIn("operator approve via codex", (task / "LOG.md").read_text())
+
+    def test_operator_relay_requires_nonempty_verbatim_quote(self):
+        task = self.chat / self.task_id
+        baton = mc.parse_baton(task / "BATON.md")
+        baton["holder"] = "operator"
+        mc.atomic_text(task / "BATON.md", mc.dump_baton(baton))
+        before_baton = (task / "BATON.md").read_bytes()
+        before_log = (task / "LOG.md").read_bytes()
+        quote = self.root / "operator.md"
+        quote.write_text(" \n\t\n", encoding="utf-8")
+        args = Args(
+            chat_root=str(self.chat), task_id=self.task_id, agent="claude",
+            expected_seq=1, action="approve", next_holder="codex",
+            log_file=str(quote), ask="Implement.", break_stale_lock=False,
+        )
+        with self.assertRaises(mc.UserError):
+            mc.operator_relay(args)
+        self.assertEqual((task / "BATON.md").read_bytes(), before_baton)
+        self.assertEqual((task / "LOG.md").read_bytes(), before_log)
+        quote.write_bytes(b"\xff")
+        with self.assertRaises(mc.UserError):
+            mc.operator_relay(args)
+        self.assertEqual((task / "BATON.md").read_bytes(), before_baton)
+        self.assertEqual((task / "LOG.md").read_bytes(), before_log)
+        exact = b'Operator response: "approved exactly"  \r\nSecond line.\n'
+        quote.write_bytes(exact)
+        mc.operator_relay(args)
+        self.assertTrue((task / "LOG.md").read_bytes().endswith(exact))
+
+    def test_operator_amend_and_ruling_invalidate_review_state(self):
+        task = self.chat / self.task_id
+        quote = self.root / "operator.md"
+        quote.write_text('Operator response: "amend"\n', encoding="utf-8")
+        for action, next_holder in (("amend", "codex"), ("ruling", "claude")):
+            with self.subTest(action=action):
+                baton = mc.parse_baton(task / "BATON.md")
+                baton.update(
+                    holder="operator", verdict="PASS", owner_ready=True,
+                    reviewer_ready=True,
+                )
+                if action == "amend":
+                    (task / "TASK.md").write_text(
+                        (task / "TASK.md").read_text() + "\nApproved delta.\n",
+                        encoding="utf-8",
+                    )
+                mc.atomic_text(task / "BATON.md", mc.dump_baton(baton))
+                mc.operator_relay(
+                    Args(
+                        chat_root=str(self.chat), task_id=self.task_id,
+                        agent="codex", expected_seq=baton["seq"], action=action,
+                        next_holder=next_holder, log_file=str(quote), ask="Continue.",
+                        break_stale_lock=False,
+                    )
+                )
+                changed = mc.parse_baton(task / "BATON.md")
+                self.assertEqual(
+                    (changed["verdict"], changed["owner_ready"], changed["reviewer_ready"]),
+                    ("none", False, False),
+                )
+                if action == "amend":
+                    self.assertEqual(changed["task_sha256"], mc.sha256_file(task / "TASK.md"))
 
     def test_operator_stop_does_not_require_task_owner_parsing(self):
         task = self.chat / self.task_id
+        baton = mc.parse_baton(task / "BATON.md")
+        baton.update(verdict="PASS", owner_ready=True, reviewer_ready=True)
+        mc.atomic_text(task / "BATON.md", mc.dump_baton(baton))
         (task / "TASK.md").unlink()
         words = self.root / "operator.md"
         words.write_text('Operator response: "stop"\n', encoding="utf-8")
@@ -468,6 +703,77 @@ class BatonTests(unittest.TestCase):
         )
         baton = mc.parse_baton(task / "BATON.md")
         self.assertEqual((baton["holder"], baton["status"], baton["verdict"]), ("operator", "blocked", "BLOCKED"))
+        self.assertEqual((baton["owner_ready"], baton["reviewer_ready"]), (False, False))
+
+    def test_operator_relay_transition_guards(self):
+        task = self.chat / self.task_id
+        quote = self.root / "operator.md"
+        quote.write_text('Operator response: "directed action"\n', encoding="utf-8")
+
+        def relay(action, next_holder):
+            return mc.operator_relay(
+                Args(
+                    chat_root=str(self.chat), task_id=self.task_id, agent="codex",
+                    expected_seq=1, action=action, next_holder=next_holder,
+                    log_file=str(quote), ask="Act.", break_stale_lock=False,
+                )
+            )
+
+        with self.assertRaises(mc.UserError):
+            relay("approve", "codex")
+        with self.assertRaises(mc.UserError):
+            relay("stop", "codex")
+        baton = mc.parse_baton(task / "BATON.md")
+        baton["holder"] = "operator"
+        mc.atomic_text(task / "BATON.md", mc.dump_baton(baton))
+        with self.assertRaises(mc.UserError):
+            mc.operator_relay(
+                Args(
+                    chat_root=str(self.chat), task_id=self.task_id,
+                    agent="codex", expected_seq=99, action="approve",
+                    next_holder="codex", log_file=str(quote), ask="Act.",
+                    break_stale_lock=False,
+                )
+            )
+        for action, next_holder in (
+            ("approve", "claude"),
+            ("close", "claude"),
+            ("amend", "operator"),
+            ("ruling", "operator"),
+            ("unknown", "codex"),
+        ):
+            with self.subTest(action=action, next_holder=next_holder):
+                with self.assertRaises(mc.UserError):
+                    relay(action, next_holder)
+        self.assertEqual(mc.parse_baton(task / "BATON.md")["seq"], 1)
+
+    def test_operator_close_requires_each_review_gate(self):
+        task = self.chat / self.task_id
+        quote = self.root / "operator.md"
+        quote.write_text('Operator response: "CLOSE"\n', encoding="utf-8")
+        cases = (
+            ("no pass", {"verdict": "none"}),
+            ("owner unready", {"owner_ready": False}),
+            ("reviewer unready", {"reviewer_ready": False}),
+        )
+        for label, changes in cases:
+            with self.subTest(label=label):
+                baton = mc.parse_baton(task / "BATON.md")
+                baton.update(
+                    holder="operator", status="active", verdict="PASS",
+                    owner_ready=True, reviewer_ready=True,
+                )
+                baton.update(changes)
+                mc.atomic_text(task / "BATON.md", mc.dump_baton(baton))
+                with self.assertRaises(mc.UserError):
+                    mc.operator_relay(
+                        Args(
+                            chat_root=str(self.chat), task_id=self.task_id,
+                            agent="claude", expected_seq=1, action="close",
+                            next_holder="codex", log_file=str(quote), ask="Archive.",
+                            break_stale_lock=False,
+                        )
+                    )
 
     def test_close_requires_operator_relay_and_both_readiness(self):
         task = self.chat / self.task_id
@@ -533,7 +839,9 @@ class WatcherAndArchiveTests(unittest.TestCase):
         (task / "TASK.md").write_text("# Task\n\nOwner: Codex\n", encoding="utf-8")
         (task / "LOG.md").write_text("# Log\n", encoding="utf-8")
         baton = {
-            "task": task_id, "seq": 1, "holder": holder, "status": status,
+            "task": task_id, "owner": "codex", "reviewer": "claude",
+            "task_sha256": mc.sha256_file(task / "TASK.md"),
+            "seq": 1, "holder": holder, "status": status,
             "round": 0, "revision": "sha256:test", "verdict": "PASS" if ready else "none",
             "owner_ready": ready, "reviewer_ready": ready, "ask": "Act.",
             "updated_at": mc.now_iso(),
@@ -551,6 +859,18 @@ class WatcherAndArchiveTests(unittest.TestCase):
         first = (runtime / "monitor.inbox").read_text()
         self.assertFalse(mc.scan_once(self.chat, binding, state))
         self.assertEqual((runtime / "monitor.inbox").read_text(), first)
+
+    def test_task_commands_refuse_symlinked_task_directory(self):
+        real = self.root / "real-task"
+        real.mkdir()
+        (self.chat / "20260911-099-symlink-task").symlink_to(real, target_is_directory=True)
+        with self.assertRaises(mc.UserError):
+            mc.status(
+                Args(
+                    chat_root=str(self.chat), task_id="20260911-099-symlink-task",
+                    json=False,
+                )
+            )
 
     def test_malformed_tasks_are_reported_without_blocking_valid_task(self):
         self.make_task(task_id="20260911-003-valid-task")
@@ -580,12 +900,12 @@ class WatcherAndArchiveTests(unittest.TestCase):
         binding = {"agent": "codex", "session_id": "s", "wake_mode": "command", "wake_verified": True}
         state = {"session_id": "s", "notified": {}, "attempts": {}, "failed": [], "unverified": [], "stale": []}
         with mock.patch.object(mc, "wake", return_value=False) as wake:
-            for _ in range(3):
+            for _ in range(12):
                 key = "task:20260911-002-watch-test:1"
                 if key in state["attempts"]:
                     state["attempts"][key]["next_at"] = 0
                 mc.scan_once(self.chat, binding, state)
-        self.assertEqual(wake.call_count, 3)
+        self.assertEqual(wake.call_count, 12)
         self.assertEqual((runtime / "alerts.log").read_text().count("wake failed after"), 1)
         with mock.patch.object(mc, "wake", return_value=True) as recovered:
             self.assertFalse(mc.scan_once(self.chat, binding, state))
@@ -696,6 +1016,49 @@ class WatcherAndArchiveTests(unittest.TestCase):
 
         with mock.patch.object(mc.shutil, "rmtree", side_effect=checked_rmtree):
             mc.archive_task(Args(chat_root=str(self.chat), task_id=task.name, agent="codex", expected_seq=1))
+
+    def test_archive_rejects_each_missing_cleanup_gate(self):
+        task = self.make_task(holder="codex", status="done", ready=True)
+        original = mc.parse_baton(task / "BATON.md")
+        cases = (
+            ("wrong agent", {"agent": "claude"}),
+            ("wrong holder", {"holder": "claude"}),
+            ("not done", {"status": "active"}),
+            ("no pass", {"verdict": "none"}),
+            ("owner unready", {"owner_ready": False}),
+            ("reviewer unready", {"reviewer_ready": False}),
+        )
+        for label, changes in cases:
+            with self.subTest(label=label):
+                baton = dict(original)
+                agent = changes.pop("agent", "codex")
+                baton.update(changes)
+                mc.atomic_text(task / "BATON.md", mc.dump_baton(baton))
+                with self.assertRaises(mc.UserError):
+                    mc.archive_task(
+                        Args(
+                            chat_root=str(self.chat), task_id=task.name,
+                            agent=agent, expected_seq=1,
+                        )
+                    )
+                self.assertTrue(task.exists())
+                self.assertFalse((self.chat / "_archive" / f"{task.name}.tar.gz").exists())
+        mc.atomic_text(task / "BATON.md", mc.dump_baton(original))
+        with self.assertRaises(mc.UserError):
+            mc.archive_task(
+                Args(
+                    chat_root=str(self.chat), task_id=task.name,
+                    agent="codex", expected_seq=99,
+                )
+            )
+        (task / "TASK.md").write_text("# Task\n\nOwner: Claude\n", encoding="utf-8")
+        with self.assertRaises(mc.UserError):
+            mc.archive_task(
+                Args(
+                    chat_root=str(self.chat), task_id=task.name,
+                    agent="codex", expected_seq=1,
+                )
+            )
 
     def test_archive_calls_manifest_verifier_and_failure_preserves_task(self):
         task = self.make_task(holder="codex", status="done", ready=True)
@@ -821,6 +1184,26 @@ class BindingTests(unittest.TestCase):
         rendered = json.loads(output.getvalue())
         self.assertIn("explicit rebind", rendered["hookSpecificOutput"]["additionalContext"])
 
+    def test_inert_session_reports_other_live_binding(self):
+        binding_path, heartbeat, _ = mc.binding_paths(self.chat, "codex")
+        binding_path.parent.mkdir(parents=True)
+        mc.atomic_write(
+            binding_path,
+            mc.json_bytes({
+                "agent": "codex", "session_id": "owner-session", "pid": 123,
+                "chat_root": str(self.chat), "wake_mode": "codex-queue",
+            }),
+        )
+        heartbeat.write_text("live\n", encoding="utf-8")
+        output = io.StringIO()
+        payload = io.StringIO(json.dumps({"session_id": "other-session"}))
+        with mock.patch.object(mc.sys, "stdin", payload), mock.patch.object(mc, "binding_live", return_value=True), contextlib.redirect_stdout(output):
+            mc.hook(Args(chat_root=str(self.chat), agent="codex", event="session-start"))
+        rendered = json.loads(output.getvalue())
+        context = rendered["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("another live session", context)
+        self.assertIn("owner-session", context)
+
     def test_claude_session_start_outputs_monitor_instructions(self):
         binding_path, heartbeat, _ = mc.binding_paths(self.chat, "claude")
         binding_path.parent.mkdir(parents=True)
@@ -850,8 +1233,13 @@ class BindingTests(unittest.TestCase):
         mc.atomic_write(binding_path, mc.json_bytes(binding))
         heartbeat.write_text("live\n", encoding="utf-8")
         args = Args(chat_root=str(self.chat), agent="claude", session_id="s")
-        with mock.patch.object(mc, "binding_live", return_value=True), mock.patch.object(mc.secrets, "token_hex", return_value="nonce"), mock.patch.object(mc, "wake", return_value=True) as transport:
+        stdout = io.StringIO()
+        with mock.patch.object(mc, "binding_live", return_value=True), mock.patch.object(mc.secrets, "token_hex", return_value="nonce"), mock.patch.object(mc, "wake", return_value=True) as transport, contextlib.redirect_stdout(stdout):
             self.assertEqual(mc.probe_wake(args), 0)
+            self.assertEqual(
+                stdout.getvalue(),
+                "wake probe sent; nonce is available only through the wake transport\n",
+            )
             challenge_text = (binding_path.parent / "wake-challenge.json").read_text()
             self.assertNotIn('"nonce":', challenge_text)
             self.assertNotIn("nonce\"", challenge_text)

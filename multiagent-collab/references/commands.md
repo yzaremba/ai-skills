@@ -37,7 +37,10 @@ archive --task-id ID --agent OWNER --expected-seq N
 
 `pass` takes the shared `.baton.lock`, rechecks the sequence, appends the supplied
 log entry, and atomically replaces the baton. Never edit the baton by hand during an
-agent pass.
+agent pass. `task-init` pins the owner/reviewer roles; operator approval pins the
+approved `TASK.md` hash. Later role or unapproved contract drift is rejected.
+`operator-relay --log-file` must name a non-empty file containing the operator's
+verbatim instruction; the helper preserves that text in `LOG.md`.
 
 ## Session binding and watchers
 

@@ -106,11 +106,12 @@ def validate_task_id(task_id: str) -> None:
 
 
 def config_target(path: Path, follow_symlinks: bool) -> Path:
-    if not path.is_symlink():
+    has_symlink = path.is_symlink() or any(parent.is_symlink() for parent in path.parents)
+    if not has_symlink:
         return path
     if not follow_symlinks:
-        raise UserError(f"refusing symlinked config without explicit approval: {path}")
-    return path.resolve(strict=True)
+        raise UserError(f"refusing config through a symlink without explicit approval: {path}")
+    return path.resolve(strict=False)
 
 
 def symlink_target(link: Path) -> Path:
@@ -514,6 +515,18 @@ def parse_baton(path: Path) -> dict[str, Any]:
         raise UserError(f"invalid baton status: {values['status']}")
     if values["verdict"] not in {"PASS", "CHANGES_REQUIRED", "BLOCKED", "none"}:
         raise UserError(f"invalid baton verdict: {values['verdict']}")
+    pinned = {"owner", "reviewer", "task_sha256"}
+    present = pinned & values.keys()
+    if present and present != pinned:
+        raise UserError(f"baton has incomplete contract pins: {sorted(present)}")
+    if present:
+        if values["owner"] not in AGENTS or values["reviewer"] not in AGENTS:
+            raise UserError("invalid pinned task roles")
+        if values["owner"] == values["reviewer"]:
+            raise UserError("pinned owner and reviewer must differ")
+        task_hash = str(values["task_sha256"])
+        if task_hash != "pending" and not re.fullmatch(r"[0-9a-f]{64}", task_hash):
+            raise UserError("invalid pinned TASK.md hash")
     return values
 
 
@@ -526,7 +539,14 @@ def baton_scalar(value: Any, key: str) -> str:
 
 
 def dump_baton(values: dict[str, Any]) -> str:
-    order = ("task", "seq", "holder", "status", "round", "revision", "verdict", "owner_ready", "reviewer_ready", "ask", "updated_at")
+    order = ["task"]
+    pinned = {"owner", "reviewer", "task_sha256"}
+    present = pinned & values.keys()
+    if present and present != pinned:
+        raise UserError("cannot render incomplete contract pins")
+    if present:
+        order.extend(("owner", "reviewer", "task_sha256"))
+    order.extend(("seq", "holder", "status", "round", "revision", "verdict", "owner_ready", "reviewer_ready", "ask", "updated_at"))
     lines = []
     for key in order:
         value = values[key]
@@ -543,6 +563,8 @@ def task_path(chat_root: Path, task_id: str) -> Path:
     path = chat_root / task_id
     if path.parent != chat_root:
         raise UserError("task escapes chat root")
+    if path.is_symlink():
+        raise UserError(f"refusing symlinked task directory: {path}")
     return path
 
 
@@ -553,6 +575,8 @@ def task_init(args: argparse.Namespace) -> int:
         raise UserError(f"task already exists: {target}")
     task_source = expand(args.task_file)
     task_data = task_source.read_bytes()
+    if task_owner(task_source) != args.owner:
+        raise UserError(f"task contract Owner must match --owner {args.owner}")
     reviewer = "claude" if args.owner == "codex" else "codex"
     target.mkdir(parents=True)
     try:
@@ -567,6 +591,9 @@ def task_init(args: argparse.Namespace) -> int:
         atomic_text(target / "LOG.md", log)
         baton = {
             "task": args.task_id,
+            "owner": args.owner,
+            "reviewer": reviewer,
+            "task_sha256": "pending",
             "seq": 1,
             "holder": reviewer,
             "status": "active",
@@ -592,6 +619,40 @@ def bool_choice(value: str, current: bool) -> bool:
     if value == "keep":
         return current
     return value == "true"
+
+
+def contract_roles(
+    target: Path, baton: dict[str, Any], *, allow_task_hash_change: bool = False,
+) -> tuple[str, str]:
+    """Return pinned roles and reject TASK.md drift after approval.
+
+    Batons created before role pinning are migrated from the current contract on
+    their next holder-controlled transition. Those legacy tasks are already past
+    contract approval; their current TASK.md hash is therefore pinned immediately.
+    """
+    task_md = target / "TASK.md"
+    current_owner = task_owner(task_md)
+    if current_owner not in AGENTS:
+        raise UserError("TASK.md must name Owner: Codex or Owner: Claude")
+    pinned = {"owner", "reviewer", "task_sha256"}
+    present = pinned & baton.keys()
+    if not present:
+        baton["owner"] = current_owner
+        baton["reviewer"] = "claude" if current_owner == "codex" else "codex"
+        baton["task_sha256"] = sha256_file(task_md)
+    elif present != pinned:
+        raise UserError("baton has incomplete contract pins")
+    owner = str(baton["owner"])
+    reviewer = str(baton["reviewer"])
+    if owner not in AGENTS or reviewer not in AGENTS or owner == reviewer:
+        raise UserError("invalid pinned task roles")
+    if current_owner != owner:
+        raise UserError("TASK.md owner differs from the pinned owner")
+    pinned_hash = str(baton["task_sha256"])
+    current_hash = sha256_file(task_md)
+    if pinned_hash != "pending" and current_hash != pinned_hash and not allow_task_hash_change:
+        raise UserError("TASK.md differs from the operator-approved contract hash")
+    return owner, reviewer
 
 
 def acquire_baton_lock(lock: Path, agent: str, break_stale: bool) -> str | None:
@@ -624,10 +685,7 @@ def baton_pass(args: argparse.Namespace) -> int:
             raise UserError(f"sequence changed: expected {args.expected_seq}, found {baton['seq']}")
         if baton["holder"] != args.agent:
             raise UserError(f"baton held by {baton['holder']}, not {args.agent}")
-        owner = task_owner(target / "TASK.md")
-        if owner not in AGENTS:
-            raise UserError("TASK.md must name Owner: Codex or Owner: Claude")
-        reviewer = "claude" if owner == "codex" else "codex"
+        owner, reviewer = contract_roles(target, baton)
         owner_ready_arg = getattr(args, "owner_ready", "keep")
         reviewer_ready_arg = getattr(args, "reviewer_ready", "keep")
         verdict_arg = getattr(args, "verdict", None)
@@ -640,6 +698,10 @@ def baton_pass(args: argparse.Namespace) -> int:
             raise UserError("reviewer cannot set owner readiness")
         if verdict_arg not in {None, "none"} and args.agent != reviewer:
             raise UserError("only reviewer may set a review verdict")
+        if baton["status"] == "done":
+            raise UserError("a closed task cannot leave the owner's cleanup turn")
+        if baton["status"] == "blocked" and args.status == "active":
+            raise UserError("only an operator relay may reactivate a blocked task")
         if args.status == "done" or args.next_holder == "none":
             raise UserError("only operator CLOSE and archive may complete a task")
         if args.next_holder == "operator" and operator_reason not in {"contract", "blocked", "signoff"}:
@@ -693,7 +755,7 @@ def baton_pass(args: argparse.Namespace) -> int:
 
 def signoff(args: argparse.Namespace) -> int:
     args.next_holder = "operator"
-    args.status = "active"
+    args.status = None
     args.round = None
     args.revision = None
     args.verdict = None
@@ -717,7 +779,18 @@ def operator_relay(args: argparse.Namespace) -> int:
             raise UserError(f"sequence changed: expected {args.expected_seq}, found {baton['seq']}")
         if args.action != "stop" and baton["holder"] != "operator":
             raise UserError(f"operator relay {args.action} requires holder operator")
-        owner = task_owner(target / "TASK.md") if args.action != "stop" else None
+        operator_data = expand(args.log_file).read_bytes()
+        try:
+            operator_words = operator_data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise UserError("operator quote must be valid UTF-8") from exc
+        if not operator_words.strip():
+            raise UserError("operator relay requires a non-empty verbatim operator quote")
+        owner = None
+        if args.action != "stop":
+            owner, _ = contract_roles(
+                target, baton, allow_task_hash_change=args.action == "amend",
+            )
         if args.action == "stop":
             if args.next_holder != "operator":
                 raise UserError("STOP must leave baton with operator")
@@ -735,19 +808,32 @@ def operator_relay(args: argparse.Namespace) -> int:
             if owner not in AGENTS or args.next_holder != owner:
                 raise UserError("approval must return baton to the task owner")
             baton["status"] = "active"
+            baton["task_sha256"] = sha256_file(target / "TASK.md")
+            baton["verdict"] = "none"
+            baton["owner_ready"] = False
+            baton["reviewer_ready"] = False
         elif args.action in {"amend", "ruling"}:
             if args.next_holder not in AGENTS:
                 raise UserError(f"{args.action} must assign an agent")
             baton["status"] = "active"
+            if args.action == "amend":
+                baton["task_sha256"] = sha256_file(target / "TASK.md")
+            baton["verdict"] = "none"
+            baton["owner_ready"] = False
+            baton["reviewer_ready"] = False
+        else:
+            raise UserError(f"unsupported operator relay action: {args.action}")
         baton["seq"] += 1
         baton["holder"] = args.next_holder
         baton["ask"] = args.ask
         baton["updated_at"] = now_iso()
         baton_text = dump_baton(baton)
-        operator_words = expand(args.log_file).read_text(encoding="utf-8").rstrip()
         existing = log_path.read_text(encoding="utf-8").rstrip()
         heading = f"## Seq {baton['seq'] - 1} — operator {args.action} via {args.agent} to {args.next_holder}"
-        atomic_text(log_path, f"{existing}\n\n{heading}\n\n{operator_words}\n")
+        entry = f"{existing}\n\n{heading}\n\n".encode("utf-8") + operator_data
+        if not entry.endswith(b"\n"):
+            entry += b"\n"
+        atomic_write(log_path, entry)
         atomic_text(baton_path, baton_text)
     finally:
         shutil.rmtree(lock, ignore_errors=True)
@@ -988,9 +1074,12 @@ def scan_task(
     agent = binding["agent"]
     runtime = chat_root / "_runtime" / agent
     baton_path = target / "BATON.md"
+    if target.is_symlink():
+        raise UserError(f"refusing symlinked task directory: {target}")
     if not baton_path.is_file():
         return False
     baton = parse_baton(baton_path)
+    owner, _ = contract_roles(target, baton)
     key = target.name
     changed = False
     try:
@@ -1023,7 +1112,6 @@ def scan_task(
     stale_key = f"{key}:{baton['seq']}"
     should_alert = baton["holder"] in AGENTS and baton["holder"] != agent
     if baton["holder"] == "operator":
-        owner = task_owner(target / "TASK.md")
         should_alert = owner == agent
         if not should_alert and owner in AGENTS:
             owner_binding, owner_heartbeat, _ = binding_paths(chat_root, owner)
@@ -1276,7 +1364,7 @@ def archive_task(args: argparse.Namespace) -> int:
         baton = parse_baton(task / "BATON.md")
         if baton["seq"] != args.expected_seq:
             raise UserError("archive sequence changed")
-        owner = task_owner(task / "TASK.md")
+        owner, _ = contract_roles(task, baton)
         if (
             baton["status"] != "done"
             or owner not in AGENTS
