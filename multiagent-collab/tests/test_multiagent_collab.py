@@ -170,6 +170,50 @@ class SetupTests(unittest.TestCase):
         self.assertNotIn("SessionStart", remaining["hooks"])
         self.assertNotIn("SessionEnd", remaining["hooks"])
 
+    def test_preexisting_agents_edit_prevents_backup_restore(self):
+        codex = self.home / ".codex"
+        codex.mkdir()
+        agents = codex / "AGENTS.md"
+        agents.write_text("# Original instructions\n", encoding="utf-8")
+        mc.setup(self.args("setup", agent="codex"))
+        agents.write_text(
+            agents.read_text() + "\n# Added after install\n",
+            encoding="utf-8",
+        )
+        mc.uninstall(self.args("uninstall", agent="codex"))
+        result = agents.read_text()
+        self.assertIn("# Original instructions", result)
+        self.assertIn("# Added after install", result)
+        self.assertNotIn(mc.MANAGED_START, result)
+
+    def test_preexisting_hooks_edit_prevents_backup_restore(self):
+        codex = self.home / ".codex"
+        codex.mkdir()
+        hooks_path = codex / "hooks.json"
+        hooks_path.write_bytes(mc.json_bytes({"personal": "before"}))
+        mc.setup(self.args("setup", agent="codex"))
+        hooks = json.loads(hooks_path.read_text())
+        hooks["added_after_install"] = "keep"
+        hooks_path.write_bytes(mc.json_bytes(hooks))
+        mc.uninstall(self.args("uninstall", agent="codex"))
+        result = json.loads(hooks_path.read_text())
+        self.assertEqual(result["personal"], "before")
+        self.assertEqual(result["added_after_install"], "keep")
+        self.assertNotIn("SessionStart", result.get("hooks", {}))
+        self.assertNotIn("SessionEnd", result.get("hooks", {}))
+
+    def test_original_config_backup_digest_is_checked(self):
+        codex = self.home / ".codex"
+        codex.mkdir()
+        hooks_path = codex / "hooks.json"
+        hooks_path.write_bytes(b"{}\n")
+        mc.setup(self.args("setup", agent="codex"))
+        metadata = json.loads((self.chat / "_runtime/install.json").read_text())
+        record = metadata["original_config"][str(hooks_path)]
+        Path(record["backup"]).write_bytes(b'{"tampered": true}\n')
+        with self.assertRaisesRegex(mc.UserError, "missing or corrupt"):
+            mc.original_config_bytes(metadata, hooks_path, self.chat)
+
     def test_protocol_upgrade_is_compare_and_swap(self):
         mc.setup(self.args("setup", agent="codex"))
         installed = self.chat / "PROTOCOL.md"
@@ -654,6 +698,17 @@ class BatonTests(unittest.TestCase):
                     mc.signoff(args)
                 self.assertEqual((task / "BATON.md").read_bytes(), before)
 
+    def test_signoff_passes_no_status_override_to_baton_gate(self):
+        args = Args(
+            chat_root=str(self.chat), task_id=self.task_id, agent="codex",
+            expected_seq=1, log_file=str(self.root / "turn.md"), ask="Close.",
+            break_stale_lock=False,
+        )
+        with mock.patch.object(mc, "baton_pass", return_value=0) as baton_pass:
+            self.assertEqual(mc.signoff(args), 0)
+        baton_pass.assert_called_once_with(args)
+        self.assertIsNone(args.status)
+
     def test_signoff_rejects_nonowner_and_each_missing_review_gate(self):
         task = self.chat / self.task_id
         turn = self.root / "turn.md"
@@ -864,6 +919,24 @@ class BatonTests(unittest.TestCase):
         quote.write_bytes(exact)
         mc.operator_relay(args)
         self.assertTrue((task / "LOG.md").read_bytes().endswith(exact))
+
+    def test_operator_quote_preserves_trailing_spaces_without_newline(self):
+        task = self.chat / self.task_id
+        baton = mc.parse_baton(task / "BATON.md")
+        baton["holder"] = "operator"
+        mc.atomic_text(task / "BATON.md", mc.dump_baton(baton))
+        quote = self.root / "operator.md"
+        exact = b'Operator response: "approved"   '
+        quote.write_bytes(exact)
+        mc.operator_relay(
+            Args(
+                chat_root=str(self.chat), task_id=self.task_id, agent="codex",
+                expected_seq=1, action="approve", next_holder="codex",
+                log_file=str(quote), ask="Implement.", break_stale_lock=False,
+                task_sha256=mc.sha256_file(task / "TASK.md"),
+            )
+        )
+        self.assertTrue((task / "LOG.md").read_bytes().endswith(exact + b"\n"))
 
     def test_operator_amend_and_ruling_invalidate_review_state(self):
         task = self.chat / self.task_id
@@ -1343,6 +1416,34 @@ class WatcherAndArchiveTests(unittest.TestCase):
             self.assertIn("transport has recovered", recovered.call_args.args[2])
         self.assertEqual(state["notified"]["20260911-002-watch-test"], 1)
         self.assertEqual((runtime / "alerts.log").read_text().count("wake failed after"), 1)
+
+    def test_terminal_wake_failure_retries_at_recovery_deadline(self):
+        runtime = self.chat / "_runtime/codex"
+        binding = {
+            "agent": "codex", "session_id": "s",
+            "wake_mode": "command", "wake_verified": True,
+        }
+        state = {
+            "session_id": "s", "notified": {}, "attempts": {},
+            "failed": [], "unverified": [], "stale": [],
+        }
+        key = "task:20260911-002-watch-test:1"
+        with mock.patch.object(mc.time, "time", return_value=100.0), mock.patch.object(mc, "wake", return_value=False) as failed_wake:
+            for _ in range(3):
+                if key in state["attempts"]:
+                    state["attempts"][key]["next_at"] = 0
+                self.assertFalse(mc.attempt_wake(binding, runtime, state, key, "deliver"))
+        self.assertEqual(failed_wake.call_count, 3)
+        self.assertIn(key, state["failed"])
+        self.assertEqual(state["attempts"][key]["next_at"], 400.0)
+        with mock.patch.object(mc.time, "time", return_value=399.0), mock.patch.object(mc, "wake", return_value=True) as too_early:
+            self.assertFalse(mc.attempt_wake(binding, runtime, state, key, "deliver"))
+        too_early.assert_not_called()
+        with mock.patch.object(mc.time, "time", return_value=400.0), mock.patch.object(mc, "wake", return_value=True) as recovered:
+            self.assertTrue(mc.attempt_wake(binding, runtime, state, key, "deliver"))
+        recovered.assert_called_once()
+        self.assertIn("transport has recovered", recovered.call_args.args[2])
+        self.assertNotIn(key, state["attempts"])
 
     def test_rebind_session_gets_pending_sequence(self):
         self.make_task()
