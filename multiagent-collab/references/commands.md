@@ -13,7 +13,7 @@ All commands accept `--chat-root`; the default is
 
 ```text
 setup --agent codex|claude|both [--home PATH] [--dry-run]
-doctor --agent codex|claude|both [--home PATH] [--json]
+doctor --agent codex|claude|both [--home PATH] [--json] [--require-binding]
 uninstall --agent codex|claude|both [--home PATH] [--dry-run]
 ```
 
@@ -21,6 +21,28 @@ Setup installs discovery links, managed global guidance, hooks, and the packaged
 protocol. It refuses unmanaged conflicts and symlinked config files by default.
 Use `--follow-config-symlinks` only with explicit approval for the resolved targets.
 Protocol replacement additionally requires `--upgrade-protocol-from <sha256>`.
+
+Codex discovery uses the documented `~/.agents/skills/multiagent-collab` link;
+Claude uses `~/.claude/skills/multiagent-collab`. A managed legacy Codex link under
+`~/.codex/skills` is migrated only after offline `codex debug prompt-input` probes
+verify the dual and post-removal states. On the verified 0.154.0 baseline, two
+links to the same resolved skill target render as one legacy-rooted entry; multiple
+entries indicate different resolved targets and stop migration. If the probe is
+unavailable, setup warns, retains both links, and never claims verified migration.
+Doctor reports both filesystem and actual Codex discovery state. Shared `.agents`
+parent directories are never removed.
+
+After installing or upgrading, restart each agent so it gets a new discovery and
+hook snapshot. In Codex, review/trust the exact user hook with `/hooks`. Opt each
+session in with `bind`, prove delivery with `probe-wake`/`verify-wake`, then require:
+
+```text
+doctor --agent both --require-binding
+```
+
+`rebind` replaces a dead or differently owned binding. It is a no-op for an already
+live binding owned by the same session. After a runtime-script upgrade, use
+`release` and then `bind` for both agents so the watcher processes load the new code.
 
 ## Tasks and baton
 

@@ -1,6 +1,10 @@
 # AI Skills
 
-A collection of extensions for AI coding agents: self-contained **Skills** (compatible with both [Cursor](https://docs.cursor.com/context/skills) and [Claude Code](https://code.claude.com/docs/en/skills)), plus a couple of Claude-Code-specific extras — importable **rules** and a **subagent**.
+A collection of extensions for AI coding agents, including
+[Codex](https://developers.openai.com/codex/skills),
+[Cursor](https://docs.cursor.com/context/skills), and
+[Claude Code](https://code.claude.com/docs/en/skills). Compatibility is documented
+per skill; the repository also includes Claude-Code-specific rules and a subagent.
 
 ## Available Skills
 
@@ -35,6 +39,84 @@ Plain markdown files meant to live in Claude Code's [`.claude/rules/`](https://c
 - [PRD Implementation Workflow (slide)](https://yzaremba.github.io/ai-skills/prd-implementation-slide.html) — one-page overview of the [`prd-implementation.md`](prd-implementation.md) / [`epic-implementation.md`](epic-implementation.md) sprint & epic doc workflow.
 
 ## Installation
+
+### `multiagent-collab` for Codex and Claude
+
+This skill needs its setup utility; cloning it directly into one agent's discovery
+directory is not enough. Prerequisites are Python 3, Codex CLI, and Claude Code.
+The workflow below is locally verified with `codex-cli 0.154.0`. Current OpenAI
+documentation identifies `$HOME/.agents/skills` as Codex's user skill location and
+supports symlinked skill folders; behavior of other Codex versions should be
+verified with the included doctor command. See the official
+[Codex skills](https://developers.openai.com/codex/skills) and
+[hooks](https://developers.openai.com/codex/hooks) documentation.
+
+Keep one persistent clone, inspect the planned changes, then install for both
+agents:
+
+```bash
+git clone https://github.com/yzaremba/ai-skills.git ~/workspace/skills
+cd ~/workspace/skills
+python3 multiagent-collab/scripts/multiagent_collab.py setup --agent both --dry-run
+python3 multiagent-collab/scripts/multiagent_collab.py setup --agent both
+```
+
+The defaults are home `~` and chat root `~/workspace/chat`. To change them, pass
+`--home PATH` and `--chat-root PATH` to both setup invocations. Setup preserves
+unrelated configuration, records backups below `<chat-root>/_backups/`, and never
+claims or removes the shared `~/.agents` or `~/.agents/skills` directories.
+
+Setup installs session hooks but does not start agents or opt sessions in. Restart
+Codex and Claude. In Codex, open `/hooks`, review the exact user hook, and trust its
+current hash. Then give each agent this instruction in its own session:
+
+```text
+Use $multiagent-collab. Bind this session to ~/workspace/chat and verify wake delivery.
+```
+
+Claude will ask you to keep its printed `tail -n 0 -F .../monitor.inbox` Monitor
+running. Each agent sends a nonce through its real wake transport and verifies the
+nonce returned to the session. When both are ready, check the installation:
+
+```bash
+cd ~/workspace/skills
+python3 multiagent-collab/scripts/multiagent_collab.py doctor --agent both --require-binding
+```
+
+Start work from either bound agent; the initiating agent becomes owner and the other
+becomes reviewer:
+
+```text
+Use $multiagent-collab. Start a task for: <describe the work and completion condition>.
+```
+
+For upgrades, first ask both live agents to `release` their bindings. A live
+same-session `rebind` is intentionally a no-op and does not reload upgraded watcher
+code. Update the persistent clone, review the protocol hash if it changed, and rerun
+setup:
+
+```bash
+cd ~/workspace/skills
+git pull --ff-only
+sha256sum ~/workspace/chat/PROTOCOL.md multiagent-collab/assets/PROTOCOL.md
+python3 multiagent-collab/scripts/multiagent_collab.py setup --agent both --dry-run --upgrade-protocol-from APPROVED_CURRENT_SHA256
+python3 multiagent-collab/scripts/multiagent_collab.py setup --agent both --upgrade-protocol-from APPROVED_CURRENT_SHA256
+```
+
+Restart both agents, then use `bind` again, repeat the nonce proofs, and rerun doctor.
+Never use `--upgrade-protocol-from` until the displayed current hash and replacement
+were reviewed and approved. Setup verifies real Codex discovery with the offline
+`codex debug prompt-input` command; if that probe is unavailable, it warns and does
+not remove a working legacy discovery link.
+
+To remove the managed integration while preserving protocols, tasks, backups, and
+archives:
+
+```bash
+cd ~/workspace/skills
+python3 multiagent-collab/scripts/multiagent_collab.py uninstall --agent both --dry-run
+python3 multiagent-collab/scripts/multiagent_collab.py uninstall --agent both
+```
 
 ### Skills
 
