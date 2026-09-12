@@ -1,6 +1,6 @@
 # Codex-Claude Baton Protocol
 
-Version: 1.0  
+Version: 1.1  
 Status: effective for a chat root after operator acceptance of this content hash  
 Default chat root: `~/workspace/chat/`  
 Default skills root: `~/workspace/skills/`  
@@ -18,8 +18,8 @@ Canonical skill: `<skills-root>/multiagent-collab/`
   `CLAUDE.md`, `.agents/`, `.codex/`, `.claude/`, or `.claude-*` are blocking unless
   explicitly in scope. The reviewer reads them from the approved base, not the
   owner's modified worktree.
-- Installing user-level links, instructions, or hooks under `~/.codex/` or
-  `~/.claude/` requires an approved task naming the files.
+- Installing user-level links, instructions, or hooks under `~/.agents/`,
+  `~/.codex/`, or `~/.claude/` requires an approved task naming the files.
 
 ## 2. Task files
 
@@ -45,7 +45,7 @@ permissions, acceptance checks, completion condition, review limit, and cleanup
 mode. Before operator approval, only bounded read-only scoping is allowed.
 
 The shared implementation lives at `<skills-root>/multiagent-collab/`.
-Personal discovery symlinks expose it at `~/.codex/skills/multiagent-collab/` and
+Personal discovery symlinks expose it at `~/.agents/skills/multiagent-collab/` and
 `~/.claude/skills/multiagent-collab/`. Keep only a short trigger/pointer in the
 user-level `~/.codex/AGENTS.md` and `~/.claude/CLAUDE.md`; project instruction files
 need no change. A watcher wake explicitly invokes the skill, so the full workflow is

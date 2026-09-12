@@ -19,6 +19,10 @@ doctor, and archive operations. Run `--help` for commands. Read
 [references/commands.md](references/commands.md) only when installing, operating, or
 debugging the runtime.
 
+For first-time installation, follow the repository README quickstart. After any
+runtime-script upgrade, replace each live watcher with `release` followed by `bind`;
+same-session `rebind` intentionally leaves an already-live watcher unchanged.
+
 ## Task workflow
 
 - The initiating agent drafts the task contract and passes the baton to the other

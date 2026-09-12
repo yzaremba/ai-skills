@@ -31,6 +31,14 @@ AGENTS = ("codex", "claude")
 WAKE_TIMEOUT_SECONDS = 10
 WAKE_BACKOFF_SECONDS = (0, 5, 30)
 WAKE_RECOVERY_INTERVAL_SECONDS = 300
+DISCOVERY_ROOTS = {
+    "codex": Path(".agents/skills"),
+    "claude": Path(".claude/skills"),
+}
+LEGACY_DISCOVERY_ROOTS = {
+    "codex": (Path(".codex/skills"),),
+    "claude": (),
+}
 
 
 class UserError(RuntimeError):
@@ -124,6 +132,42 @@ def selected_agents(value: str) -> tuple[str, ...]:
     return (value,)
 
 
+def skill_link_paths(home: Path, agent: str) -> tuple[Path, tuple[Path, ...]]:
+    if agent not in AGENTS:
+        raise UserError(f"unknown agent: {agent}")
+    current = home / DISCOVERY_ROOTS[agent] / SKILL_NAME
+    legacy = tuple(home / root / SKILL_NAME for root in LEGACY_DISCOVERY_ROOTS[agent])
+    return current, legacy
+
+
+def reject_symlinked_parent(home: Path, path: Path) -> None:
+    current = home
+    for part in path.relative_to(home).parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            raise UserError(f"refusing discovery link through symlinked parent: {path}")
+
+
+def metadata_managed_links(
+    metadata: dict[str, Any], home: Path, skill_root: Path,
+) -> set[str]:
+    recorded_root = metadata.get("skill_root")
+    if recorded_root != str(skill_root):
+        return set()
+    configured = metadata.get("managed_links")
+    if isinstance(configured, list) and all(isinstance(path, str) for path in configured):
+        return set(configured)
+    managed: set[str] = set()
+    installed = set(metadata.get("agents", []))
+    for agent in installed & set(AGENTS):
+        current, legacy = skill_link_paths(home, agent)
+        candidates = legacy if agent == "codex" else (current,)
+        for link in candidates:
+            if link.is_symlink() and symlink_target(link) == skill_root:
+                managed.add(str(link))
+    return managed
+
+
 def validate_task_id(task_id: str) -> None:
     if not TASK_ID_RE.fullmatch(task_id):
         raise UserError(f"invalid task id: {task_id}")
@@ -141,6 +185,102 @@ def config_target(path: Path, follow_symlinks: bool) -> Path:
 def symlink_target(link: Path) -> Path:
     raw = Path(os.readlink(link))
     return expand(raw if raw.is_absolute() else link.parent / raw)
+
+
+def probe_codex_discovery(
+    home: Path, skill_root: Path, *, cwd: Path | None = None,
+) -> dict[str, Any]:
+    environment = os.environ.copy()
+    environment["HOME"] = str(home)
+    environment.pop("CODEX_HOME", None)
+    command = ["codex", "debug", "prompt-input", "multiagent-collab discovery verification"]
+    try:
+        result = subprocess.run(
+            command,
+            cwd=str(cwd or home),
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "available": False,
+            "entries": [],
+            "roots": {},
+            "warnings": [f"{type(exc).__name__}: {exc}"],
+        }
+    combined = result.stdout + "\n" + result.stderr
+    warnings = [
+        line.strip()
+        for line in combined.splitlines()
+        if "skipped loading" in line.lower() or "ignoring invalid" in line.lower()
+    ]
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        return {
+            "available": False,
+            "entries": [],
+            "roots": {},
+            "warnings": warnings + [detail],
+        }
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        return {
+            "available": False,
+            "entries": [],
+            "roots": {},
+            "warnings": warnings + [f"invalid prompt-input JSON: {exc}"],
+        }
+    texts: list[str] = []
+    if isinstance(payload, list):
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            for content in item.get("content", []):
+                if isinstance(content, dict) and isinstance(content.get("text"), str):
+                    texts.append(content["text"])
+    instructions = "\n".join(texts)
+    roots = {
+        match.group(1): match.group(2)
+        for match in re.finditer(r"^- `(r\d+)` = `([^`]+)`$", instructions, re.MULTILINE)
+    }
+    entries: list[dict[str, Any]] = []
+    for line in instructions.splitlines():
+        if not line.startswith(f"- {SKILL_NAME}:"):
+            continue
+        match = re.search(r"\(file: (r\d+)/([^)]*SKILL\.md)\)\s*$", line)
+        if not match or match.group(1) not in roots:
+            warnings.append(f"unparseable {SKILL_NAME} entry: {line}")
+            continue
+        skill_file = expand(Path(roots[match.group(1)]) / match.group(2))
+        entries.append({
+            "root_id": match.group(1),
+            "root_path": str(expand(roots[match.group(1)])),
+            "skill_file": str(skill_file),
+            "canonical": skill_file.parent == skill_root,
+        })
+    return {
+        "available": True,
+        "entries": entries,
+        "roots": roots,
+        "warnings": warnings,
+    }
+
+
+def discovery_summary(probe: dict[str, Any]) -> str:
+    entries = [
+        {
+            "root": entry.get("root_path"),
+            "skill_file": entry.get("skill_file"),
+            "canonical": entry.get("canonical"),
+        }
+        for entry in probe.get("entries", [])
+    ]
+    warnings = probe.get("warnings", [])
+    return f"entries={entries} warnings={warnings}"
 
 
 class FileOps:
@@ -377,6 +517,7 @@ def install_protocol(ops: FileOps, asset: Path, chat_root: Path, expected: str |
 def preflight_setup(
     home: Path, chat_root: Path, skill_root: Path, asset: Path,
     agents: tuple[str, ...], follow_symlinks: bool, expected_protocol: str | None,
+    metadata: dict[str, Any],
 ) -> None:
     destination = chat_root / "PROTOCOL.md"
     if destination.is_symlink():
@@ -385,10 +526,24 @@ def preflight_setup(
         current_hash = sha256_file(destination)
         if expected_protocol != current_hash:
             raise UserError(f"protocol drift at {destination}: current {current_hash}")
+    managed_links = metadata_managed_links(metadata, home, skill_root)
     for agent in agents:
-        link = home / f".{agent}" / "skills" / SKILL_NAME
-        if (link.exists() or link.is_symlink()) and not (link.is_symlink() and symlink_target(link) == skill_root):
+        link, legacy_links = skill_link_paths(home, agent)
+        for candidate in (link, *legacy_links):
+            reject_symlinked_parent(home, candidate)
+        if (link.exists() or link.is_symlink()) and not (
+            link.is_symlink() and symlink_target(link) == skill_root
+        ):
             raise UserError(f"unmanaged path already exists: {link}")
+        for legacy in legacy_links:
+            if not legacy.exists() and not legacy.is_symlink():
+                continue
+            if not legacy.is_symlink() or symlink_target(legacy) != skill_root:
+                raise UserError(f"unmanaged legacy discovery path exists: {legacy}")
+            if str(legacy) not in managed_links:
+                raise UserError(
+                    f"legacy discovery link is not recorded as managed: {legacy}"
+                )
         if agent == "codex":
             agents_md = home / ".codex" / "AGENTS.md"
             agents_target = config_target(agents_md, follow_symlinks)
@@ -403,6 +558,143 @@ def preflight_setup(
         merge_hooks(load_json(hooks_target, default_hooks), skill_root, chat_root, agent)
 
 
+def probe_has_root_entry(
+    probe: dict[str, Any], root: Path, skill_root: Path,
+) -> bool:
+    expected_root = str(expand(root))
+    return any(
+        entry.get("root_path") == expected_root
+        and entry.get("skill_file") == str(skill_root / "SKILL.md")
+        and entry.get("canonical") is True
+        for entry in probe.get("entries", [])
+    )
+
+
+def configure_discovery_links(
+    ops: FileOps,
+    home: Path,
+    skill_root: Path,
+    agents: tuple[str, ...],
+    prior_metadata: dict[str, Any],
+) -> tuple[set[str], dict[str, Any]]:
+    managed_links = metadata_managed_links(prior_metadata, home, skill_root)
+    discovery = dict(prior_metadata.get("codex_discovery", {}))
+    prior_migration = discovery.get("migration")
+    for agent in agents:
+        current, legacy_links = skill_link_paths(home, agent)
+        current_existed = current.exists() or current.is_symlink()
+        ops.symlink(skill_root, current)
+        if not current_existed:
+            managed_links.add(str(current))
+        if agent != "codex":
+            continue
+
+        legacy = legacy_links[0]
+        legacy_exists = legacy.exists() or legacy.is_symlink()
+        if ops.dry_run:
+            phase = "dual" if legacy_exists else "official"
+            ops.note(f"probe codex discovery ({phase}): codex debug prompt-input")
+            if legacy_exists:
+                ops.note(f"unlink verified managed legacy link {legacy}")
+                ops.note("probe codex discovery (post-removal): codex debug prompt-input")
+            continue
+
+        if legacy_exists:
+            dual = probe_codex_discovery(home, skill_root)
+            discovery = {"phase": "dual", **dual, "migration": {"dual": dual}}
+            if not dual["available"]:
+                ops.note(
+                    f"WARNING codex discovery probe unavailable; migration deferred; "
+                    f"official={current} legacy={legacy}; {discovery_summary(dual)}"
+                )
+                continue
+            dual_valid = (
+                not dual["warnings"]
+                and len(dual["entries"]) == 1
+                and all(entry.get("canonical") is True for entry in dual["entries"])
+                and (
+                    probe_has_root_entry(dual, current.parent, skill_root)
+                    or probe_has_root_entry(dual, legacy.parent, skill_root)
+                )
+            )
+            if not dual_valid:
+                if not current_existed:
+                    current.unlink(missing_ok=True)
+                    managed_links.discard(str(current))
+                raise UserError(
+                    f"codex discovery migration stopped before legacy removal; "
+                    f"official={current} legacy={legacy}; {discovery_summary(dual)}"
+                )
+            ops.unlink_managed(skill_root, legacy)
+            managed_links.discard(str(legacy))
+            post = probe_codex_discovery(home, skill_root)
+            post_valid = (
+                post["available"]
+                and not post["warnings"]
+                and len(post["entries"]) == 1
+                and probe_has_root_entry(post, current.parent, skill_root)
+            )
+            if not post_valid:
+                legacy.parent.mkdir(parents=True, exist_ok=True)
+                os.symlink(skill_root, legacy, target_is_directory=True)
+                managed_links.add(str(legacy))
+                restored = probe_codex_discovery(home, skill_root)
+                discovery = {
+                    "phase": "post-removal-failed",
+                    "dual": dual,
+                    "post": post,
+                    "legacy_restored": True,
+                    "restored_probe": restored,
+                }
+                if not post["available"]:
+                    ops.note(
+                        f"WARNING codex discovery migration failed; legacy link restored; "
+                        f"official={current} legacy={legacy}; "
+                        f"post={discovery_summary(post)}; "
+                        f"restored={discovery_summary(restored)}"
+                    )
+                    continue
+                if not current_existed:
+                    current.unlink(missing_ok=True)
+                    managed_links.discard(str(current))
+                raise UserError(
+                    f"codex discovery migration failed; legacy link restored; "
+                    f"official={current} legacy={legacy}; post={discovery_summary(post)}; "
+                    f"restored={discovery_summary(restored)}"
+                )
+            discovery = {
+                "phase": "official",
+                **post,
+                "migration": {"dual": dual, "post": post},
+            }
+            continue
+
+        official = probe_codex_discovery(home, skill_root)
+        discovery = {"phase": "official", **official}
+        if isinstance(prior_migration, dict):
+            discovery["migration"] = prior_migration
+        if not official["available"]:
+            ops.note(
+                f"WARNING codex discovery probe unavailable; official={current}; "
+                f"{discovery_summary(official)}"
+            )
+            continue
+        official_valid = (
+            not official["warnings"]
+            and len(official["entries"]) == 1
+            and probe_has_root_entry(official, current.parent, skill_root)
+        )
+        if not official_valid:
+            if not current_existed:
+                current.unlink(missing_ok=True)
+                managed_links.discard(str(current))
+            raise UserError(
+                f"codex documented discovery verification failed; official={current}; "
+                f"{discovery_summary(official)}"
+            )
+    return managed_links, discovery
+
+
 def setup(args: argparse.Namespace) -> int:
     home = expand(args.home)
     chat_root = expand(args.chat_root)
@@ -411,11 +703,17 @@ def setup(args: argparse.Namespace) -> int:
     if not asset.is_file():
         raise UserError(f"missing packaged protocol: {asset}")
     agents = selected_agents(args.agent)
+    metadata_path = chat_root / "_runtime" / "install.json"
+    prior_metadata = load_json(metadata_path, {})
     preflight_setup(
         home, chat_root, skill_root, asset, agents,
         args.follow_config_symlinks, args.upgrade_protocol_from,
+        prior_metadata,
     )
     ops = FileOps(dry_run=args.dry_run, chat_root=chat_root, follow_symlinks=args.follow_config_symlinks)
+    managed_links, codex_discovery = configure_discovery_links(
+        ops, home, skill_root, agents, prior_metadata,
+    )
     for directory in (chat_root, chat_root / "_archive", chat_root / "_runtime"):
         ops.mkdir(directory)
     install_protocol(ops, asset, chat_root, args.upgrade_protocol_from)
@@ -425,8 +723,6 @@ def setup(args: argparse.Namespace) -> int:
 
     config_targets: set[str] = set()
     for agent in agents:
-        link = home / f".{agent}" / "skills" / SKILL_NAME
-        ops.symlink(skill_root, link)
         if agent == "codex":
             agents_md = home / ".codex" / "AGENTS.md"
             agents_target = config_target(agents_md, args.follow_config_symlinks)
@@ -444,8 +740,6 @@ def setup(args: argparse.Namespace) -> int:
         merged = merge_hooks(hooks_data, skill_root, chat_root, agent)
         ops.write(hooks_path, json_bytes(merged), config=True)
 
-    metadata_path = chat_root / "_runtime" / "install.json"
-    prior_metadata = load_json(metadata_path, {})
     installed = set(prior_metadata.get("agents", []))
     installed.update(agents)
     created_config = set(prior_metadata.get("created_config", []))
@@ -462,6 +756,8 @@ def setup(args: argparse.Namespace) -> int:
         "agents": sorted(installed),
         "created_config": sorted(created_config),
         "original_config": original_config,
+        "managed_links": sorted(managed_links),
+        "codex_discovery": codex_discovery,
     }
     ops.write(metadata_path, json_bytes(metadata), mode=0o600)
     ops.finish()
@@ -479,9 +775,15 @@ def uninstall(args: argparse.Namespace) -> int:
     metadata_path = chat_root / "_runtime" / "install.json"
     metadata = load_json(metadata_path, {}) if metadata_path.exists() else {}
     created_config = set(metadata.get("created_config", []))
+    managed_links = metadata_managed_links(metadata, home, skill_root)
     processed_config: set[str] = set()
     for agent in agents:
-        ops.unlink_managed(skill_root, home / f".{agent}" / "skills" / SKILL_NAME)
+        current_link, legacy_links = skill_link_paths(home, agent)
+        for link in (current_link, *legacy_links):
+            if str(link) not in managed_links:
+                continue
+            ops.unlink_managed(skill_root, link)
+            managed_links.discard(str(link))
         if agent == "codex":
             agents_md = home / ".codex" / "AGENTS.md"
             agents_target = config_target(agents_md, args.follow_config_symlinks)
@@ -528,6 +830,7 @@ def uninstall(args: argparse.Namespace) -> int:
         metadata["agents"] = [agent for agent in metadata.get("agents", []) if agent not in agents]
         removed_prefixes = tuple(str(home / f".{agent}") for agent in agents)
         metadata["created_config"] = [path for path in metadata.get("created_config", []) if not path.startswith(removed_prefixes)]
+        metadata["managed_links"] = sorted(managed_links)
         originals = metadata.get("original_config", {})
         if isinstance(originals, dict):
             metadata["original_config"] = {
@@ -1437,9 +1740,59 @@ def doctor(args: argparse.Namespace) -> int:
     check("installed_protocol", installed.is_file(), str(installed))
     if asset.is_file() and installed.is_file():
         check("protocol_hash", sha256_file(asset) == sha256_file(installed), f"packaged={sha256_file(asset)} installed={sha256_file(installed)}")
+    install_metadata = load_json(chat_root / "_runtime/install.json", {})
+    managed_links = metadata_managed_links(install_metadata, home, skill_root)
     for agent in selected_agents(args.agent):
-        link = home / f".{agent}" / "skills" / SKILL_NAME
-        check(f"{agent}_skill_link", link.is_symlink() and symlink_target(link) == skill_root, str(link))
+        link, legacy_links = skill_link_paths(home, agent)
+        link_ok = link.is_symlink() and symlink_target(link) == skill_root
+        check(f"{agent}_skill_link", link_ok, str(link))
+        if agent == "codex":
+            legacy = legacy_links[0]
+            legacy_exists = legacy.exists() or legacy.is_symlink()
+            if legacy_exists:
+                legacy_ok = legacy.is_symlink() and symlink_target(legacy) == skill_root
+                legacy_managed = str(legacy) in managed_links
+                severity = "warning" if legacy_ok and legacy_managed else "error"
+                check(
+                    "codex_legacy_skill_link",
+                    False,
+                    f"official={link} legacy={legacy}; release sessions, verify official "
+                    "discovery, then remove only the managed legacy entry",
+                    severity,
+                )
+            probe = probe_codex_discovery(home, skill_root)
+            if not probe["available"]:
+                check(
+                    "codex_discovery",
+                    False,
+                    f"probe unavailable; no verified migration claim; {discovery_summary(probe)}",
+                    "warning",
+                )
+            else:
+                canonical = all(entry.get("canonical") is True for entry in probe["entries"])
+                expected_roots = [link.parent]
+                if legacy_exists:
+                    expected_roots.append(legacy.parent)
+                expected_entry = any(
+                    probe_has_root_entry(probe, root, skill_root)
+                    for root in expected_roots
+                )
+                if (
+                    len(probe["entries"]) == 1
+                    and canonical
+                    and expected_entry
+                    and not probe["warnings"]
+                ):
+                    check("codex_discovery", True, discovery_summary(probe))
+                elif len(probe["entries"]) > 1:
+                    check(
+                        "codex_discovery",
+                        False,
+                        f"multiple discovery targets; official={link} legacy={legacy}; "
+                        f"{discovery_summary(probe)}",
+                    )
+                else:
+                    check("codex_discovery", False, discovery_summary(probe))
         hooks_path = home / (".codex/hooks.json" if agent == "codex" else ".claude/settings.json")
         hooks = load_json(hooks_path, {}) if hooks_path.exists() else {}
         groups = hooks.get("hooks", {}) if isinstance(hooks, dict) else {}

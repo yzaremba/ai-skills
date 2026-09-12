@@ -7,6 +7,10 @@ import io
 import json
 import os
 from pathlib import Path
+import re
+import shlex
+import shutil
+import subprocess
 import tarfile
 import tempfile
 import time
@@ -43,9 +47,28 @@ class SetupTests(unittest.TestCase):
         }
         self.original_settings = (json.dumps(self.existing_hook, indent=2) + "\n").encode("utf-8")
         (self.home / ".claude" / "settings.json").write_bytes(self.original_settings)
+        self.discovery_patcher = mock.patch.object(
+            mc, "probe_codex_discovery", side_effect=self.fake_discovery_probe,
+        )
+        self.discovery_mock = self.discovery_patcher.start()
 
     def tearDown(self):
+        self.discovery_patcher.stop()
         self.temp.cleanup()
+
+    def fake_discovery_probe(self, home, skill_root, **_kwargs):
+        entries = []
+        current, legacy_links = mc.skill_link_paths(Path(home), "codex")
+        for index, link in enumerate((*legacy_links, current)):
+            if link.is_symlink() and mc.symlink_target(link) == skill_root:
+                entries.append({
+                    "root_id": f"r{index}",
+                    "root_path": str(link.parent.resolve()),
+                    "skill_file": str(skill_root / "SKILL.md"),
+                    "canonical": True,
+                })
+                break
+        return {"available": True, "entries": entries, "roots": {}, "warnings": []}
 
     def args(self, command: str, **extra):
         values = {
@@ -59,10 +82,26 @@ class SetupTests(unittest.TestCase):
         values.update(extra)
         return Args(**values)
 
+    def install_legacy_link_fixture(self):
+        skill_root = SCRIPT.parents[1].resolve()
+        legacy = self.home / ".codex/skills/multiagent-collab"
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.symlink_to(skill_root, target_is_directory=True)
+        runtime = self.chat / "_runtime"
+        runtime.mkdir(parents=True)
+        (runtime / "install.json").write_bytes(mc.json_bytes({
+            "skill_root": str(skill_root),
+            "chat_root": str(self.chat),
+            "agents": ["codex"],
+            "created_config": [],
+            "original_config": {},
+        }))
+        return legacy
+
     def test_setup_both_is_idempotent_and_preserves_existing_settings(self):
         mc.setup(self.args("setup"))
         skill_root = SCRIPT.parents[1].resolve()
-        self.assertEqual((self.home / ".codex/skills/multiagent-collab").resolve(), skill_root)
+        self.assertEqual((self.home / ".agents/skills/multiagent-collab").resolve(), skill_root)
         self.assertEqual((self.home / ".claude/skills/multiagent-collab").resolve(), skill_root)
         self.assertEqual(
             mc.sha256_file(self.chat / "PROTOCOL.md"),
@@ -85,6 +124,14 @@ class SetupTests(unittest.TestCase):
                 str(self.home / ".codex/hooks.json"),
             },
         )
+        self.assertEqual(
+            set(install_data["managed_links"]),
+            {
+                str(self.home / ".agents/skills/multiagent-collab"),
+                str(self.home / ".claude/skills/multiagent-collab"),
+            },
+        )
+        self.assertEqual(install_data["codex_discovery"]["phase"], "official")
         first = {
             path: path.read_bytes()
             for path in (
@@ -97,18 +144,148 @@ class SetupTests(unittest.TestCase):
         mc.setup(self.args("setup"))
         self.assertEqual(first, {path: path.read_bytes() for path in first})
 
+    def test_managed_legacy_link_migrates_after_dual_and_post_probes(self):
+        legacy = self.install_legacy_link_fixture()
+        mc.setup(self.args("setup", agent="codex"))
+        official = self.home / ".agents/skills/multiagent-collab"
+        self.assertEqual(official.resolve(), SCRIPT.parents[1].resolve())
+        self.assertFalse(legacy.exists())
+        self.assertEqual(self.discovery_mock.call_count, 2)
+        metadata = json.loads((self.chat / "_runtime/install.json").read_text())
+        self.assertIn(str(official), metadata["managed_links"])
+        self.assertNotIn(str(legacy), metadata["managed_links"])
+        self.assertEqual(metadata["codex_discovery"]["phase"], "official")
+        migration = metadata["codex_discovery"]["migration"]
+        self.assertTrue(
+            mc.probe_has_root_entry(migration["dual"], legacy.parent, SCRIPT.parents[1].resolve())
+        )
+        self.assertTrue(
+            mc.probe_has_root_entry(migration["post"], official.parent, SCRIPT.parents[1].resolve())
+        )
+        mc.setup(self.args("setup", agent="codex"))
+        repeated = json.loads((self.chat / "_runtime/install.json").read_text())
+        self.assertEqual(repeated["codex_discovery"]["migration"], migration)
+
+    def test_unavailable_probe_warns_and_never_removes_legacy_link(self):
+        legacy = self.install_legacy_link_fixture()
+        unavailable = {
+            "available": False, "entries": [], "roots": {},
+            "warnings": ["codex not found"],
+        }
+        output = io.StringIO()
+        with mock.patch.object(mc, "probe_codex_discovery", return_value=unavailable), contextlib.redirect_stdout(output):
+            mc.setup(self.args("setup", agent="codex"))
+        official = self.home / ".agents/skills/multiagent-collab"
+        self.assertTrue(official.is_symlink())
+        self.assertTrue(legacy.is_symlink())
+        self.assertIn("probe unavailable", output.getvalue())
+        metadata = json.loads((self.chat / "_runtime/install.json").read_text())
+        self.assertEqual(metadata["codex_discovery"]["phase"], "dual")
+
+    def test_dual_probe_fault_rolls_back_new_link_before_legacy_removal(self):
+        legacy = self.install_legacy_link_fixture()
+
+        def multiple_targets(home, skill_root, **kwargs):
+            result = self.fake_discovery_probe(home, skill_root, **kwargs)
+            result["entries"].append({
+                "root_id": "stale",
+                "root_path": str(Path(home) / ".agents/skills"),
+                "skill_file": str(Path(home) / "stale/multiagent-collab/SKILL.md"),
+                "canonical": False,
+            })
+            return result
+
+        with mock.patch.object(mc, "probe_codex_discovery", side_effect=multiple_targets):
+            with self.assertRaisesRegex(mc.UserError, "before legacy removal"):
+                mc.setup(self.args("setup", agent="codex"))
+        self.assertTrue(legacy.is_symlink())
+        self.assertFalse((self.home / ".agents/skills/multiagent-collab").exists())
+        self.assertFalse((self.home / ".codex/AGENTS.md").exists())
+
+    def test_failed_post_removal_probe_restores_legacy_and_reports_failure(self):
+        legacy = self.install_legacy_link_fixture()
+        calls = 0
+
+        def fail_post(home, skill_root, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                return {"available": True, "entries": [], "roots": {}, "warnings": []}
+            return self.fake_discovery_probe(home, skill_root, **kwargs)
+
+        with mock.patch.object(mc, "probe_codex_discovery", side_effect=fail_post):
+            with self.assertRaisesRegex(mc.UserError, "migration failed; legacy link restored") as raised:
+                mc.setup(self.args("setup", agent="codex"))
+        official = self.home / ".agents/skills/multiagent-collab"
+        self.assertFalse(official.exists())
+        self.assertTrue(legacy.is_symlink())
+        self.assertIn(str(official), str(raised.exception))
+        self.assertIn(str(legacy), str(raised.exception))
+        self.assertEqual(calls, 3)
+
+    def test_unavailable_post_probe_warns_and_retains_both_links(self):
+        legacy = self.install_legacy_link_fixture()
+        calls = 0
+
+        def unavailable_post(home, skill_root, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls >= 2:
+                return {
+                    "available": False,
+                    "entries": [],
+                    "roots": {},
+                    "warnings": ["codex not found"],
+                }
+            return self.fake_discovery_probe(home, skill_root, **kwargs)
+
+        output = io.StringIO()
+        with mock.patch.object(mc, "probe_codex_discovery", side_effect=unavailable_post), contextlib.redirect_stdout(output):
+            mc.setup(self.args("setup", agent="codex"))
+        official = self.home / ".agents/skills/multiagent-collab"
+        self.assertTrue(official.is_symlink())
+        self.assertTrue(legacy.is_symlink())
+        self.assertIn("migration failed; legacy link restored", output.getvalue())
+        metadata = json.loads((self.chat / "_runtime/install.json").read_text())
+        self.assertEqual(metadata["codex_discovery"]["phase"], "post-removal-failed")
+        self.assertEqual(set(metadata["managed_links"]), {str(official), str(legacy)})
+        self.assertEqual(calls, 3)
+
+    def test_unmanaged_legacy_link_blocks_before_new_link_creation(self):
+        skill_root = SCRIPT.parents[1].resolve()
+        legacy = self.home / ".codex/skills/multiagent-collab"
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.symlink_to(skill_root, target_is_directory=True)
+        with self.assertRaisesRegex(mc.UserError, "not recorded as managed"):
+            mc.setup(self.args("setup", agent="codex"))
+        self.assertFalse((self.home / ".agents").exists())
+        self.assertTrue(legacy.is_symlink())
+
+    def test_fresh_discovery_failure_rolls_back_only_managed_entry(self):
+        invalid = {"available": True, "entries": [], "roots": {}, "warnings": []}
+        with mock.patch.object(mc, "probe_codex_discovery", return_value=invalid):
+            with self.assertRaisesRegex(mc.UserError, "documented discovery verification failed"):
+                mc.setup(self.args("setup", agent="codex"))
+        self.assertFalse((self.home / ".agents/skills/multiagent-collab").exists())
+        self.assertTrue((self.home / ".agents/skills").is_dir())
+        self.assertFalse(self.chat.exists())
+        self.assertFalse((self.home / ".codex/AGENTS.md").exists())
+
     def test_dry_run_writes_nothing(self):
         mc.setup(self.args("setup", dry_run=True))
         self.assertFalse(self.chat.exists())
         self.assertFalse((self.home / ".codex").exists())
+        self.assertFalse((self.home / ".agents").exists())
 
     def test_uninstall_preserves_chat_data_and_existing_hooks(self):
         mc.setup(self.args("setup"))
         (self.chat / "task-data").mkdir()
         (self.chat / "task-data/result.txt").write_text("keep", encoding="utf-8")
         mc.uninstall(self.args("uninstall"))
-        self.assertFalse((self.home / ".codex/skills/multiagent-collab").exists())
+        self.assertFalse((self.home / ".agents/skills/multiagent-collab").exists())
         self.assertFalse((self.home / ".claude/skills/multiagent-collab").exists())
+        self.assertTrue((self.home / ".agents/skills").is_dir())
+        self.assertTrue((self.home / ".agents").is_dir())
         self.assertFalse((self.home / ".codex/AGENTS.md").exists())
         self.assertFalse((self.home / ".codex/hooks.json").exists())
         self.assertTrue((self.chat / "PROTOCOL.md").is_file())
@@ -119,6 +296,108 @@ class SetupTests(unittest.TestCase):
         self.assertEqual((self.home / ".claude/settings.json").read_bytes(), self.original_settings)
         install_data = json.loads((self.chat / "_runtime/install.json").read_text())
         self.assertEqual(install_data["created_config"], [])
+        self.assertEqual(install_data["managed_links"], [])
+
+    def test_uninstall_does_not_trust_links_from_mismatched_install_metadata(self):
+        mc.setup(self.args("setup", agent="codex"))
+        official = self.home / ".agents/skills/multiagent-collab"
+        metadata_path = self.chat / "_runtime/install.json"
+        metadata = json.loads(metadata_path.read_text())
+        metadata["skill_root"] = str(self.root / "different-skill-root")
+        metadata_path.write_bytes(mc.json_bytes(metadata))
+        mc.uninstall(self.args("uninstall", agent="codex"))
+        self.assertTrue(official.is_symlink())
+        self.assertEqual(official.resolve(), SCRIPT.parents[1].resolve())
+
+    def test_doctor_reports_managed_legacy_link_with_deduplicated_discovery(self):
+        mc.setup(self.args("setup", agent="codex"))
+        skill_root = SCRIPT.parents[1].resolve()
+        legacy = self.home / ".codex/skills/multiagent-collab"
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.symlink_to(skill_root, target_is_directory=True)
+        metadata_path = self.chat / "_runtime/install.json"
+        metadata = json.loads(metadata_path.read_text())
+        metadata["managed_links"].append(str(legacy))
+        metadata_path.write_bytes(mc.json_bytes(metadata))
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = mc.doctor(Args(
+                home=str(self.home), chat_root=str(self.chat), agent="codex",
+                json=True, require_binding=False,
+            ))
+        self.assertEqual(result, 0)
+        report = json.loads(output.getvalue())
+        checks = {item["name"]: item for item in report["checks"]}
+        self.assertEqual(checks["codex_legacy_skill_link"]["severity"], "warning")
+        self.assertTrue(checks["codex_discovery"]["ok"])
+        self.assertIn(str(legacy.parent), checks["codex_discovery"]["detail"])
+
+    def test_doctor_fails_multiple_discovery_targets_with_actionable_paths(self):
+        mc.setup(self.args("setup", agent="codex"))
+        official = self.home / ".agents/skills/multiagent-collab"
+        legacy = self.home / ".codex/skills/multiagent-collab"
+        duplicate = {
+            "available": True,
+            "entries": [
+                {
+                    "root_path": str(official.parent),
+                    "skill_file": str(SCRIPT.parents[1] / "SKILL.md"),
+                    "canonical": True,
+                },
+                {
+                    "root_path": str(legacy.parent),
+                    "skill_file": str(self.home / "stale/SKILL.md"),
+                    "canonical": False,
+                },
+            ],
+            "roots": {},
+            "warnings": [],
+        }
+        output = io.StringIO()
+        with mock.patch.object(mc, "probe_codex_discovery", return_value=duplicate), contextlib.redirect_stdout(output):
+            result = mc.doctor(Args(
+                home=str(self.home), chat_root=str(self.chat), agent="codex",
+                json=True, require_binding=False,
+            ))
+        self.assertEqual(result, 1)
+        check = {
+            item["name"]: item for item in json.loads(output.getvalue())["checks"]
+        }["codex_discovery"]
+        self.assertIn("multiple discovery targets", check["detail"])
+        self.assertIn(str(official), check["detail"])
+        self.assertIn(str(legacy), check["detail"])
+        self.assertIn(str(self.home / "stale/SKILL.md"), check["detail"])
+
+    def test_doctor_treats_unavailable_probe_as_warning(self):
+        mc.setup(self.args("setup", agent="codex"))
+        unavailable = {
+            "available": False, "entries": [], "roots": {},
+            "warnings": ["codex not found"],
+        }
+        output = io.StringIO()
+        with mock.patch.object(mc, "probe_codex_discovery", return_value=unavailable), contextlib.redirect_stdout(output):
+            result = mc.doctor(Args(
+                home=str(self.home), chat_root=str(self.chat), agent="codex",
+                json=True, require_binding=False,
+            ))
+        self.assertEqual(result, 0)
+        checks = {item["name"]: item for item in json.loads(output.getvalue())["checks"]}
+        self.assertEqual(checks["codex_discovery"]["severity"], "warning")
+        self.assertIn("no verified migration claim", checks["codex_discovery"]["detail"])
+
+    def test_doctor_fails_missing_link_and_missing_discovery(self):
+        mc.setup(self.args("setup", agent="codex"))
+        (self.home / ".agents/skills/multiagent-collab").unlink()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            result = mc.doctor(Args(
+                home=str(self.home), chat_root=str(self.chat), agent="codex",
+                json=True, require_binding=False,
+            ))
+        self.assertEqual(result, 1)
+        checks = {item["name"]: item for item in json.loads(output.getvalue())["checks"]}
+        self.assertFalse(checks["codex_skill_link"]["ok"])
+        self.assertFalse(checks["codex_discovery"]["ok"])
 
     def test_uninstall_preserves_preexisting_codex_config_exactly(self):
         codex = self.home / ".codex"
@@ -249,6 +528,15 @@ class SetupTests(unittest.TestCase):
             mc.setup(self.args("setup", agent="claude"))
         self.assertEqual((real / "settings.json").read_bytes(), self.original_settings)
 
+    def test_refuses_discovery_link_under_symlinked_shared_parent(self):
+        shared = self.root / "shared-agent-data"
+        shared.mkdir()
+        (self.home / ".agents").symlink_to(shared, target_is_directory=True)
+        with self.assertRaisesRegex(mc.UserError, "symlinked parent"):
+            mc.setup(self.args("setup", agent="codex"))
+        self.assertFalse((shared / "skills/multiagent-collab").exists())
+        self.assertFalse(self.chat.exists())
+
     def test_preflight_conflict_leaves_no_partial_install(self):
         conflict = self.home / ".claude/skills/multiagent-collab"
         conflict.mkdir(parents=True)
@@ -257,7 +545,163 @@ class SetupTests(unittest.TestCase):
             mc.setup(self.args("setup"))
         self.assertFalse(self.chat.exists())
         self.assertFalse((self.home / ".codex").exists())
+        self.assertFalse((self.home / ".agents").exists())
         self.assertEqual((conflict / "unmanaged").read_text(), "keep")
+
+
+@unittest.skipUnless(shutil.which("codex"), "codex CLI is not available")
+class CodexDiscoveryIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.home = Path(self.temp.name) / "home"
+        self.skill_root = SCRIPT.parents[1].resolve()
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_real_prompt_input_captures_legacy_dual_and_post_states(self):
+        official, legacy_links = mc.skill_link_paths(self.home, "codex")
+        legacy = legacy_links[0]
+        legacy.parent.mkdir(parents=True)
+        legacy.symlink_to(self.skill_root, target_is_directory=True)
+        first = mc.probe_codex_discovery(self.home, self.skill_root)
+        self.assertTrue(first["available"], first)
+        self.assertEqual(len(first["entries"]), 1)
+        self.assertTrue(mc.probe_has_root_entry(first, legacy.parent, self.skill_root))
+
+        official.parent.mkdir(parents=True)
+        official.symlink_to(self.skill_root, target_is_directory=True)
+        dual = mc.probe_codex_discovery(self.home, self.skill_root)
+        self.assertTrue(dual["available"], dual)
+        self.assertEqual(len(dual["entries"]), 1)
+        self.assertTrue(all(entry["canonical"] for entry in dual["entries"]))
+        self.assertTrue(mc.probe_has_root_entry(dual, legacy.parent, self.skill_root))
+
+        legacy.unlink()
+        post = mc.probe_codex_discovery(self.home, self.skill_root)
+        self.assertTrue(post["available"], post)
+        self.assertEqual(len(post["entries"]), 1)
+        self.assertTrue(mc.probe_has_root_entry(post, official.parent, self.skill_root))
+
+    def test_real_setup_migrates_an_installed_1_0_fixture(self):
+        official, legacy_links = mc.skill_link_paths(self.home, "codex")
+        legacy = legacy_links[0]
+        legacy.parent.mkdir(parents=True)
+        legacy.symlink_to(self.skill_root, target_is_directory=True)
+        chat = Path(self.temp.name) / "chat"
+        runtime = chat / "_runtime"
+        runtime.mkdir(parents=True)
+        candidate = (self.skill_root / "assets/PROTOCOL.md").read_text(encoding="utf-8")
+        baseline = candidate.replace("Version: 1.1", "Version: 1.0", 1)
+        baseline = baseline.replace(
+            "under `~/.agents/`,\n  `~/.codex/`, or `~/.claude/`",
+            "under `~/.codex/` or\n  `~/.claude/`",
+            1,
+        )
+        baseline = baseline.replace(
+            "~/.agents/skills/multiagent-collab/",
+            "~/.codex/skills/multiagent-collab/",
+            1,
+        )
+        (chat / "PROTOCOL.md").write_text(baseline, encoding="utf-8")
+        (runtime / "install.json").write_bytes(mc.json_bytes({
+            "skill_root": str(self.skill_root),
+            "chat_root": str(chat),
+            "protocol_version": "1.0",
+            "protocol_sha256": mc.sha256_bytes(baseline.encode("utf-8")),
+            "agents": ["codex"],
+            "created_config": [],
+            "original_config": {},
+        }))
+
+        mc.setup(Args(
+            agent="codex",
+            home=str(self.home),
+            chat_root=str(chat),
+            dry_run=False,
+            follow_config_symlinks=False,
+            upgrade_protocol_from=mc.sha256_bytes(baseline.encode("utf-8")),
+        ))
+
+        self.assertTrue(official.is_symlink())
+        self.assertEqual(official.resolve(), self.skill_root)
+        self.assertFalse(legacy.exists())
+        metadata = json.loads((runtime / "install.json").read_text())
+        self.assertEqual(metadata["managed_links"], [str(official)])
+        self.assertEqual(metadata["codex_discovery"]["phase"], "official")
+        self.assertEqual(len(metadata["codex_discovery"]["entries"]), 1)
+        self.assertTrue(
+            mc.probe_has_root_entry(
+                metadata["codex_discovery"], official.parent, self.skill_root,
+            )
+        )
+        migration = metadata["codex_discovery"]["migration"]
+        self.assertEqual(len(migration["dual"]["entries"]), 1)
+        self.assertTrue(
+            mc.probe_has_root_entry(migration["dual"], legacy.parent, self.skill_root)
+        )
+        self.assertTrue(
+            mc.probe_has_root_entry(migration["post"], official.parent, self.skill_root)
+        )
+        self.assertEqual(
+            (chat / "PROTOCOL.md").read_bytes(),
+            (self.skill_root / "assets/PROTOCOL.md").read_bytes(),
+        )
+
+
+class DocumentationTests(unittest.TestCase):
+    def test_protocol_1_1_candidate_is_exact_declared_delta(self):
+        candidate = (SCRIPT.parents[1] / "assets/PROTOCOL.md").read_text(encoding="utf-8")
+        self.assertEqual(candidate.count("Version: 1.1"), 1)
+        self.assertEqual(candidate.count("~/.agents/skills/multiagent-collab/"), 1)
+        self.assertEqual(candidate.count("under `~/.agents/`,"), 1)
+        baseline = candidate.replace("Version: 1.1", "Version: 1.0", 1)
+        baseline = baseline.replace(
+            "under `~/.agents/`,\n  `~/.codex/`, or `~/.claude/`",
+            "under `~/.codex/` or\n  `~/.claude/`",
+            1,
+        )
+        baseline = baseline.replace(
+            "~/.agents/skills/multiagent-collab/",
+            "~/.codex/skills/multiagent-collab/",
+            1,
+        )
+        self.assertEqual(
+            mc.sha256_bytes(baseline.encode("utf-8")),
+            "5f9204f1dc9299a78f8f125cf2787f612a69efa67d9eb71c5a7ce4254e6f2027",
+        )
+
+    def test_multiagent_readme_commands_parse_and_shell_blocks_are_valid(self):
+        readme = (SCRIPT.parents[2] / "README.md").read_text(encoding="utf-8")
+        section = readme.split("### `multiagent-collab` for Codex and Claude", 1)[1]
+        section = section.split("### Skills", 1)[0]
+        blocks = re.findall(r"```bash\n(.*?)```", section, re.DOTALL)
+        self.assertGreaterEqual(len(blocks), 4)
+        syntax = subprocess.run(
+            ["bash", "-n"], input="\n".join(blocks), text=True,
+            capture_output=True, check=False,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+        parsed = 0
+        allowed = ("git ", "cd ", "sha256sum ")
+        for block in blocks:
+            for raw in block.splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("python3 multiagent-collab/scripts/multiagent_collab.py "):
+                    words = shlex.split(line)
+                    argv = ["0" * 64 if word == "APPROVED_CURRENT_SHA256" else word for word in words[2:]]
+                    mc.build_parser().parse_args(argv)
+                    parsed += 1
+                else:
+                    self.assertTrue(line.startswith(allowed), line)
+        self.assertEqual(parsed, 7)
+        for phrase in (
+            "codex-cli 0.154.0", "/hooks", "tail -n 0 -F", "`release`",
+            "`bind`", "does not start agents", "claims or removes",
+        ):
+            self.assertIn(phrase, section)
 
 
 class BatonTests(unittest.TestCase):
@@ -1686,6 +2130,26 @@ class BindingTests(unittest.TestCase):
             with self.assertRaises(mc.UserError):
                 mc.bind(self.args("session-b"), rebind=False)
         self.assertEqual(json.loads(binding_path.read_text())["session_id"], "session-a")
+
+    def test_release_then_bind_replaces_live_same_session_watcher(self):
+        binding_path, heartbeat, _ = mc.binding_paths(self.chat, "codex")
+        binding_path.parent.mkdir(parents=True)
+        original = mc.binding_record(self.args(), 111)
+        mc.atomic_write(binding_path, mc.json_bytes(original), 0o600)
+        heartbeat.write_text("live\n", encoding="utf-8")
+        with mock.patch.object(mc, "binding_live", return_value=True), mock.patch.object(mc, "spawn_watcher") as spawn:
+            mc.bind(self.args(), rebind=True)
+        spawn.assert_not_called()
+        self.assertEqual(json.loads(binding_path.read_text())["pid"], 111)
+
+        with mock.patch.object(mc, "watcher_pid_matches", return_value=False):
+            mc.stop_binding(self.chat, "codex", "session-a", force=False)
+        self.assertFalse(binding_path.exists())
+        with mock.patch.object(mc, "spawn_watcher", return_value=222):
+            mc.bind(self.args(), rebind=False)
+        replacement = json.loads(binding_path.read_text())
+        self.assertEqual(replacement["pid"], 222)
+        self.assertEqual(replacement["session_id"], "session-a")
 
     def test_unrelated_session_end_does_not_release_binding(self):
         binding_path, heartbeat, _ = mc.binding_paths(self.chat, "codex")
