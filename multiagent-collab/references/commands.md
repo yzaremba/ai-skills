@@ -40,6 +40,11 @@ session in with `bind`, prove delivery with `probe-wake`/`verify-wake`, then req
 doctor --agent both --require-binding
 ```
 
+Doctor asks Codex's app server for the current user-hook trust status. Trusted hooks
+report OK; changed, disabled, or missing hooks remain actionable warnings. If the
+installed Codex cannot provide a trustworthy answer, doctor reports that status as
+unavailable rather than claiming the hooks are untrusted.
+
 `rebind` replaces a dead or differently owned binding. It is a no-op for an already
 live binding owned by the same session. After a runtime-script upgrade, use
 `release` and then `bind` for both agents so the watcher processes load the new code.

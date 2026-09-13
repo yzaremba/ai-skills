@@ -51,8 +51,19 @@ class SetupTests(unittest.TestCase):
             mc, "probe_codex_discovery", side_effect=self.fake_discovery_probe,
         )
         self.discovery_mock = self.discovery_patcher.start()
+        self.hook_trust_patcher = mock.patch.object(
+            mc,
+            "probe_codex_hook_trust",
+            return_value={
+                "available": True,
+                "ok": True,
+                "detail": "sessionStart=trusted, sessionEnd=trusted",
+            },
+        )
+        self.hook_trust_mock = self.hook_trust_patcher.start()
 
     def tearDown(self):
+        self.hook_trust_patcher.stop()
         self.discovery_patcher.stop()
         self.temp.cleanup()
 
@@ -399,6 +410,28 @@ class SetupTests(unittest.TestCase):
         self.assertFalse(checks["codex_skill_link"]["ok"])
         self.assertFalse(checks["codex_discovery"]["ok"])
 
+    def test_doctor_uses_injected_hook_trust_probe_without_starting_child(self):
+        mc.setup(self.args("setup", agent="codex"))
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                mc.subprocess,
+                "Popen",
+                side_effect=AssertionError("doctor test started a real app-server child"),
+            ),
+            contextlib.redirect_stdout(output),
+        ):
+            result = mc.doctor(Args(
+                home=str(self.home), chat_root=str(self.chat), agent="codex",
+                json=True, require_binding=False,
+            ))
+        self.assertEqual(result, 0)
+        checks = {item["name"]: item for item in json.loads(output.getvalue())["checks"]}
+        self.assertTrue(checks["codex_hook_trust"]["ok"])
+        self.hook_trust_mock.assert_called_once_with(
+            self.home.resolve(), SCRIPT.parents[1].resolve(), cwd=Path.cwd(),
+        )
+
     def test_uninstall_preserves_preexisting_codex_config_exactly(self):
         codex = self.home / ".codex"
         codex.mkdir()
@@ -547,6 +580,308 @@ class SetupTests(unittest.TestCase):
         self.assertFalse((self.home / ".codex").exists())
         self.assertFalse((self.home / ".agents").exists())
         self.assertEqual((conflict / "unmanaged").read_text(), "keep")
+
+
+class CodexHookTrustTests(unittest.TestCase):
+    class FakeStdin:
+        def __init__(self, process):
+            self.process = process
+            self.buffer = ""
+
+        def write(self, data):
+            self.buffer += data
+            while "\n" in self.buffer:
+                line, self.buffer = self.buffer.split("\n", 1)
+                if line:
+                    self.process.handle(json.loads(line))
+            return len(data)
+
+        def flush(self):
+            return None
+
+        def close(self):
+            return None
+
+    class FakeProcess:
+        def __init__(self, mode, codex_home, hooks_result):
+            read_fd, write_fd = os.pipe()
+            self.stdout = os.fdopen(read_fd, "r", encoding="utf-8")
+            self.writer = os.fdopen(write_fd, "w", encoding="utf-8")
+            self.stderr = io.StringIO("")
+            self.stdin = CodexHookTrustTests.FakeStdin(self)
+            self.mode = mode
+            self.codex_home = codex_home
+            self.hooks_result = hooks_result
+            self.received = []
+            self.initialized = False
+            self.returncode = None
+            self.terminated = False
+            self.killed = False
+
+        def emit(self, payload):
+            self.writer.write(json.dumps(payload) + "\n")
+            self.writer.flush()
+
+        def finish(self, returncode=0):
+            if not self.writer.closed:
+                self.writer.close()
+            self.returncode = returncode
+
+        def handle(self, message):
+            self.received.append(message)
+            method = message.get("method")
+            if method == "initialize":
+                capabilities = message.get("params", {}).get("capabilities", {})
+                if capabilities.get("experimentalApi") is not True:
+                    self.finish()
+                    return
+                if self.mode == "initialize-timeout":
+                    return
+                self.emit({
+                    "id": message["id"],
+                    "result": {"codexHome": self.codex_home},
+                })
+            elif method == "initialized":
+                self.initialized = True
+            elif method == "hooks/list":
+                if not self.initialized:
+                    self.finish()
+                elif self.mode == "no-response":
+                    self.finish()
+                elif self.mode == "timeout":
+                    return
+                elif self.mode == "unsupported":
+                    self.emit({
+                        "id": message["id"],
+                        "error": {"code": -32601, "message": "Method not found"},
+                    })
+                elif self.mode == "malformed":
+                    self.writer.write("not-json\n")
+                    self.writer.flush()
+                    self.finish()
+                else:
+                    self.emit({"id": message["id"], "result": self.hooks_result})
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+            self.finish(-15)
+
+        def kill(self):
+            self.killed = True
+            self.finish(-9)
+
+        def wait(self, timeout=None):
+            if self.returncode is None:
+                raise subprocess.TimeoutExpired("fake codex", timeout)
+            return self.returncode
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.home = self.root / "home"
+        self.cwd = self.root / "project"
+        self.cwd.mkdir(parents=True)
+        self.skill_root = SCRIPT.parents[1].resolve()
+        self.codex_home = self.home / ".codex"
+        self.hooks_path = self.codex_home / "hooks.json"
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def hook(self, event, status="trusted", enabled=True, **updates):
+        value = {
+            "source": "user",
+            "sourcePath": str(self.hooks_path),
+            "command": f"python3 {SCRIPT.resolve()} hook --agent codex",
+            "eventName": event,
+            "enabled": enabled,
+            "trustStatus": status,
+        }
+        value.update(updates)
+        return value
+
+    def hooks_result(self, hooks, errors=None, warnings=None):
+        return {
+            "data": [{
+                "cwd": str(self.cwd),
+                "hooks": hooks,
+                "errors": errors or [],
+                "warnings": warnings or [],
+            }],
+        }
+
+    def evaluate(self, hooks, **entry_updates):
+        result = self.hooks_result(hooks)
+        result["data"][0].update(entry_updates)
+        return mc.evaluate_codex_hook_trust(
+            self.home,
+            self.skill_root,
+            self.cwd,
+            str(self.codex_home),
+            result,
+        )
+
+    def test_trusted_and_managed_pair_reports_ok_and_ignores_project_hook(self):
+        result = self.evaluate([
+            self.hook("sessionStart", "trusted"),
+            self.hook("sessionEnd", "managed"),
+            self.hook(
+                "sessionStart", "untrusted", source="project",
+                sourcePath=str(self.cwd / ".codex/hooks.json"),
+            ),
+        ])
+        self.assertTrue(result["available"])
+        self.assertTrue(result["ok"])
+        self.assertIn("sessionStart=trusted", result["detail"])
+        self.assertIn("sessionEnd=managed", result["detail"])
+
+    def test_zero_one_and_disabled_matches_are_incomplete_not_unavailable(self):
+        cases = (
+            ([], ("sessionStart (missing)", "sessionEnd (missing)")),
+            ([self.hook("sessionStart")], ("sessionEnd (missing)",)),
+            (
+                [self.hook("sessionStart"), self.hook("sessionEnd", enabled=False)],
+                ("sessionEnd (disabled)",),
+            ),
+        )
+        for hooks, expected in cases:
+            with self.subTest(expected=expected):
+                result = self.evaluate(hooks)
+                self.assertTrue(result["available"])
+                self.assertFalse(result["ok"])
+                for phrase in expected:
+                    self.assertIn(phrase, result["detail"])
+
+    def test_untrusted_and_modified_hooks_are_actionable(self):
+        for status in ("untrusted", "modified"):
+            with self.subTest(status=status):
+                result = self.evaluate([
+                    self.hook("sessionStart", status),
+                    self.hook("sessionEnd"),
+                ])
+                self.assertTrue(result["available"])
+                self.assertFalse(result["ok"])
+                self.assertIn(f"sessionStart={status}", result["detail"])
+                self.assertIn("/hooks", result["detail"])
+
+    def test_codex_home_mismatch_is_unverifiable_before_hook_matching(self):
+        other_home = self.root / "other-codex-home"
+        result = mc.evaluate_codex_hook_trust(
+            self.home, self.skill_root, self.cwd, str(other_home), self.hooks_result([]),
+        )
+        self.assertFalse(result["available"])
+        self.assertFalse(result["ok"])
+        self.assertIn(str(self.codex_home), result["detail"])
+        self.assertIn(str(other_home), result["detail"])
+        self.assertNotIn("missing or disabled hooks", result["detail"])
+
+    def test_relevant_error_is_unverifiable_but_unrelated_warning_is_not(self):
+        error = {"path": str(self.hooks_path), "message": "invalid hook config"}
+        result = self.evaluate(
+            [self.hook("sessionStart"), self.hook("sessionEnd")], errors=[error],
+        )
+        self.assertFalse(result["available"])
+        self.assertIn("invalid hook config", result["detail"])
+
+        unrelated = self.evaluate(
+            [self.hook("sessionStart"), self.hook("sessionEnd")],
+            warnings=["project hook warning"],
+        )
+        self.assertTrue(unrelated["ok"])
+        self.assertNotIn("project hook warning", unrelated["detail"])
+
+    def test_malformed_or_partial_result_is_unverifiable(self):
+        for result in (
+            None,
+            {},
+            {"data": [{"cwd": str(self.cwd), "hooks": []}]},
+        ):
+            with self.subTest(result=result):
+                evaluated = mc.evaluate_codex_hook_trust(
+                    self.home,
+                    self.skill_root,
+                    self.cwd,
+                    str(self.codex_home),
+                    result,
+                )
+                self.assertFalse(evaluated["available"])
+
+        unknown = self.evaluate([
+            self.hook("sessionStart", "future-status"),
+            self.hook("sessionEnd"),
+        ])
+        self.assertFalse(unknown["available"])
+
+    def fake_process(self, mode="success"):
+        hooks = [self.hook("sessionStart"), self.hook("sessionEnd")]
+        return self.FakeProcess(
+            mode,
+            str(self.codex_home),
+            self.hooks_result(hooks),
+        )
+
+    def test_probe_uses_experimental_ordered_protocol_and_terminates_child(self):
+        process = self.fake_process()
+        with mock.patch.object(mc.subprocess, "Popen", return_value=process) as popen:
+            result = mc.probe_codex_hook_trust(
+                self.home, self.skill_root, cwd=self.cwd,
+            )
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(
+            [message["method"] for message in process.received],
+            ["initialize", "initialized", "hooks/list"],
+        )
+        self.assertIs(
+            process.received[0]["params"]["capabilities"]["experimentalApi"],
+            True,
+        )
+        self.assertTrue(process.terminated)
+        command = popen.call_args.args[0]
+        self.assertEqual(command, ["codex", "app-server", "--stdio"])
+        self.assertEqual(popen.call_args.kwargs["cwd"], str(self.cwd))
+
+    def test_probe_reports_unavailable_unsupported_malformed_and_no_response(self):
+        missing = FileNotFoundError("codex")
+        with mock.patch.object(mc.subprocess, "Popen", side_effect=missing):
+            unavailable = mc.probe_codex_hook_trust(
+                self.home, self.skill_root, cwd=self.cwd,
+            )
+        self.assertFalse(unavailable["available"])
+        self.assertIn("FileNotFoundError", unavailable["detail"])
+
+        for mode, phrase in (
+            ("unsupported", "unsupported"),
+            ("malformed", "malformed app-server JSON"),
+            ("no-response", "no response for request id 2"),
+        ):
+            with self.subTest(mode=mode):
+                process = self.fake_process(mode)
+                with mock.patch.object(mc.subprocess, "Popen", return_value=process):
+                    result = mc.probe_codex_hook_trust(
+                        self.home, self.skill_root, cwd=self.cwd,
+                    )
+                self.assertFalse(result["available"])
+                self.assertIn(phrase, result["detail"])
+
+    def test_probe_timeout_uses_one_short_total_budget_and_terminates_child(self):
+        process = self.fake_process("timeout")
+        started = time.monotonic()
+        with (
+            mock.patch.object(mc.subprocess, "Popen", return_value=process),
+            mock.patch.object(mc, "CODEX_HOOK_PROBE_TIMEOUT_SECONDS", 0.08),
+            mock.patch.object(mc, "CODEX_HOOK_PROBE_CLEANUP_RESERVE_SECONDS", 0.02),
+        ):
+            result = mc.probe_codex_hook_trust(
+                self.home, self.skill_root, cwd=self.cwd,
+            )
+        elapsed = time.monotonic() - started
+        self.assertFalse(result["available"])
+        self.assertIn("timed out", result["detail"])
+        self.assertLess(elapsed, 0.5)
+        self.assertTrue(process.terminated or process.killed)
 
 
 @unittest.skipUnless(shutil.which("codex"), "codex CLI is not available")

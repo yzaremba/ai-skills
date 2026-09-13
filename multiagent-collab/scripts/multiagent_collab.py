@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import queue
 import re
 import secrets
 import shlex
@@ -18,6 +19,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 from typing import Any, Iterable
 
@@ -31,6 +33,8 @@ AGENTS = ("codex", "claude")
 WAKE_TIMEOUT_SECONDS = 10
 WAKE_BACKOFF_SECONDS = (0, 5, 30)
 WAKE_RECOVERY_INTERVAL_SECONDS = 300
+CODEX_HOOK_PROBE_TIMEOUT_SECONDS = 10.0
+CODEX_HOOK_PROBE_CLEANUP_RESERVE_SECONDS = 1.0
 DISCOVERY_ROOTS = {
     "codex": Path(".agents/skills"),
     "claude": Path(".claude/skills"),
@@ -281,6 +285,291 @@ def discovery_summary(probe: dict[str, Any]) -> str:
     ]
     warnings = probe.get("warnings", [])
     return f"entries={entries} warnings={warnings}"
+
+
+def hook_trust_unavailable(detail: str) -> dict[str, Any]:
+    return {
+        "available": False,
+        "ok": False,
+        "detail": f"trust status unavailable: {detail}",
+    }
+
+
+def _app_server_error(response: dict[str, Any]) -> str | None:
+    error = response.get("error")
+    if not isinstance(error, dict):
+        return None
+    code = error.get("code")
+    message = error.get("message")
+    if not isinstance(message, str):
+        message = "unspecified app-server error"
+    prefix = f"{code}: " if isinstance(code, int) else ""
+    return (prefix + message).replace("\n", " ")[:500]
+
+
+def _send_app_server_message(process: subprocess.Popen[str], payload: dict[str, Any]) -> None:
+    if process.stdin is None:
+        raise OSError("app-server stdin is unavailable")
+    process.stdin.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    process.stdin.flush()
+
+
+def _read_app_server_lines(stream: Any, messages: queue.Queue[str | None]) -> None:
+    try:
+        for line in stream:
+            messages.put(line)
+    finally:
+        messages.put(None)
+
+
+def _wait_for_app_server_response(
+    messages: queue.Queue[str | None], request_id: int, deadline: float,
+) -> dict[str, Any]:
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"timed out waiting for response id {request_id}")
+        try:
+            line = messages.get(timeout=remaining)
+        except queue.Empty as exc:
+            raise TimeoutError(f"timed out waiting for response id {request_id}") from exc
+        if line is None:
+            raise EOFError(f"no response for request id {request_id}")
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"malformed app-server JSON: {exc}") from exc
+        if not isinstance(message, dict):
+            raise ValueError("malformed app-server message")
+        if message.get("id") == request_id:
+            return message
+
+
+def _stop_app_server(process: subprocess.Popen[str], deadline: float) -> None:
+    if process.stdin is not None:
+        try:
+            process.stdin.close()
+        except OSError:
+            pass
+    if process.poll() is None:
+        try:
+            process.terminate()
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+            except OSError:
+                pass
+            try:
+                process.wait(timeout=max(0.0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                pass
+    for stream in (process.stdout, process.stderr):
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
+                pass
+
+
+def evaluate_codex_hook_trust(
+    home: Path, skill_root: Path, cwd: Path, codex_home: Any, result: Any,
+) -> dict[str, Any]:
+    expected_codex_home = expand(home / ".codex")
+    if not isinstance(codex_home, str) or not codex_home:
+        return hook_trust_unavailable("initialize response has no valid codexHome")
+    reported_codex_home = expand(codex_home)
+    if reported_codex_home != expected_codex_home:
+        return hook_trust_unavailable(
+            f"Codex home mismatch: selected={expected_codex_home} "
+            f"app-server={reported_codex_home}"
+        )
+    if not isinstance(result, dict) or not isinstance(result.get("data"), list):
+        return hook_trust_unavailable("malformed hooks/list result")
+
+    selected_cwd = expand(cwd)
+    cwd_entries = [
+        entry for entry in result["data"]
+        if isinstance(entry, dict)
+        and isinstance(entry.get("cwd"), str)
+        and expand(entry["cwd"]) == selected_cwd
+    ]
+    if len(cwd_entries) != 1:
+        return hook_trust_unavailable(
+            f"hooks/list returned {len(cwd_entries)} results for cwd {selected_cwd}"
+        )
+    cwd_entry = cwd_entries[0]
+    hooks = cwd_entry.get("hooks")
+    errors = cwd_entry.get("errors")
+    warnings = cwd_entry.get("warnings")
+    if (
+        not isinstance(hooks, list)
+        or not isinstance(errors, list)
+        or not isinstance(warnings, list)
+        or not all(isinstance(warning, str) for warning in warnings)
+    ):
+        return hook_trust_unavailable("malformed or partial selected-cwd result")
+
+    hooks_path = expected_codex_home / "hooks.json"
+    for error in errors:
+        if not isinstance(error, dict):
+            return hook_trust_unavailable("malformed selected-cwd error")
+        error_path = error.get("path")
+        message = error.get("message")
+        if error_path is not None and not isinstance(error_path, str):
+            return hook_trust_unavailable("malformed selected-cwd error path")
+        if isinstance(error_path, str) and expand(error_path) == hooks_path:
+            detail = message if isinstance(message, str) else "unspecified error"
+            return hook_trust_unavailable(
+                f"hooks/list error for {hooks_path}: {detail.replace(chr(10), ' ')[:500]}"
+            )
+
+    script_path = str(expand(skill_root / "scripts" / "multiagent_collab.py"))
+    expected_events = ("sessionStart", "sessionEnd")
+    matching: dict[str, list[dict[str, Any]]] = {event: [] for event in expected_events}
+    for hook in hooks:
+        if not isinstance(hook, dict):
+            return hook_trust_unavailable("malformed hook entry")
+        if hook.get("source") != "user":
+            continue
+        source_path = hook.get("sourcePath")
+        command = hook.get("command")
+        if not isinstance(source_path, str) or expand(source_path) != hooks_path:
+            continue
+        if not isinstance(command, str) or script_path not in command:
+            continue
+        event = hook.get("eventName")
+        if event not in matching:
+            continue
+        if not isinstance(hook.get("enabled"), bool):
+            return hook_trust_unavailable(f"malformed enabled state for {event}")
+        matching[event].append(hook)
+
+    incomplete: list[str] = []
+    enabled: list[dict[str, Any]] = []
+    for event in expected_events:
+        enabled_for_event = [hook for hook in matching[event] if hook["enabled"]]
+        if not enabled_for_event:
+            state = "disabled" if matching[event] else "missing"
+            incomplete.append(f"{event} ({state})")
+        enabled.extend(enabled_for_event)
+    if incomplete:
+        return {
+            "available": True,
+            "ok": False,
+            "detail": f"missing or disabled hooks: {', '.join(incomplete)}; review /hooks",
+        }
+
+    known_statuses = {"managed", "trusted", "untrusted", "modified"}
+    invalid = [
+        hook for hook in enabled if hook.get("trustStatus") not in known_statuses
+    ]
+    if invalid:
+        return hook_trust_unavailable("malformed or unknown hook trust status")
+    problems = [
+        f"{hook['eventName']}={hook['trustStatus']}"
+        for hook in enabled
+        if hook["trustStatus"] in {"untrusted", "modified"}
+    ]
+    if problems:
+        return {
+            "available": True,
+            "ok": False,
+            "detail": f"hook trust requires review: {', '.join(problems)}; review /hooks",
+        }
+
+    relevant_warnings = [
+        warning.replace("\n", " ")[:500]
+        for warning in warnings
+        if str(hooks_path) in warning or script_path in warning
+    ]
+    status_detail = ", ".join(
+        f"{hook['eventName']}={hook['trustStatus']}" for hook in enabled
+    )
+    if relevant_warnings:
+        status_detail += f"; warnings={relevant_warnings}"
+    return {"available": True, "ok": True, "detail": status_detail}
+
+
+def probe_codex_hook_trust(
+    home: Path, skill_root: Path, *, cwd: Path | None = None,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    deadline = started + CODEX_HOOK_PROBE_TIMEOUT_SECONDS
+    cleanup_reserve = min(
+        CODEX_HOOK_PROBE_CLEANUP_RESERVE_SECONDS,
+        CODEX_HOOK_PROBE_TIMEOUT_SECONDS / 4,
+    )
+    response_deadline = deadline - cleanup_reserve
+    selected_cwd = expand(cwd or Path.cwd())
+    environment = os.environ.copy()
+    environment["HOME"] = str(home)
+    environment.pop("CODEX_HOME", None)
+    process: subprocess.Popen[str] | None = None
+    try:
+        process = subprocess.Popen(
+            ["codex", "app-server", "--stdio"],
+            cwd=str(selected_cwd),
+            env=environment,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+        )
+        if process.stdout is None:
+            return hook_trust_unavailable("app-server stdout is unavailable")
+        messages: queue.Queue[str | None] = queue.Queue()
+        threading.Thread(
+            target=_read_app_server_lines,
+            args=(process.stdout, messages),
+            daemon=True,
+        ).start()
+        _send_app_server_message(process, {
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "clientInfo": {"name": "multiagent-collab-doctor", "version": "1"},
+                "capabilities": {"experimentalApi": True},
+            },
+        })
+        initialize = _wait_for_app_server_response(messages, 1, response_deadline)
+        init_error = _app_server_error(initialize)
+        if init_error is not None:
+            return hook_trust_unavailable(f"app-server initialize failed: {init_error}")
+        init_result = initialize.get("result")
+        if not isinstance(init_result, dict):
+            return hook_trust_unavailable("malformed initialize result")
+        _send_app_server_message(process, {"method": "initialized"})
+        _send_app_server_message(process, {
+            "id": 2,
+            "method": "hooks/list",
+            "params": {"cwds": [str(selected_cwd)]},
+        })
+        hooks_response = _wait_for_app_server_response(messages, 2, response_deadline)
+        hooks_error = _app_server_error(hooks_response)
+        if hooks_error is not None:
+            label = "hooks/list unsupported" if hooks_error.startswith("-32601:") else "hooks/list failed"
+            return hook_trust_unavailable(f"{label}: {hooks_error}")
+        return evaluate_codex_hook_trust(
+            home,
+            skill_root,
+            selected_cwd,
+            init_result.get("codexHome"),
+            hooks_response.get("result"),
+        )
+    except TimeoutError as exc:
+        return hook_trust_unavailable(f"probe timed out: {exc}")
+    except EOFError as exc:
+        return hook_trust_unavailable(str(exc))
+    except (OSError, BrokenPipeError, ValueError) as exc:
+        return hook_trust_unavailable(f"{type(exc).__name__}: {exc}")
+    finally:
+        if process is not None:
+            _stop_app_server(process, deadline)
 
 
 class FileOps:
@@ -1808,7 +2097,15 @@ def doctor(args: argparse.Namespace) -> int:
         agents_md = home / ".codex" / "AGENTS.md"
         present = agents_md.exists() and MANAGED_START in agents_md.read_text(encoding="utf-8")
         check("codex_guidance", present, str(agents_md))
-        check("codex_hook_trust", False, "verify non-managed hook hash with /hooks", "warning")
+        trust = probe_codex_hook_trust(home, skill_root, cwd=Path.cwd())
+        if not isinstance(trust, dict):
+            trust = hook_trust_unavailable("malformed probe result")
+        detail = trust.get("detail")
+        if not isinstance(detail, str):
+            trust = hook_trust_unavailable("malformed probe detail")
+            detail = trust["detail"]
+        trusted = trust.get("available") is True and trust.get("ok") is True
+        check("codex_hook_trust", trusted, detail, "warning")
     failed = [item for item in checks if not item["ok"] and item["severity"] == "error"]
     if args.json:
         print(json.dumps({"ok": not failed, "checks": checks}, indent=2))
