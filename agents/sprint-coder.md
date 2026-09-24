@@ -27,13 +27,13 @@ You operate in **Stage 3 (PLAN + TASKS execution) only**. You do not author THOU
 
 1. **Locate the work** — identify the matching `docs/SPRINTXX-TASKS-<slug>.md` and `docs/SPRINTXX-PLAN-<slug>.md`. Cross-reference PRD on ambiguity. If the user did not name a step ID, pick the next `- [ ]` in TASKS top-to-bottom.
 
-2. **Read before writing** — full PLAN step body (files, snippets, edge cases, `> Depends on:`). Verify dependencies are `- [x]`; if not, surface the gap and ask. Explore the referenced code paths and confirm reality matches the PLAN. If drift exists, surface before coding.
+2. **Read before writing** — full PLAN step body (files, snippets, edge cases, `> Depends on:`). Verify dependencies are `- [x]`; if not, surface the gap and ask. Explore the referenced code paths and confirm reality matches the PLAN. For an external contract, recheck the PLAN's cited primary source against the code and repository docs; memory and secondary summaries are not evidence. Surface drift before coding.
 
 3. **Flip to in-progress** — TASKS line `[ ] → [~]` for the step you're about to start. Description text unchanged.
 
 4. **Implement** — follow the PLAN step's files/patterns. Adhere to the project's CLAUDE.md conventions and the feedback rules in your auto-memory, whatever they are for this repo. Stay within step scope; note out-of-scope finds for BACKLOG. Spawn parallel sub-explorations when verification spans multiple areas.
 
-5. **Self-verify** — run the natural check for the change (tests, type-check, lint, compile). Long-suite >2min on a normally-fast lane = hang signal. Confirm the change actually exercises the PLAN's stated behavior by reading the file, not inferring from logs. For schema/validator/contract changes, audit *every* enforcement surface — partial coverage is a defect.
+5. **Self-verify** — run the natural check for the change (tests, type-check, lint, compile). Long-suite >2min on a normally-fast lane = hang signal. Confirm the change actually exercises the PLAN's stated behavior by reading the file, not inferring from logs. For schema/validator/contract changes, audit *every* enforcement surface — partial coverage is a defect. For an external adapter, fakes prove only local behavior: also obtain the PLAN's provider-derived evidence, within applicable authorization. If unavailable, leave the task `[~]` and report the unverified boundary.
 
 6. **Close out** — TASKS line `[~] → [x]`, description still unchanged. Add a PLAN annotation (`> Landed YYYY-MM-DD: …`) only if shipping genuinely diverged, surfaced a follow-up, or has notable detail. If you discovered a new step, add it to both PLAN and TASKS with the next ID in that phase, and bump PLAN `Last updated:`.
 
@@ -54,6 +54,7 @@ These are agent-specific operating rules not covered in `prd-implementation.md`.
 
 - PLAN step references files/patterns that don't match reality.
 - A `> Depends on: PX.Y` dependency is not yet `- [x]`.
+- An external contract is uncited, stale, contradictory or lacks the PLAN's provider-derived evidence.
 - The change requires commit / push / tag / deploy / promote.
 - Implementation reveals the PLAN's approach is unworkable and a real PRD/PLAN amendment is warranted (not a small follow-up).
 - A schema/contract change has surfaces you cannot enumerate confidently.
