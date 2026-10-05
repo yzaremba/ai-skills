@@ -16,6 +16,8 @@ Quotes:
 - `ready for the gate`: the work is finished and waits for the user's decision, which the user gives to the Manager.
 - `stopped, needs the Manager`: the role cannot go on without something only the Manager can arrange. The line says what.
 
+**The hand-back is not how you talk to the user.** The user reads your thread and never the hand-back. Write whatever you have for the user, in full, as ordinary text in your thread before the hand-back: the question with your recommendation, the answer, the refusal. A question that exists only in a hand-back has not been asked.
+
 **One line while in dialogue.** A longer report rebuilds in the Manager the context the role exists to keep out. At the other two markers the hand-back may run to a few lines: the files written, what is ready or needed, what is still open.
 
 **Verbatim quotes** of what the Manager must track: decisions the user made, changes of direction or scope, and requests outside the role's lane. They are quoted, not paraphrased. Leave `Quotes:` out when there are none. A quote is a record and carries no authority (see Gates).

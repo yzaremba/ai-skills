@@ -152,7 +152,10 @@ sequenceDiagram
 - **One line while in dialogue.** Longer reports rebuild in the Manager the context the agent exists to keep out.
 - **Verbatim quotes of what the Manager must track**: decisions the user made, changes of direction or scope, and requests outside the agent's lane. Quoted, not paraphrased.
 
-**Gates are said to the Manager.** A hand-back is the agent's output and carries no authority from the user. The Manager never treats a reported approval as approval. Moving from PRD to PLAN, from PLAN to implementation, and any push, merge to trunk, tag or deploy happen only when the user tells the Manager.
+**Gates.** There are two kinds, decided by the user on 2026-10-05 after the first skeleton run, where approvals were repeatedly given to the PM and had to be said again.
+
+- **Action gates are said to the Manager.** Starting implementation, and any push, merge to trunk, tag or deploy, happen only when the user tells the Manager. A hand-back is the agent's output and carries no authority from the user, and for these gates the Manager never treats a reported approval as approval.
+- **A document gate can also be passed in the owning role's dialogue.** Approving a finished PRD, or a finished PLAN with its TASKS, counts when the user says it to the role that owns the document, in a dialogue, and the role's "ready for the gate" hand-back quotes the words exactly. The Manager tells the user which words it takes as the approval and what it starts, and asks first when anything is unclear. A role dispatched without dialogue cannot have heard the user, so a quote from it passes nothing. A wrong approval here costs a document written too early, which is recoverable.
 
 ### Dialogue on Codex
 
@@ -298,9 +301,19 @@ Each item is agreed, with its reason.
 
 - **Loaded roles on Codex.** The arrangement under [Dialogue on Codex](#dialogue-on-codex) has not been exercised: whether a loaded role's instructions persist across turns there, and how the one-active-role rule holds in practice.
 - **Other providers.** Only Claude Code and Codex have been checked.
-- **Direct dialogue end to end.** On Claude Code the mechanism has not been exercised over a long PM conversation.
+- **Direct dialogue over a long conversation.** On Claude Code it ran for about a dozen PM turns in the skeleton run recorded under [Gate results](#gate-results-sprint-01); a longer one, with compaction, has not been exercised.
 
 ## Provider support
+
+### Gate results, sprint 01
+
+Results of the sprint's gates, each from a run in a throwaway project with the skeleton roles (Manager, Product Manager, Coder and hard Coder) installed by hand.
+
+- **G0 on Claude Code 2.1.289, 2026-10-05: passed.** A session started with `claude --agent manager` showed `@manager`. The Manager wrote no file. Every Product Manager turn ended with a hand-back carrying a state marker, and the Manager took no action on "in dialogue, no action". Two hand-backs quoting the user's approval of the PRD did not move it; it dispatched a Coder only on the user's own word. Each Coder's brief named the PRD file and a requirement id, and each made exactly one commit holding only its own files. The session record shows `product-manager` on Opus at high effort, `coder` on Sonnet at medium and `coder-hard` on Opus at high, as their definitions pin.
+- **What the first attempt showed.** The Product Manager put its question only in the hand-back, which ends its run, so the user had nothing to answer. The role text now says that the user reads the thread and never the hand-back. A turn the user types in a finished subagent's thread resumes it, and its hand-back reaches the Manager; the documentation did not say so.
+- **What the run changed.** The user gave the PRD approval to the Product Manager twice before saying it to the Manager. Document gates were relaxed as a result; see [How the user interacts](#how-the-user-interacts).
+- **G5 on Claude Code 2.1.289, 2026-10-05: settled.** A subagent's role is `agentType` in `subagents/agent-<id>.meta.json` beside its transcript. The main thread's role is `agentSetting` on the transcript's `agent-setting` entries. Effort is `effort` on each assistant entry, equal to `perTurnEffort` wherever both exist. None of this is a published format.
+- **Open: the Manager's effort on Claude Code.** Its definition pins medium, and the record shows the main thread at high on every turn. Either `--agent` does not apply a definition's effort to the main thread, or the session's own effort setting wins. The record cannot tell which.
 
 What the framework needs from a provider, checked on Claude Code 2.1.287 (2026-10-01) and Codex CLI 0.160.0 (2026-10-02). Each cell gives the verdict and the kind of evidence. A probe is a test that was run; documentation means the provider's own documentation, not run.
 

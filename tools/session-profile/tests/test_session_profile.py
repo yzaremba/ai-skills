@@ -4,8 +4,8 @@ Every record under ``fixtures/handwritten`` was written by hand from the
 field names seen in provider records. These tests therefore prove only the
 reader's own logic: where it looks, what it skips, what it prints. They do
 not prove that either provider writes records of this shape. A fixture cut
-from a real record is what does that, and belongs in its own directory
-beside ``handwritten``.
+from a real record is what does that. Those are under ``fixtures/real``,
+each reduced to the fields read (see the README there).
 
 Run from the repository root:
     python -m unittest discover -s tools/session-profile/tests
@@ -263,6 +263,159 @@ class ClaudeCodeTests(unittest.TestCase):
         code, out, err = run("claude-code", "no-such-session", env={"CLAUDE_CONFIG_DIR": str(CLAUDE_HOME)})
         self.assertEqual((code, out), (1, ""))
         self.assertIn("no transcript", err)
+
+
+def write_claude_session(home: Path, main: list[dict], sub: list[dict] | None = None, meta: dict | None = None) -> None:
+    """Write a main transcript and, if ``sub`` is given, one subagent ``a01``."""
+    project = home / "projects" / "-p"
+    project.mkdir(parents=True)
+    (project / f"{CC_SESSION}.jsonl").write_text(
+        "".join(json.dumps(e) + "\n" for e in main), encoding="utf-8", newline="\n"
+    )
+    if sub is not None:
+        subagents = project / CC_SESSION / "subagents"
+        subagents.mkdir(parents=True)
+        (subagents / "agent-a01.jsonl").write_text(
+            "".join(json.dumps(e) + "\n" for e in sub), encoding="utf-8", newline="\n"
+        )
+        if meta is not None:
+            (subagents / "agent-a01.meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+
+class ClaudeMainRoleTests(unittest.TestCase):
+    """Where a session started with ``--agent`` records the main agent's role."""
+
+    RESPONSE = {"type": "assistant", "version": "2.1.289", "effort": "high",
+                "message": {"id": "m1", "model": "fixture-claude-a"}}
+
+    @staticmethod
+    def setting(name) -> dict:
+        return {"type": "agent-setting", "agentSetting": name, "sessionId": CC_SESSION}
+
+    def read(self, main: list[dict], sub: list[dict] | None = None, meta: dict | None = None) -> tuple[list[dict], str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            write_claude_session(Path(tmp), main, sub, meta)
+            env = {"CLAUDE_CONFIG_DIR": tmp}
+            code, out, err = run("--json", "claude-code", CC_SESSION, env=env)
+            self.assertEqual((code, err), (0, ""))
+            text = run("claude-code", CC_SESSION, env=env)[1]
+        return json.loads(out)["agents"], text
+
+    def test_agent_setting_entry_is_the_main_agents_role(self):
+        agents, text = self.read([self.setting("manager"), self.RESPONSE, self.setting("manager"), self.RESPONSE])
+        (main,) = agents
+        self.assertEqual((main["role"], main["role_source"]), ("manager", "agent-setting entry:agentSetting"))
+        self.assertEqual((main["kind"], main["notes"]), ("main", []))
+        self.assertEqual(pairs(main), [("fixture-claude-a", "high", 1)])
+        self.assertIn("role:    manager\n", text)
+
+    def test_a_session_started_without_an_agent_records_no_role(self):
+        agents, text = self.read([{"type": "mode", "mode": "normal"}, self.RESPONSE])
+        (main,) = agents
+        self.assertEqual((main["role"], main["role_source"]), (None, None))
+        self.assertIn("role:    not recorded\n", text)
+
+    def test_the_key_is_read_only_on_an_agent_setting_entry(self):
+        agents, _ = self.read([dict(self.RESPONSE, agentSetting="manager"), {"type": "user", "agentSetting": "manager"}])
+        self.assertEqual((agents[0]["role"], agents[0]["role_source"]), (None, None))
+
+    def test_a_setting_that_is_not_a_name_is_not_recorded(self):
+        for value in (MARKER + " a sentence where a name belongs", "", None, 7, ["manager"], {"name": "manager"}):
+            agents, text = self.read([self.setting(value), self.RESPONSE])
+            self.assertEqual((agents[0]["role"], agents[0]["role_source"]), (None, None), repr(value))
+            self.assertNotIn(MARKER, text)
+            self.assertNotIn(MARKER, json.dumps(agents))
+
+    def test_order_of_preference(self):
+        attributed = dict(self.RESPONSE, attributionAgent="attributed")
+        # The setting wins over the attribution, wherever it stands in the file.
+        for main in ([self.setting("manager"), attributed], [attributed, self.setting("manager")]):
+            agents, _ = self.read(main, sub=[self.setting("other"), attributed], meta={"agentType": "coder"})
+            self.assertEqual(
+                [(a["role"], a["role_source"]) for a in agents],
+                [("manager", "agent-setting entry:agentSetting"), ("coder", "meta.json:agentType")],
+            )
+
+    def test_a_setting_that_changes_is_noted(self):
+        agents, text = self.read([self.setting("manager"), self.RESPONSE, self.setting("coder"), self.setting("manager")])
+        self.assertEqual(agents[0]["role"], "manager")
+        self.assertEqual(len(agents[0]["notes"]), 1)
+        self.assertIn("manager, coder", agents[0]["notes"][0])
+        self.assertIn("note:    the agent setting changed", text)
+
+
+REAL = TESTS / "fixtures" / "real"
+REAL_CLAUDE_HOME = REAL / "claude-code-2.1.289"
+REAL_CC_SESSION = "45ec0763-013a-4e48-9026-cff114de0ddb"
+
+
+class RealClaudeCodeFixtureTests(unittest.TestCase):
+    """A record Claude Code 2.1.289 wrote, reduced by ``reduce_claude_code.py``."""
+
+    def report(self) -> dict:
+        code, out, err = run("--json", "claude-code", REAL_CC_SESSION, env={"CLAUDE_CONFIG_DIR": str(REAL_CLAUDE_HOME)})
+        self.assertEqual((code, err), (0, ""))
+        return json.loads(out)
+
+    def test_four_agents_with_their_roles_models_and_efforts(self):
+        report = self.report()
+        self.assertEqual(report["provider_versions"], ["2.1.289"])
+        self.assertEqual(report["written_against"], "2.1.289")
+        self.assertEqual(len(report["agents"]), 4)
+        self.assertEqual([a["kind"] for a in report["agents"]], ["main", "subagent", "subagent", "subagent"])
+        self.assertEqual([a["depth"] for a in report["agents"]], [0, 1, 1, 1])
+        main = report["agents"][0]
+        self.assertEqual(main["id"], REAL_CC_SESSION)
+        self.assertEqual((main["role"], main["role_source"]), ("manager", "agent-setting entry:agentSetting"))
+        self.assertEqual(pairs(main), [("claude-sonnet-5-5", "high", 3)])
+        found = {a["role"]: a for a in report["agents"][1:]}
+        self.assertEqual(sorted(found), ["coder", "coder-hard", "product-manager"])
+        self.assertEqual(pairs(found["product-manager"]), [("claude-opus-5-5", "high", 3)])
+        self.assertEqual(pairs(found["coder"]), [("claude-sonnet-5-5", "medium", 3)])
+        self.assertEqual(pairs(found["coder-hard"]), [("claude-opus-5-5", "high", 3)])
+        for agent in report["agents"][1:]:
+            self.assertEqual(agent["role_source"], "meta.json:agentType")
+            self.assertEqual(agent["parent_id"], REAL_CC_SESSION)
+        for agent in report["agents"]:
+            self.assertEqual(agent["provider_versions"], ["2.1.289"])
+            self.assertEqual(agent["effort_sources"], ["assistant entry:effort"])
+            self.assertEqual((agent["malformed_lines"], agent["notes"]), (0, []))
+
+    def test_text_output(self):
+        code, out, _ = run("claude-code", REAL_CC_SESSION, env={"CLAUDE_CONFIG_DIR": str(REAL_CLAUDE_HOME)})
+        self.assertEqual(code, 0)
+        self.assertIn("provider version recorded: 2.1.289 (reader written against 2.1.289)", out)
+        self.assertIn("agents: 4", out)
+        self.assertIn("role:    manager\n", out)
+        self.assertNotIn(sp.NOT_RECORDED, out)
+
+    def test_the_fixture_holds_only_the_fields_read(self):
+        allowed = {"type", "version", "effort", "perTurnEffort", "attributionAgent", "agentSetting", "message"}
+        files = sorted(p for p in REAL_CLAUDE_HOME.rglob("*") if p.is_file())
+        self.assertEqual(len(files), 7)
+        for path in files:
+            if path.name.endswith(".meta.json"):
+                self.assertEqual(set(json.loads(path.read_text(encoding="utf-8"))), {"agentType"}, path.name)
+                continue
+            for line in path.read_text(encoding="utf-8").splitlines():
+                entry = json.loads(line)
+                self.assertLessEqual(set(entry), allowed, path.name)
+                self.assertLessEqual(set(entry.get("message", {})), {"id", "model"}, path.name)
+                for value in list(entry.values()) + list(entry.get("message", {}).values()):
+                    if not isinstance(value, dict):
+                        self.assertIsNotNone(sp._name(value), path.name)
+
+    def test_the_fixture_names_no_machine_path_or_user(self):
+        user = Path.home().name
+        for path in sorted(p for p in REAL.rglob("*") if p.is_file() and "__pycache__" not in p.parts):
+            data = path.read_bytes()
+            self.assertNotIn(b"\r", data, path.name)
+            text = data.decode("utf-8")
+            for pattern in ("/" + "home/", "/" + "mnt/", "/" + "Users/", r"\b[A-Za-z]:" + r"\\"):
+                self.assertIsNone(re.search(pattern, text), f"{path.name} matches {pattern!r}")
+            if len(user) > 3:
+                self.assertNotIn(user, text, path.name)
+                self.assertNotIn(user, path.relative_to(REAL).as_posix())
 
 
 class EnvironmentTests(unittest.TestCase):

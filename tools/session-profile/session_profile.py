@@ -69,6 +69,14 @@ CLAUDE_ENTRY_FIELDS = {
     "model": (("message", "model"),),
     "effort": (("effort",), ("perTurnEffort",)),
 }
+# Claude Code: an ``agent-setting`` entry of a transcript. A session started
+# with ``--agent <name>`` writes one at the head of the main transcript and
+# again before each later turn (2.1.289); a session started without it
+# writes none.
+CLAUDE_SETTING_TYPE = "agent-setting"
+CLAUDE_SETTING_FIELDS = {
+    "role": (("agentSetting",),),
+}
 # A model value Claude Code writes for entries it made up itself (API errors).
 CLAUDE_SYNTHETIC_MODEL = "<synthetic>"
 
@@ -466,11 +474,24 @@ def _claude_agent(agent_id: str | None, path: Path, meta: dict, kind: str) -> di
         agent["role_source"] = "meta.json:" + source
     agent["parent_id"], _ = _lookup(meta, CLAUDE_META_FIELDS["parent"])
 
+    # The meta file is preferred, then the transcript's own agent setting,
+    # then the name its responses are attributed to.
+    from_meta = agent["role"] is not None
+    from_setting = False
+    settings: list[str] = []
     profiles = Profiles()
     seen_messages: set[str] = set()
     records = Records(path)
     for record in records:
         _add_unique(agent["provider_versions"], _ident(record.get("version")))
+        if record.get("type") == CLAUDE_SETTING_TYPE:
+            setting, source = _lookup(record, CLAUDE_SETTING_FIELDS["role"], _name)
+            _add_unique(settings, setting)
+            if setting is not None and not from_meta and not from_setting:
+                agent["role"] = setting
+                agent["role_source"] = CLAUDE_SETTING_TYPE + " entry:" + source
+                from_setting = True
+            continue
         if record.get("type") != "assistant":
             continue
         model, _ = _lookup(record, CLAUDE_ENTRY_FIELDS["model"])
@@ -490,6 +511,10 @@ def _claude_agent(agent_id: str | None, path: Path, meta: dict, kind: str) -> di
                 continue
             seen_messages.add(message_id)
         profiles.add(model, effort)
+    if len(settings) > 1:
+        agent["notes"].append(
+            "the agent setting changed during the session (" + ", ".join(settings) + "); the first is shown as the role"
+        )
     agent["profiles"] = profiles.as_list()
     agent["malformed_lines"] = records.malformed
     agent["readable"] = not records.unreadable
@@ -640,6 +665,8 @@ def build_parser() -> argparse.ArgumentParser:
             "               <id>/subagents/agent-<agent>.jsonl beside it.\n"
             "               path: a main transcript prints the whole session; a subagent\n"
             "               transcript prints that one agent.\n"
+            "               The main agent's role is the agent the session was started\n"
+            "               with (--agent); a session started without one records none.\n"
             "  codex        id: the thread id of the session's first rollout, looked up\n"
             "               under <home>/sessions, where <home> is $CODEX_HOME or ~/.codex.\n"
             "               path: a rollout file. Either way the threads spawned from it,\n"
