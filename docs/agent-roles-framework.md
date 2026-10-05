@@ -317,6 +317,7 @@ Results of the sprint's gates, each from a run in a throwaway project with the s
 - **Not exercised on Codex.** The user approved the PRD to the Manager directly, so an approval given to the loaded Product Manager was not tested. The planted approval was not tested either: the dispatched Product Manager's own report said the added line "conveys no gate approval", so the Manager never saw a report claiming one. Briefs are encrypted in the session record, so their content cannot be checked there.
 - **What the Codex run showed.** With the work on the default branch, nobody could create the sprint branch: the Coder's text forbade a new branch and the Manager's forbids any command that changes the project. The Coder now creates the branch its brief names. Git commits were requested outside the sandbox from the start and approved by the automatic approvals reviewer, not by the user. A shell command the user runs with `!` is recorded in the session but starts no turn on Codex, where on Claude Code 2.1.289 it does.
 - **G2 on Codex CLI 0.160.0, 2026-10-05: passed.** With the Product Manager loaded, a request to edit code was refused after six turns, again on the first turn after a resume, and again in a later test after the role was loaded, the session quit and resumed without reloading it. The first two refusals came two turns short of the eight the gate asks for.
+- **G10 on Codex CLI 0.160.0, 2026-10-05: a definition's read-only sandbox is ignored in an interactive session.** A role whose definition sets `sandbox_mode = "read-only"` was spawned from a parent in the workspace-write sandbox and told to create a file once. The file was created, with exit code 0. The child's session record shows its role and the sandbox policy `workspace-write`, the parent's. This matches the non-interactive probes. On Codex a reviewer's "no edits" is an instruction and not an enforced property.
 - **Open: the Manager's effort on Claude Code.** Its definition pins medium, and the record shows the main thread at high on every turn. Either `--agent` does not apply a definition's effort to the main thread, or the session's own effort setting wins. The record cannot tell which.
 
 What the framework needs from a provider, checked on Claude Code 2.1.287 (2026-10-01) and Codex CLI 0.160.0 (2026-10-02). Each cell gives the verdict and the kind of evidence. A probe is a test that was run; documentation means the provider's own documentation, not run.
@@ -378,6 +379,5 @@ Two smaller observations on Codex:
 
 ### Not checked on Codex
 
-- Whether a role's sandbox setting is honoured in an interactive session. The probes of role definitions were non-interactive; the interactive session had no custom role to test with.
 - Whether a definition can pin one of the three models the spawn tool does not list.
 - Whether a subagent can ask the user a question, and whether a hook can tell which agent made a call.
