@@ -1,0 +1,22 @@
+name = "coder"
+title = "Coder"
+description = "Implements one brief against its spec, verifies its own work and reports; commits only when the brief asks, and never pushes."
+includes = ["brief-and-report.md"]
+
+[profile]
+tier = "standard"
+effort = "medium"
+
+[profile.hard]
+tier = "deep"
+effort = "high"
+
+[limits]
+edits = true
+commands = true
+dispatches = []
+
+[entry]
+dispatch = true
+load = false
+start = false

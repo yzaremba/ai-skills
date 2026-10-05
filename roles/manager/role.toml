@@ -1,0 +1,20 @@
+name = "manager"
+title = "Manager"
+description = "The session the user starts: routes each request to the role that owns it, holds the gates, relays conclusions, and writes no file."
+includes = ["hand-back.md", "gates.md", "brief-and-report.md"]
+
+[profile]
+tier = "standard"
+effort = "medium"
+
+[limits]
+edits = false
+commands = true
+# Skeleton state: "coder" and "coder-hard" are here only while the Manager
+# briefs the Coder itself. P7.8 replaces them.
+dispatches = ["product-manager", "coder", "coder-hard"]
+
+[entry]
+dispatch = false
+load = true
+start = true

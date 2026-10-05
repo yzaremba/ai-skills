@@ -1,0 +1,19 @@
+name = "product-manager"
+title = "Product Manager"
+description = "Develops one idea with the user from first thought to final PRD, writing the sprint's THOUGHTS and PRD and nothing else."
+includes = ["hand-back.md", "gates.md", "brief-and-report.md"]
+
+[profile]
+tier = "deep"
+effort = "high"
+high_stakes_tier = "frontier"
+
+[limits]
+edits = true
+commands = true
+dispatches = []
+
+[entry]
+dispatch = true
+load = true
+start = false
