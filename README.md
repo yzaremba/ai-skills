@@ -24,7 +24,7 @@ Plain markdown files meant to live in Claude Code's [`.claude/rules/`](https://c
 |------|-----------|-------------|
 | [`prd-implementation.md`](prd-implementation.md) | Working with `docs/SPRINT*-*.md`, `docs/SPRINT-INDEX.md` (`paths:` frontmatter) | Gated Backlog → THOUGHTS → PRD → PLAN/TASKS → Implementation workflow for feature sprints. See the [one-page overview](docs/prd-implementation-slide.html). |
 | [`epic-implementation.md`](epic-implementation.md) | Working with `docs/EPIC*-*.md`, `docs/EPIC-INDEX.md` (`paths:` frontmatter) | Multi-sprint EPIC container — THOUGHTS → PRD (charter) → ROADMAP — that decomposes into ordinary sprints run under the rule above. |
-| [`avoid-bash-injection-heuristics.md`](avoid-bash-injection-heuristics.md) | Every session (no `paths:` field) | Reference for reshaping Bash commands to dodge the two permission gates that ignore your allowlist: the "too-complex" parser heuristics, and the `deniedPathInsideDirectory` circuit breaker that fires whenever a `Read()` deny rule exists. |
+| [`avoid-bash-injection-heuristics.md`](rules/avoid-bash-injection-heuristics/avoid-bash-injection-heuristics.md) | Every session (no `paths:` field) | Reference for reshaping Bash commands to dodge the two permission gates that ignore your allowlist: the "too-complex" parser heuristics, and the `deniedPathInsideDirectory` circuit breaker that fires whenever a `Read()` deny rule exists. |
 
 ## Agents (Claude Code)
 
@@ -156,7 +156,7 @@ Drop the rule file(s) you want into `.claude/rules/` (project) or `~/.claude/rul
 mkdir -p ~/.claude/rules
 ln -s ~/ai-skills/prd-implementation.md ~/.claude/rules/prd-implementation.md
 ln -s ~/ai-skills/epic-implementation.md ~/.claude/rules/epic-implementation.md
-ln -s ~/ai-skills/avoid-bash-injection-heuristics.md ~/.claude/rules/avoid-bash-injection-heuristics.md
+ln -s ~/ai-skills/rules/avoid-bash-injection-heuristics/avoid-bash-injection-heuristics.md ~/.claude/rules/avoid-bash-injection-heuristics.md
 ```
 
 (Swap `ln -s` for `cp` if you'd rather not depend on `~/ai-skills` sticking around.)

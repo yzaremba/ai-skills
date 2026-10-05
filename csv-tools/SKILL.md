@@ -1,7 +1,8 @@
 ---
 name: csv-tools
 description: Inspect, query, and manipulate CSV files with self-contained local scripts. Supports schema discovery, column extraction, row sampling (first/last N), filtering by value/presence, statistics, group-by/cross-tabulation with aggregations, diffs, format transforms (JSON/JSONL), sorting, reversing, merging, and validation. Use when the user references a .csv file and wants to find, get, show, list, search, filter, sort, group, aggregate, count, pivot, explore, query, summarize, inspect, analyze, transform, compare, or clean CSV data — including requests like "give me the top N", "which have X", "most recent", "count by", "group by", or "find all where".
-license: Apache-2.0 (see LICENSE.txt)
+license: Apache-2.0
+compatibility: claude-code, codex
 ---
 
 # CSV Tools
@@ -10,12 +11,12 @@ This skill provides a local, self-contained toolkit for CSV work.
 
 ## Location
 
-- Python scripts are in `csv-tools/scripts/` (Python stdlib only; uses `csv` module).
-- Node.js scripts are in `csv-tools/scripts-node/` (Node built-ins only, no npm deps).
+- Python scripts are in `scripts/` in this skill's directory (Python stdlib only; uses `csv` module).
+- Node.js scripts are in `scripts-node/` in this skill's directory (Node built-ins only, no npm deps).
 
 ## Usage Conventions
 
-- Run from the skill directory or use full paths.
+- Call the scripts by their full path, built from this skill's directory; the data file can be anywhere. The examples below write `scripts/X.py` and `scripts-node/X.mjs` for short: put this skill's directory in front.
 - Every script supports `--help`.
 - Most scripts accept input file path or `-` for stdin.
 - If a temporary file is needed, create it in the OS temp directory (not in the project tree). Clean up temp files after use unless the user explicitly asks to keep them.
@@ -215,7 +216,7 @@ python scripts/validate.py data.csv --strict
     - Run: `node -e "console.log('__stdout_ok__')"`
     - If the output contains `__stdout_ok__`, Node.js stdout works — proceed normally.
     - If the output is empty (exit code 0 but no captured text), the execution environment is silently swallowing Node.js stdout. Inform the user and recommend one of:
-      1. Run Node.js commands with `required_permissions: ["all"]` to bypass sandbox restrictions.
+      1. Run Node.js commands outside the sandbox, if the environment allows it.
       2. Have scripts write output to a temp file, then read the file back.
     - Ask the user which approach they prefer before proceeding. Reuse their choice for the rest of the session.
 - **Always probe first** on a new CSV: run probe **without having read the file**, then use probe’s output for `--delimiter` and other options in later commands. Do not infer `--skip-lines` or header handling from reading the file; add those options only when probe (or a later script) indicates they’re needed, or the user specifies them.

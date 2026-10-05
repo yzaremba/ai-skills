@@ -99,7 +99,7 @@ It has two branches, and they need different fixes.
 
 Fires when a deny pattern's **literal prefix** resolves to a directory that contains the command's target. A pattern whose first segment is a glob (`Read(**/.env)`) has an *empty* literal prefix, so it collapses to the **current working directory** — making *every* `grep -r … .` anywhere trip the prompt, even in directories with no `.env`.
 
-**Fix (settings-level, already applied):** anchor every `Read()` deny pattern to a real root — `Read(//home/yzaremba/**/.env)`, not `Read(**/.env)`. The deny still blocks the Read tool *and* `cat .env` via Bash; only the breaker's false positive goes away. Cost: a `.env` under an unlisted root (`/opt`, `/srv`) is no longer denied — add an anchored rule if that ever matters.
+**Fix (settings-level):** anchor every `Read()` deny pattern to a real root — for example `Read(//home/<user>/**/.env)` with your own user name in place of `<user>`, or the equivalent root on your system — not `Read(**/.env)`. The deny still blocks the Read tool *and* `cat .env` via Bash; only the breaker's false positive goes away. Cost: a `.env` under an unlisted root (`/opt`, `/srv`) is no longer denied — add an anchored rule if that ever matters.
 
 ### Branch 2 — "after a cd would search a directory that cannot be determined here"
 

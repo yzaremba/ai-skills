@@ -1,16 +1,19 @@
 ---
 name: usage-cost
 description: Show Claude Code usage + list-price cost across all sessions over a window (default last 24h). Aggregates the local JSONL session logs under ~/.claude/projects/ and prints a per-day bar chart, per-project totals, top-N sessions by cost, and token totals. Use when the user asks about Claude usage, cost, burn, billing, /usage, or "what did I spend on Claude". Args parsed as "[N]" or "[Nd]" (days; fractional ok), with word forms "today / week / month", and optional flags "top=N", "no-per-day", "no-top".
-license: Apache-2.0 (see LICENSE.txt)
+license: Apache-2.0
+compatibility: claude-code (reads Claude Code's own session logs)
 ---
 
 # Usage Cost
+
+This skill is for Claude Code only: it reads Claude Code's own session logs.
 
 Aggregates Claude Code session usage from `~/.claude/projects/**/*.jsonl` and surfaces totals + breakdowns over a configurable window. Cost is **public-API list price** — on Claude Pro / Max plans the real billing is the flat subscription, so these numbers are **relative-burn**, not an invoice preview.
 
 ## Location
 
-- Python script: `usage-cost/scripts/usage_cost.py` (Python stdlib only — no pip deps).
+- Python script: `scripts/usage_cost.py` in this skill's directory (Python stdlib only — no pip deps).
 
 ## How to invoke
 
