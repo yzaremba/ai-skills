@@ -42,12 +42,13 @@ stays as it is, followed by a "Skills" heading.
 
 ## Tests
 
-Run both from the repository root with Python 3.11 or later. On a machine where
+Run each of these from the repository root with Python 3.11 or later. On a machine where
 `python` is a project's virtual environment, use a system interpreter instead:
 
 ```bash
 python multiagent-collab/tests/test_multiagent_collab.py
 python -m unittest discover -s tools/session-profile/tests
+python -m unittest discover -s tools/setup/tests
 ```
 
 ## Conventions
