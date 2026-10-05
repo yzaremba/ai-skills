@@ -1,0 +1,1515 @@
+"""Tests of scripts/check.py.
+
+Run from the repository root:
+
+    python -B -m unittest discover -s prd-implementation/tests
+"""
+import ast
+import contextlib
+import io
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+TESTS = Path(__file__).resolve().parent
+SKILL = TESTS.parent
+SCRIPTS = SKILL / "scripts"
+REFERENCES = SKILL / "references"
+CHECK_PY = SCRIPTS / "check.py"
+RUNNER = TESTS / "audit_runner.py"
+
+sys.path.insert(0, str(SCRIPTS))
+import check  # noqa: E402
+
+TODAY = "2026-10-05"
+PLAN = "SPRINT01-PLAN-sample.md"
+TASKS = "SPRINT01-TASKS-sample.md"
+START = check.INDEX_START
+END = check.INDEX_END
+
+# One, two and four bytes in UTF-8; the last is two units in UTF-16.
+FILLS = ("x", "é", "\u0301", "\U0001d4b3")
+
+
+def example(reference: str, marker: str) -> str:
+    """The first ```markdown block after the line holding ``marker``."""
+    lines = (REFERENCES / reference).read_text(encoding="utf-8").split("\n")
+    start = next(index for index, line in enumerate(lines) if marker in line)
+    opened = next(index for index in range(start, len(lines)) if lines[index].startswith("```markdown"))
+    closed = next(index for index in range(opened + 1, len(lines)) if lines[index].startswith("```"))
+    return "\n".join(lines[opened + 1:closed]) + "\n"
+
+
+def padded(start: str, length: int, fill: str = "x") -> str:
+    """A line of exactly ``length`` characters that starts with ``start``."""
+    line = start + fill * (length - len(start))
+    assert len(line) == length, (len(line), length)
+    return line
+
+
+def deferred(*items: str, pointer: int = 9, title: bool = True) -> str:
+    head = ("# Deferred items\n\n" if title else "") + f"Latest assigned: D{pointer}\n"
+    return head + "".join("\n" + item for item in items)
+
+
+def item(number: int = 1, sprint: str = "07 P3.4", review: str = "2026-12-01", status: str = "open",
+         check_line: str | None = None, title: str = "Remove the legacy export path") -> str:
+    lines = [f"### D{number} — {title}", "", f"Sprint: {sprint}", "Trigger: the export log: no line with `path=legacy`",
+             f"Review by: {review}"]
+    if check_line is not None:
+        lines.append(f"Check: {check_line}")
+    lines.append(f"Status: {status}")
+    return "\n".join(lines) + "\n"
+
+
+def tree(root: Path) -> dict:
+    """Every path under ``root`` with its bytes, to show nothing changed."""
+    found = {}
+    for path in sorted(root.rglob("*")):
+        found[str(path.relative_to(root))] = path.read_bytes() if path.is_file() else None
+    return found
+
+
+class Case(unittest.TestCase):
+    """A scratch project, checked in process as a skill copied on its own."""
+
+    def setUp(self):
+        # Made real, so that a path is spelled the same in a child process.
+        self.root = Path(tempfile.mkdtemp(prefix="check-test-")).resolve()
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        # A copy with no clone around it, for runs as a child process.
+        self.lone_script = self.root / "lone" / "skill" / "scripts" / "check.py"
+        self.lone_script.parent.mkdir(parents=True)
+        shutil.copyfile(CHECK_PY, self.lone_script)
+        self.project = self.root / "project"
+        self.docs = self.project / "docs"
+        self.home = self.root / "home"
+        self.docs.mkdir(parents=True)
+        self.home.mkdir()
+        lone = mock.patch.object(check, "SETUP_DIR", self.root / "no-clone" / "tools" / "setup")
+        lone.start()
+        self.addCleanup(lone.stop)
+
+    def write(self, name: str, text: str, where: Path | None = None) -> Path:
+        path = (where or self.docs) / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(text.encode("utf-8"))
+        return path
+
+    def arguments(self, *extra: str, today: str = TODAY) -> list[str]:
+        return ["--project", str(self.project), "--home", str(self.home), "--today", today, *extra]
+
+    def run_check(self, *extra: str, today: str = TODAY) -> tuple[int, dict]:
+        code, text = check.run(self.arguments("--json", *extra, today=today))
+        return code, json.loads(text)
+
+    def rules(self, *extra: str, today: str = TODAY) -> list[tuple]:
+        _, report = self.run_check(*extra, today=today)
+        return [(v["file"], v["line"], v["rule"]) for v in report["violations"]]
+
+    def assertClean(self, *extra: str, today: str = TODAY) -> dict:
+        code, report = self.run_check(*extra, today=today)
+        self.assertEqual(report["violations"], [])
+        self.assertEqual(code, 0 if not report["summary"]["past_date"] else 1)
+        return report
+
+    def child(self, *arguments: str, script: Path | None = None, runner: bool = False, env: dict | None = None,
+              cwd: Path | None = None) -> tuple[int, str, str]:
+        script = script or self.lone_script
+        command = [sys.executable, "-B"] + ([str(RUNNER)] if runner else []) + [str(script), *arguments]
+        done = subprocess.run(command, capture_output=True, cwd=str(cwd or self.root), env=env, check=False)
+        self.assertNotIn(b"\r", done.stdout)
+        return done.returncode, done.stdout.decode("utf-8"), done.stderr.decode("utf-8", "replace")
+
+
+# --- R8.6: it executes nothing ------------------------------------------------
+
+class SyntaxTree(unittest.TestCase):
+    ALLOWED_IMPORTS = {
+        "__future__", "argparse", "datetime", "json", "re", "stat", "sys", "tomllib", "unicodedata", "pathlib",
+    }
+    # Never, whole or in part, whatever the allowlist says.
+    BANNED_MODULES = {"os", "subprocess", "importlib", "runpy", "ctypes", "socket", "shutil", "multiprocessing"}
+    FORBIDDEN_NAMES = {
+        "eval", "exec", "compile", "__import__", "open", "getattr", "setattr", "delattr", "globals", "locals",
+        "vars", "breakpoint", "input", "__builtins__", "__loader__", "__spec__",
+    }
+    FORBIDDEN_ATTRIBUTES = {
+        "system", "popen", "Popen", "call", "check_call", "check_output", "getoutput", "getstatusoutput",
+        "startfile", "fork", "forkpty", "posix_spawn", "posix_spawnp", "modules", "meta_path", "path_hooks",
+        "import_module", "load_module", "exec_module", "run_path", "run_module", "dlopen", "addaudithook",
+        "settrace", "setprofile", "open", "write_text", "write_bytes", "unlink", "mkdir", "rmdir", "rename",
+        "replace", "touch", "chmod", "lchmod", "symlink_to", "hardlink_to", "link_to", "kill", "remove",
+        "removedirs", "makedirs", "rmtree", "truncate", "utime", "chown",
+    }
+
+    def faults(self, source: str) -> list[str]:
+        """What ``source`` holds that check.py must not: the one walker, used
+        on check.py and on the samples that show the walker catches them."""
+        found = []
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                if isinstance(node, ast.ImportFrom):
+                    if node.level:
+                        found.append(f"line {node.lineno}: a relative import")
+                    names = [node.module or ""]
+                else:
+                    names = [alias.name for alias in node.names]
+                for name in names:
+                    if name not in self.ALLOWED_IMPORTS or name.split(".")[0] in self.BANNED_MODULES:
+                        found.append(f"line {node.lineno}: the import of {name or 'a relative module'}")
+            elif isinstance(node, ast.Name) and node.id in self.FORBIDDEN_NAMES:
+                found.append(f"line {node.lineno}: the name {node.id}")
+            elif isinstance(node, ast.Attribute):
+                name = node.attr
+                compiles_a_pattern = name == "compile" and isinstance(node.value, ast.Name) and node.value.id == "re"
+                if compiles_a_pattern:
+                    continue
+                if (name in self.FORBIDDEN_ATTRIBUTES or name == "compile" or name.startswith(("exec", "spawn"))
+                        or (name.startswith("__") and name.endswith("__"))):
+                    found.append(f"line {node.lineno}: the attribute .{name}")
+        return found
+
+    def test_the_module_can_start_no_process_and_load_no_code(self):
+        self.assertEqual(self.faults(CHECK_PY.read_text(encoding="utf-8")), [])
+
+    def test_the_allowlist_holds_no_banned_module(self):
+        self.assertEqual({name.split(".")[0] for name in self.ALLOWED_IMPORTS} & self.BANNED_MODULES, set())
+
+    def test_the_walker_catches_what_it_forbids(self):
+        for source in (
+            "import subprocess", "import os", "import os.path", "from os import system", "from os.path import join",
+            "import importlib", "import importlib.util", "import runpy", "import ctypes", "import socket",
+            "import shutil", "import tempfile", "import re, subprocess", "from . import sibling",
+            "from .sibling import name", "x = eval('1')", "exec('pass')", "compile('1', 'f', 'eval')",
+            "__import__('os')", "getattr(sys, 'modules')", "open('f', 'w')",
+            "import sys\nsys.modules['os'].system('x')", "p.write_text('x')", "p.write_bytes(b'x')",
+            "p.replace(q)", "p.rename(q)", "p.unlink()", "p.mkdir()", "p.touch()", "p.symlink_to(q)", "p.open('w')",
+            "f.__globals__", "x.__class__", "x.spawnv(0)", "x.execv('a', [])", "pattern.compile('x')",
+            "def f():\n    import subprocess\n", "try:\n    import os\nexcept ImportError:\n    pass\n",
+        ):
+            with self.subTest(source):
+                self.assertNotEqual(self.faults(source), [])
+
+    def test_the_walker_passes_what_check_py_may_do(self):
+        for source in (
+            "from __future__ import annotations", "import re\nP = re.compile('x')", "from pathlib import Path",
+            "import stat\nstat.S_ISDIR(0)", "import json, sys, tomllib, unicodedata, argparse, datetime",
+            "p.read_bytes()", "p.lstat()", "p.is_dir()", "p.resolve(strict=True)", "sys.stdout.write('x')",
+        ):
+            with self.subTest(source):
+                self.assertEqual(self.faults(source), [])
+
+
+class ExecutesNothing(Case):
+    def setUp(self):
+        super().setUp()
+        self.marker = self.root / "marker"
+        make = f'"{sys.executable}" -c "open(r\'{self.marker}\', \'w\').close()"'
+        self.plain = make
+        self.checks = {
+            1: make,
+            2: f"python tools/checks/a.py; {make}",
+            3: f"python tools/checks/a.py && {make}",
+            4: f"`{make}`",
+            5: f"$({make})",
+            6: f"python tools/checks/a.py || {make} | {make} & touch marker-relative > marker-redirect",
+            7: "touch marker-relative",
+        }
+        items = [item(number, check_line=line, sprint=f"07 P3.{number}") for number, line in self.checks.items()]
+        # An embedded newline: the command continues on a line of its own.
+        items.append(item(8, check_line="python tools/checks/a.py\n" + make, sprint="07 P3.8"))
+        self.write("DEFERRED.md", deferred(*items))
+
+    def no_marker(self):
+        found = [str(path) for path in self.root.rglob("*") if path.name.startswith("marker")]
+        found += [name for name in ("marker-relative", "marker-redirect") if (Path.cwd() / name).exists()]
+        self.assertEqual(found, [])
+
+    def test_the_fixture_would_leave_a_marker_if_it_were_run(self):
+        subprocess.run(self.plain, shell=True, check=True, cwd=str(self.root))
+        self.assertTrue(self.marker.exists())
+
+    def test_in_process_no_check_is_run_and_nothing_changes(self):
+        # What proves that nothing is started is the syntax tree above and
+        # the audit hook of the child run below; here, that no marker appears.
+        before = tree(self.root)
+        code, report = self.run_check()
+        check.run(self.arguments())
+        self.no_marker()
+        self.assertEqual(tree(self.root), before)
+        self.assertEqual(code, 1)
+        listed = {entry["number"]: entry["check"] for entry in report["deferred"]}
+        for number, line in self.checks.items():
+            self.assertEqual(listed[number], line)  # word for word
+        self.assertEqual(listed[8], "python tools/checks/a.py")
+        self.assertIn(("DEFERRED.md", "deferred-unknown-line"), [(v["file"], v["rule"]) for v in report["violations"]])
+
+    def test_as_a_child_process_no_check_is_run_and_nothing_changes(self):
+        before = tree(self.root)
+        for extra in ([], ["--json"]):
+            code, out, err = self.child(*self.arguments(*extra), runner=True, cwd=self.project)
+            self.assertEqual(code, 1, err)
+            self.assertIn(self.checks[3], out if not extra else json.loads(out)["deferred"][2]["check"])
+        self.no_marker()
+        self.assertEqual(tree(self.root), before)
+
+    def test_the_audit_runner_catches_a_started_process(self):
+        script = self.root / "check.py"
+        script.write_text("import subprocess, sys\ndef main(argv):\n"
+                          "    subprocess.run([sys.executable, '-c', 'pass'])\n    return 0\n", encoding="utf-8")
+        code, _, err = self.child(script=script, runner=True)
+        self.assertEqual(code, 97)
+        self.assertIn("subprocess.Popen", err)
+
+    def test_the_audit_runner_catches_a_written_and_a_renamed_file(self):
+        script = self.root / "check.py"
+        for body, event in (("Path('made').write_text('x')", "open"), ("Path('a').rename('b')", "os.rename"),
+                            ("Path('a').replace('b')", "os.rename"), ("Path('made').mkdir()", "os.mkdir"),
+                            ("os.system('exit 0')", "os.system")):
+            with self.subTest(body):
+                script.write_text("import os\nfrom pathlib import Path\ndef main(argv):\n    try:\n"
+                                  f"        {body}\n    except OSError:\n        pass\n    return 0\n",
+                                  encoding="utf-8")
+                work = self.root / "work"
+                shutil.rmtree(work, ignore_errors=True)
+                work.mkdir()
+                code, _, err = self.child(script=script, runner=True, cwd=work)
+                self.assertEqual(code, 97, err)
+                self.assertIn(f"caught: {event} ", err)
+
+
+# --- R8.6: the limits, at each and one over -----------------------------------
+
+class Boundaries(Case):
+    def over(self, name: str, start: str, limit: int, rule: str, before: str = "", after: str = "",
+             where: Path | None = None):
+        """``start`` filled to ``limit`` is accepted, to one more is reported."""
+        line_number = before.count("\n") + 1
+        for fill in FILLS:
+            for length, expected in ((limit, []), (limit + 1, [(name, line_number, rule)])):
+                with self.subTest(fill=fill, length=length):
+                    line = padded(start, length, fill)
+                    self.write(name, before + line + "\n" + after, where)
+                    found = [found for found in self.rules() if found[0] == name]
+                    self.assertEqual(found, expected)
+
+    def test_annotation_300(self):
+        for start in ("> Landed 2026-10-05: ", "> Bug fix 2026-10-05: ", "> Audit 2026-10-05: PARTIAL: "):
+            self.over(PLAN, start, 300, "annotation-too-long", before="### P1.1 — A step\n\n")
+
+    def test_tasks_line_150(self):
+        for start in ("- [ ] **P1.1** — ", "- [~] **P1.1** — ", "- [x] **P1.1** — ", "- [x] ~~**P1.1** — "):
+            self.over(TASKS, start, 150, "tasks-line-too-long", before="## Phase 1\n\n")
+
+    def test_backlog_item_300(self):
+        self.over("BACKLOG.md", "- **B1** ", 300, "backlog-item-too-long", before="Latest assigned: B1\n\n")
+        self.over("BACKLOG.md", "- **B1** **[HIGH]** ", 300, "backlog-item-too-long", before="Latest assigned: B1\n\n")
+
+    def test_deferred_item_lines_300(self):
+        head = "Latest assigned: D1\n\n"
+        fields = "Sprint: 07 P3.4\nTrigger: a log: no line\nReview by: 2026-12-01\nStatus: open\n"
+        self.over("DEFERRED.md", "### D1 — ", 300, "deferred-line-too-long", before=head, after=fields)
+        self.over("DEFERRED.md", "Trigger: ", 300, "deferred-line-too-long",
+                  before=head + "### D1 — A title\nSprint: 07 P3.4\n", after="Review by: 2026-12-01\nStatus: open\n")
+        self.over("DEFERRED.md", "Check: ", 300, "deferred-line-too-long",
+                  before=head + "### D1 — A title\nSprint: 07 P3.4\nTrigger: a log: no line\nReview by: 2026-12-01\n",
+                  after="Status: open\n")
+
+    def test_lesson_index_line_150(self):
+        self.over("AGENTS.md", "- ", 150, "index-line-too-long", before=f"# Guide\n\n{START}\n", after=f"{END}\n",
+                  where=self.project)
+
+    def test_lesson_index_50_lines(self):
+        for count, expected in ((50, []), (51, [("AGENTS.md", 3, "index-too-many-lines")])):
+            lines = "".join(f"- lesson {number}\n" for number in range(count))
+            self.write("AGENTS.md", f"# Guide\n\n{START}\n{lines}{END}\nafter\n", self.project)
+            self.assertEqual(self.rules(), expected)
+
+    def test_a_carriage_return_is_not_counted(self):
+        annotation = padded("> Landed 2026-10-05: ", 300, "é")
+        task = padded("- [ ] **P1.1** — ", 150, "é")
+        self.write(PLAN, f"### P1.1 — A step\r\n\r\n{annotation}\r\n")
+        self.write(TASKS, f"## Phase 1\r\n\r\n{task}\r\n")
+        self.write("BACKLOG.md", "Latest assigned: B1\r\n\r\n" + padded("- **B1** ", 300) + "\r\n")
+        self.write("DEFERRED.md", deferred(item(title=padded("", 300 - len("### D1 — ")))).replace("\n", "\r\n"))
+        self.write("AGENTS.md", f"{START}\r\n" + padded("- ", 150) + f"\r\n{END}\r\n", self.project)
+        self.assertEqual(self.rules(), [])
+        self.write(PLAN, f"### P1.1 — A step\r\n\r\n{annotation}x\r\n")
+        self.write(TASKS, f"## Phase 1\r\n\r\n{task}x\r\n")
+        self.assertEqual(self.rules(), [(PLAN, 3, "annotation-too-long"), (TASKS, 3, "tasks-line-too-long")])
+
+    def test_only_one_carriage_return_at_the_end_is_left_out(self):
+        self.assertEqual(check.split_lines("a\r\nb\r\r\nc\rd\n\ne"), ["a", "b\r", "c\rd", "", "e"])
+        self.assertEqual(check.split_lines("a\x0bb\x0cc\u2028d\n"), ["a\x0bb\x0cc\u2028d"])
+        self.assertEqual(check.split_lines(""), [])
+
+    def test_a_byte_order_mark_is_not_a_character_of_the_first_line(self):
+        self.write("BACKLOG.md", "\ufeff# Backlog\n\nLatest assigned: B1\n\n- **B1** One\n")
+        self.assertEqual(self.rules(), [])
+
+
+# --- PLAN and TASKS -----------------------------------------------------------
+
+LONG = padded("> Landed 2026-10-05: ", 301)
+LONG_TASK = padded("- [ ] **P1.1** — ", 151)
+
+
+class PlanAndTasks(Case):
+    def plan(self, body: str) -> list[tuple]:
+        self.write(PLAN, body)
+        return [(line, rule) for _, line, rule in self.rules()]
+
+    def test_fences(self):
+        cases = {
+            "backticks": (f"```markdown\n{LONG}\n```\n", []),
+            "tildes": (f"~~~\n{LONG}\n~~~\n", []),
+            "longer": (f"`````text\n{LONG}\n```\n", []),
+            "three spaces": (f"   ```\n{LONG}\n   ```\n", []),
+            "four spaces is no fence": (f"    ```\n{LONG}\n    ```\n", [(2, "annotation-too-long")]),
+            "two backticks is no fence": (f"``\n{LONG}\n``\n", [(2, "annotation-too-long")]),
+            "tildes do not close backticks": (f"```\n~~~\n{LONG}\n~~~\n{LONG}\n```\n", []),
+            "never closed": (f"```\n{LONG}\n\n{LONG}\n", []),
+            "checked again after the block": (f"```\n{LONG}\n```\n{LONG}\n", [(4, "annotation-too-long")]),
+            "a block between two blocks": (f"```\n```\n{LONG}\n```\n```\n", [(3, "annotation-too-long")]),
+            "a shorter fence does not close": (f"````\n```\n{LONG}\n```\n````\n{LONG}\n", [(6, "annotation-too-long")]),
+            "shorter tildes do not close": (f"~~~~~\n~~~\n{LONG}\n~~~~\n~~~~~\n{LONG}\n", [(6, "annotation-too-long")]),
+            "a longer fence closes": (f"```\n{LONG}\n`````\n{LONG}\n", [(4, "annotation-too-long")]),
+            "white space after the closer": (f"```\n{LONG}\n```  \t\n{LONG}\n", [(4, "annotation-too-long")]),
+            "an indented closer": (f"```\n{LONG}\n   ```\n{LONG}\n", [(4, "annotation-too-long")]),
+            "text after it is no closer": (f"```\n```python\n{LONG}\n``` x\n{LONG}\n```\n{LONG}\n",
+                                           [(7, "annotation-too-long")]),
+            "four spaces is no closer": (f"```\n    ```\n{LONG}\n```\n", []),
+        }
+        for name, (body, expected) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.plan(body), expected)
+                self.write(PLAN, "")
+                self.write(TASKS, body.replace(LONG, LONG_TASK))
+                found = [(line, rule.replace("tasks-line", "annotation")) for _, line, rule in self.rules()]
+                self.assertEqual(found, expected)
+                self.write(TASKS, "")
+
+    def test_an_example_in_a_fence_is_no_annotation_of_the_step(self):
+        body = "### P1.1 — A step\n> Landed 2026-10-05: one\n\n```markdown\n> Landed 2026-10-05: example\n> more\n```\n"
+        self.assertEqual(self.plan(body), [])
+
+    def test_continuation(self):
+        first = "### P1.1 — A step\n\n> Landed 2026-10-05: one\n"
+        cases = {
+            "> and the rest of it\n": [(4, "annotation-continued")],
+            ">\n": [(4, "annotation-continued")],
+            ">no space\n": [(4, "annotation-continued")],
+            "> second\n> third\n> fourth\n": [(4, "annotation-continued")],
+            "> Landed: no space after the kind\n": [(4, "annotation-continued")],
+            "> Depends on: P1.0\n": [],
+            "> Parallel: A\n": [],
+            "> Tag: light\n": [],
+            "> Bug fix 2026-10-06: two\n> Audit 2026-10-07: PARTIAL: three\n": [],
+            "> Audit 2026-10-07: PARTIAL: three\n> and more\n": [(5, "annotation-continued")],
+            "\n> a quote of its own\n": [],
+            "plain text\n> a quote\n": [],
+            "```\n> in a block\n```\n> after a block\n": [],
+            "> Depends on: P1.0\n> a quote after a mark\n": [],
+        }
+        for rest, expected in cases.items():
+            with self.subTest(rest):
+                self.assertEqual(self.plan(first + rest), expected)
+        self.assertEqual(self.plan("> a quote\n> Landed 2026-10-05: one\n"), [])
+
+    def test_two_annotations_of_one_kind(self):
+        step = "### P1.1 — A step\n\n"
+        cases = {
+            "two landed": (step + "> Landed 2026-10-05: one\n\ntext\n\n> Landed 2026-10-06: two\n",
+                           [(7, "annotation-duplicate")]),
+            "three landed": (step + "> Landed 2026-10-05: 1\n> Landed 2026-10-06: 2\n> Landed 2026-10-07: 3\n",
+                             [(4, "annotation-duplicate"), (5, "annotation-duplicate")]),
+            "one of each": (step + "> Landed 2026-10-05: a\n> Bug fix 2026-10-05: b\n> Audit 2026-10-05: OK: c\n", []),
+            "two bug fixes": (step + "> Bug fix 2026-10-05: a\n> Bug fix 2026-10-06: b\n",
+                              [(4, "annotation-duplicate")]),
+            "two audits": (step + "> Audit 2026-10-05: DEFERRED: D3\n> Audit 2026-11-05: RESOLVED: D3\n",
+                           [(4, "annotation-duplicate")]),
+        }
+        for name, (body, expected) in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.plan(body), expected)
+
+    def test_the_extent_of_a_step(self):
+        landed = "> Landed 2026-10-05: one\n"
+        cases = {
+            "the next step": f"### P1.1 — A\n{landed}### P1.2 — B\n{landed}",
+            "a heading of another level ends it": f"### P1.1 — A\n{landed}#### Notes\n{landed}",
+            "a phase heading ends it": f"### P1.1 — A\n{landed}## Phase 2\n{landed}",
+            "an indented heading ends it": f"### P1.1 — A\n{landed}   # Up to three spaces\n{landed}",
+            "outside any step": f"## Phase 1\n{landed}\n{landed}",
+            "before any heading": f"{landed}\n{landed}",
+            "a heading that is not a step's": f"### Phase P1.1 notes\n{landed}\n{landed}",
+            "not a step ID": f"### P1.1x — A\n{landed}\n{landed}",
+        }
+        for name, body in cases.items():
+            with self.subTest(name):
+                self.assertEqual(self.plan(body), [])
+        within = {
+            "any level of heading": f"## P2.10 — A\n{landed}\n{landed}",
+            "an ID and a colon": f"### P2.3: A\n{landed}\n{landed}",
+            "a hash that is no heading": f"### P1.1 — A\n{landed}#hashtag\n{landed}",
+            "four spaces is no heading": f"### P1.1 — A\n{landed}    # code\n{landed}",
+            "a heading in a fence": f"### P1.1 — A\n{landed}```\n## Phase\n```\n{landed}",
+        }
+        for name, body in within.items():
+            with self.subTest(name):
+                self.assertEqual([rule for _, rule in self.plan(body)], ["annotation-duplicate"])
+
+    def test_which_files_are_plan_and_tasks_files(self):
+        self.write("SPRINT01-PLAN-a.md", LONG + "\n")
+        self.write("SPRINT12-TASKS-a.md", LONG_TASK + "\n")
+        self.write("SPRINT01-PRD-a.md", LONG + "\n" + LONG_TASK + "\n")
+        self.write("SPRINT01-THOUGHTS-a.md", LONG + "\n")
+        self.write("PLAN-a.md", LONG + "\n")
+        self.write("SPRINT01-PLAN-a.txt", LONG + "\n")
+        self.write("DONE/SPRINT00-PLAN-a.md", LONG + "\n")
+        self.write("DONE/SPRINT00-TASKS-a.md", LONG_TASK + "\n")
+        self.write("DONE/DEFERRED.md", "nonsense\n")
+        self.assertEqual(self.rules(), [("SPRINT01-PLAN-a.md", 1, "annotation-too-long"),
+                                        ("SPRINT12-TASKS-a.md", 1, "tasks-line-too-long")])
+
+    def test_a_tasks_line_is_one_that_starts_with_a_box(self):
+        self.write(TASKS, f"  {LONG_TASK}\n* [ ] {'x' * 200}\n- {'x' * 200}\n{'x' * 200}\n")
+        self.assertEqual(self.rules(), [])
+        self.write(PLAN, LONG_TASK + "\n")
+        self.write(TASKS, LONG + "\n")
+        self.assertEqual(self.rules(), [])
+
+
+# --- DEFERRED.md --------------------------------------------------------------
+
+class Deferred(Case):
+    def found(self, text: str, today: str = TODAY) -> list[tuple]:
+        self.write("DEFERRED.md", text)
+        return [(line, rule) for _, line, rule in self.rules(today=today)]
+
+    def test_the_example_of_the_reference_is_clean(self):
+        self.write("DEFERRED.md", example("deferred.md", "An example of a whole `DEFERRED.md`"))
+        # D5 was re-dated on 2026-12-01, which a check before that day reports.
+        report = self.assertClean(today="2026-12-01")
+        self.assertEqual([entry["number"] for entry in report["deferred"]], [3, 5])
+        self.assertEqual([entry["state"] for entry in report["deferred"]], ["open", "open"])
+        third, fifth = report["deferred"]
+        self.assertEqual(third["title"], "Remove the legacy export path")
+        self.assertEqual(third["sprint"], "07 P3.4")
+        self.assertEqual(third["trigger"], "the export log of the last 30 days: no line with `path=legacy`")
+        self.assertEqual(third["review_by"], "2026-12-01")
+        self.assertEqual(third["check"], "python tools/checks/legacy_export_calls.py --days 30")
+        self.assertIsNone(fifth["check"])
+        self.assertEqual(fifth["review_by"], "2027-03-01 (re-dated 2026-12-01: two months of reports so far, no mismatch)")
+        code, text = check.run(self.arguments(today="2026-12-01"))
+        self.assertEqual(code, 0)
+        self.assertIn("  check: python tools/checks/legacy_export_calls.py --days 30\n", text)
+        self.assertIn("  no check named\n", text)
+
+    def test_the_lines_of_the_reference_keep_their_limits(self):
+        for line in (REFERENCES / "deferred.md").read_text(encoding="utf-8").split("\n"):
+            line = line.strip()
+            if line.startswith("> Audit "):
+                self.assertLessEqual(len(line), 300)
+            if line.startswith("- [x] "):
+                self.assertLessEqual(len(line), 150)
+
+    def test_minimal_files(self):
+        self.assertEqual(self.found("Latest assigned: D4\n"), [])
+        self.assertEqual(self.found("# Deferred items\n\nLatest assigned: D4\n"), [])
+        self.assertEqual(self.found(deferred(item(4), pointer=4, title=False)), [])
+        self.assertEqual(self.found(""), [(None, "deferred-pointer-missing")])
+
+    def test_the_pointer_line(self):
+        one = item(1)
+        self.assertEqual(self.found("# Deferred items\n\n" + one), [(None, "deferred-pointer-missing")])
+        self.assertEqual(self.found(deferred(one) + "\nLatest assigned: D9\n"), [(12, "deferred-pointer-duplicate")])
+        self.assertEqual(self.found("# Deferred items\n\n" + one + "\nLatest assigned: D9\n"),
+                         [(10, "deferred-pointer-below-item")])
+        self.assertEqual(self.found(deferred(item(10))), [(5, "deferred-number-above-pointer")])
+        self.assertEqual(self.found(deferred(item(9))), [])
+        for line in ("Latest assigned: D09", "Latest assigned: D0", "Latest assigned: D9 ", "Latest assigned: 9",
+                     "Latest assigned: B9", "Latest assigned:D9", "Latest assigned: D9, D8"):
+            with self.subTest(line):
+                self.assertEqual(self.found(f"{line}\n"), [(None, "deferred-pointer-missing"), (1, "deferred-unknown-line")])
+
+    def test_numbers(self):
+        self.assertEqual(self.found(deferred(item(2), item(2, sprint="07 P3.5"))), [(12, "deferred-number-duplicate")])
+        for heading in ("### D02 — Title", "### D0 — Title", "### D2 - Title", "### D2 – Title", "### D2 —  Title",
+                        "### D2 — ", "### D2 —", "###  D2 — Title", "### d2 — Title", "###D2 — Title", "### Title"):
+            with self.subTest(heading):
+                text = deferred(item(2).replace("### D2 — Remove the legacy export path", heading))
+                self.assertEqual(self.found(text), [(5, "deferred-heading-form")])
+        # An item with a broken heading is still listed, and still flagged.
+        text = deferred(item(2, review="2026-01-01").replace("### D2 —", "### D2 -"))
+        self.write("DEFERRED.md", text)
+        code, report = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertEqual([(e["number"], e["past_date"]) for e in report["deferred"]], [(None, True)])
+        self.assertIn("D? — D2 - Remove the legacy export path  [PAST ITS DATE]", check.run(self.arguments())[1])
+
+    def test_unknown_lines(self):
+        base = deferred(item(1))
+        self.assertEqual(self.found("stray\n" + base), [(1, "deferred-unknown-line")])
+        self.assertEqual(self.found(base.replace("Latest", "A note\n\nLatest")), [(3, "deferred-unknown-line")])
+        self.assertEqual(self.found(base + "A note under the item\n"), [(11, "deferred-unknown-line")])
+        self.assertEqual(self.found(base + "\n- a bullet\n"), [(12, "deferred-unknown-line")])
+        self.assertEqual(self.found(base + "```\nStatus: open\n```\n"),
+                         [(11, "deferred-unknown-line"), (12, "deferred-field-duplicate"), (13, "deferred-unknown-line")])
+        self.assertEqual(self.found(base + "## Group\n"), [(11, "deferred-unknown-line")])
+        self.assertEqual(self.found(base + "# Deferred items\n"), [(11, "deferred-unknown-line")])
+        self.assertEqual(self.found("# Deferred items\n# Deferred items\nLatest assigned: D1\n"),
+                         [(2, "deferred-unknown-line")])
+        self.assertEqual(self.found("Latest assigned: D1\n# Deferred items\n"), [(2, "deferred-unknown-line")])
+        self.assertEqual(self.found("# Deferred\nLatest assigned: D1\n"), [(1, "deferred-unknown-line")])
+        self.assertEqual(self.found("Latest assigned: D1\nStatus: open\n"), [(2, "deferred-unknown-line")])
+        self.assertEqual(self.found(base.replace("Sprint:", " Sprint:")),
+                         [(5, "deferred-field-missing"), (7, "deferred-unknown-line")])
+        self.assertEqual(self.found(base.replace("Trigger: the export log", "Trigger: the export log\n  of the month")),
+                         [(9, "deferred-unknown-line")])
+
+    def test_fields(self):
+        base = deferred(item(1, check_line="python tools/checks/a.py"))
+        swap = base.replace("Sprint: 07 P3.4\n", "").replace("Status: open\n", "Status: open\nSprint: 07 P3.4\n")
+        self.assertEqual(self.found(swap), [(11, "deferred-field-order")])
+        late = base.replace("Check: python tools/checks/a.py\nStatus: open\n", "Status: open\nCheck: python a.py\n")
+        self.assertEqual(self.found(late), [(11, "deferred-field-order")])
+        self.assertEqual(self.found(base + "Status: open\n"), [(12, "deferred-field-duplicate")])
+        self.assertEqual(self.found(base.replace("Status: open\n", "")), [(5, "deferred-field-missing")])
+        self.assertEqual(self.found(deferred("### D1 — Only a heading\n")), [(5, "deferred-field-missing")] * 4)
+        spread = base.replace("\nTrigger", "\n\n\nTrigger").replace("\nStatus", "\n\nStatus")
+        self.assertEqual(self.found(spread), [])
+        for field in ("Trigger", "Check", "Status", "Sprint", "Review by"):
+            for form in (f"{field}:", f"{field}: ", f"{field}:   ", f"{field}:value"):
+                with self.subTest(form):
+                    lines = base.split("\n")
+                    index = next(i for i, line in enumerate(lines) if line.startswith(field + ":"))
+                    lines[index] = form
+                    found = self.found("\n".join(lines))
+                    self.assertIn((index + 1, "deferred-field-form"), found)
+
+    def test_field_values(self):
+        for sprint in ("7 P3.4", "07", "07 P3", "07 3.4", "07  P3.4", "07 P3.4 ", "S07 P3.4", "07 P3.4, P3.5"):
+            with self.subTest(sprint):
+                self.assertEqual(self.found(deferred(item(1, sprint=sprint))), [(7, "deferred-sprint-form")])
+        self.assertEqual(self.found(deferred(item(1, sprint="107 P12.34"))), [])
+        for review in ("2026-13-01", "2026-02-30", "2026-1-5", "01-12-2026", "2026-12-01T00:00", "20261201", "soon",
+                       "2026-12-01 ", "2026-12-01 (re-dated 2026-10-01)", "2026-12-01 (re-dated 2026-10-01: )",
+                       "2026-12-01 (re-dated 2026-10-32: why)", "2026-12-01 re-dated 2026-10-01: why",
+                       "2026-12-01 (re-dated 2026-10-01: why", "2026-W49-2", "２０２６-12-01"):
+            with self.subTest(review):
+                self.assertEqual(self.found(deferred(item(1, review=review))), [(9, "deferred-date")])
+        self.assertEqual(self.found(deferred(item(1, review="2028-02-29 (re-dated 2026-10-01: a (good) reason)"))), [])
+        for status in ("closed", "Open", "open ", "open: still", "resolved", "resolved 2026-10-28", "resolved 2026-10-28:",
+                       "resolved 2026-10-28: ", "resolved: done", "dropped 28-10-2026: why", "done 2026-10-28: how"):
+            with self.subTest(status):
+                self.assertEqual(self.found(deferred(item(1, status=status))), [(10, "deferred-status-form")])
+        self.assertEqual(self.found(deferred(item(1, status="dropped 2026-02-30: why"))), [(10, "deferred-date")])
+
+    def test_closed_items_of_a_closed_sprint_leave_the_file(self):
+        resolved = "resolved 2026-10-01: done in 4e19c0a"
+        dropped = "dropped 2026-10-01: no longer wanted"
+        self.assertEqual(self.found(deferred(item(1, status=resolved))), [(5, "deferred-closed-sprint")])
+        both = deferred(item(1, status=resolved), item(2, status=dropped, sprint="07 P3.5"), item(3, sprint="08 P1.1"))
+        self.assertEqual(self.found(both), [(5, "deferred-closed-sprint")])
+        kept = deferred(item(1, status=resolved), item(2, sprint="07 P3.5"), item(3, sprint="08 P1.1", status=dropped))
+        self.assertEqual(self.found(kept), [(19, "deferred-closed-sprint")])
+        self.assertEqual(self.found(deferred(item(1, status=resolved), item(2, sprint="07 P3.5"))), [])
+
+    def test_the_past_date_flag(self):
+        self.write("DEFERRED.md", deferred(
+            item(1, review="2026-12-01"),
+            item(2, review="2026-12-02 (re-dated 2026-11-01: still waiting)", sprint="07 P3.5"),
+            item(3, review="2026-01-01", status="resolved 2026-01-02: done", sprint="07 P3.6"),
+            item(4, review="2026-01-01", status="dropped 2026-01-02: not wanted", sprint="07 P3.7"),
+        ))
+        for today, past, code in (("2026-11-30", [], 0), ("2026-12-01", [], 0), ("2026-12-02", [1], 1),
+                                  ("2026-12-03", [1, 2], 1)):
+            with self.subTest(today):
+                got, report = self.run_check(today=today)
+                self.assertEqual(report["violations"], [])
+                self.assertEqual([e["number"] for e in report["deferred"]], [1, 2])  # closed items are not listed
+                self.assertEqual([e["number"] for e in report["deferred"] if e["past_date"]], past)
+                self.assertEqual(report["summary"], {"open": 2, "state_unknown": 0, "past_date": len(past),
+                                                     "violations": 0, "notes": 0})
+                self.assertEqual(got, code)
+                self.assertEqual(check.run(self.arguments(today=today))[1].count("[PAST ITS DATE]"), len(past))
+
+    def test_re_dating(self):
+        cases = {
+            "2026-12-01 (re-dated 2026-10-05: on the day of the check)": 0,
+            "2026-12-01 (re-dated 2026-01-01: long ago)": 0,
+            "2026-10-06 (re-dated 2026-10-05: one day later)": 0,
+            "2026-12-01 (re-dated 2026-10-06: tomorrow)": 1,
+            "2026-10-01 (re-dated 2026-10-01: the same day)": 1,
+            "2026-09-01 (re-dated 2026-10-01: an earlier date)": 1,
+            "2026-10-07 (re-dated 2026-10-06: tomorrow, and later)": 1,
+            "2026-10-06 (re-dated 2026-10-07: tomorrow, and not later)": 2,
+        }
+        for review, count in cases.items():
+            with self.subTest(review):
+                self.assertEqual(self.found(deferred(item(1, review=review))), [(9, "deferred-date")] * count)
+        # The day it was re-dated is compared with the day of the check.
+        late = deferred(item(1, review="2026-12-01 (re-dated 2026-10-06: tomorrow)"))
+        self.assertEqual(self.found(late, today="2026-10-06"), [])
+        self.write("DEFERRED.md", late)
+        _, report = self.run_check()
+        self.assertEqual([v["message"] for v in report["violations"]],
+                         ["the day it was re-dated, 2026-10-06, is after today, 2026-10-05"])
+        # A date that breaks the rule still counts for the flag.
+        self.write("DEFERRED.md", deferred(item(1, review="2026-09-01 (re-dated 2026-10-01: an earlier date)")))
+        self.assertEqual([entry["past_date"] for entry in self.run_check()[1]["deferred"]], [True])
+
+    def test_an_item_whose_state_cannot_be_told_is_listed_and_flagged(self):
+        forms = {
+            "opne": "deferred-status-form", "Open": "deferred-status-form", "resolved": "deferred-status-form",
+            "": "deferred-field-form", "dropped 2026-02-30: why": "deferred-date", None: "deferred-field-missing",
+        }
+        for status, rule in forms.items():
+            with self.subTest(status):
+                first = item(1) if status is not None else item(1).replace("Status: open\n", "")
+                if status is not None:
+                    first = first.replace("Status: open", f"Status: {status}".rstrip() if status else "Status:")
+                self.write("DEFERRED.md", deferred(first, item(2, sprint="07 P3.5"),
+                                                   item(3, sprint="08 P1.1", status="resolved 2026-10-01: done"),
+                                                   item(4, sprint="08 P1.2")))
+                code, report = self.run_check()
+                self.assertEqual(code, 1)
+                self.assertEqual([(e["number"], e["state"]) for e in report["deferred"]],
+                                 [(1, "unknown"), (2, "open"), (4, "open")])
+                self.assertIn(rule, [v["rule"] for v in report["violations"]])  # the form is still reported
+                self.assertEqual(report["summary"]["open"], 2)
+                self.assertEqual(report["summary"]["state_unknown"], 1)
+                text = check.run(self.arguments())[1]
+                self.assertIn("Deferred items: 2 open, 1 state unknown, 0 past its date\n", text)
+                self.assertIn("\nD1 — Remove the legacy export path  [STATE UNKNOWN]\n", text)
+                self.assertIn("\nD2 — Remove the legacy export path\n", text)
+        # Past its date as well: both flags, and both counts.
+        self.write("DEFERRED.md", deferred(item(1, review="2026-01-01", status="opne")))
+        code, report = self.run_check()
+        self.assertEqual((code, report["deferred"][0]["state"], report["deferred"][0]["past_date"]), (1, "unknown", True))
+        self.assertIn("  [STATE UNKNOWN]  [PAST ITS DATE]\n", check.run(self.arguments())[1])
+        # An item of unknown state does not make its sprint a closed one.
+        self.assertNotIn("deferred-closed-sprint", [v["rule"] for v in report["violations"]])
+
+    def test_today_is_the_default(self):
+        self.write("DEFERRED.md", deferred(item(1, review="2000-01-01"), item(2, review="9999-12-31", sprint="07 P1.1")))
+        code, text = check.run(["--project", str(self.project), "--home", str(self.home), "--json"])
+        self.assertEqual(code, 1)
+        self.assertEqual([e["past_date"] for e in json.loads(text)["deferred"]], [True, False])
+
+
+# --- BACKLOG.md ---------------------------------------------------------------
+
+class Backlog(Case):
+    HEAD = "# Backlog\n\nLatest assigned: B20\n\n"
+
+    def found(self, body: str, head: str | None = None) -> list[tuple]:
+        self.write("BACKLOG.md", (self.HEAD if head is None else head) + body)
+        return [(line, rule) for name, line, rule in self.rules() if name == "BACKLOG.md"]
+
+    def test_the_example_of_the_reference_is_clean(self):
+        self.write("BACKLOG.md", example("stage-0-backlog.md", "An example of a whole `BACKLOG.md`"))
+        self.write("BACKLOG-B9-offline-journal.md", "anything at all\n- sketch\n" + "x" * 500 + "\n")
+        self.assertClean()
+
+    def test_the_example_without_its_document(self):
+        self.write("BACKLOG.md", example("stage-0-backlog.md", "An example of a whole `BACKLOG.md`"))
+        self.assertEqual(self.rules(), [("BACKLOG.md", 12, "backlog-document-missing")])
+
+    def test_minimal_files(self):
+        self.assertEqual(self.found("", head="Latest assigned: B3\n"), [])
+        self.assertEqual(self.found("- **B1** One\n- **B20** Twenty\n"), [])
+        self.assertEqual(self.found("- **B1** **[LOW]** One, with `code`, **bold** and [a link](https://example.com/a)\n"), [])
+
+    def notes(self, body: str) -> list[tuple]:
+        """The notes for a ``BACKLOG.md`` of ``body``; it has no violation."""
+        self.write("BACKLOG.md", body)
+        code, report = self.run_check()
+        self.assertEqual((code, report["violations"], report["exit_code"]), (0, [], 0))
+        self.assertEqual(report["summary"]["notes"], len(report["notes"]))
+        self.assertEqual(report["summary"]["violations"], 0)
+        return [(note["file"], note["line"], note["rule"]) for note in report["notes"]]
+
+    def test_a_backlog_in_the_old_form_is_one_note_and_no_violation(self):
+        not_converted = [("BACKLOG.md", None, "backlog-not-converted")]
+        old = "# Backlog\n\n## Bugs\n- export drops a row\n  more about it\n\nA paragraph.\n- " + "x" * 400 + "\n```\n"
+        for body in (old, "Latest assigned: 7\n- **B** not numbered\n", "- an idea\n", "# Backlog\n\nA sentence.\n",
+                     " # an indented heading is no heading here\n", "Latest assigned: B\n"):
+            with self.subTest(body):
+                self.assertEqual(self.notes(body), not_converted)
+        self.write("BACKLOG.md", old)
+        code, text = check.run(self.arguments())
+        self.assertEqual(code, 0)
+        self.assertIn("\nViolations: 0\n\nNotes: 1\nBACKLOG.md: backlog-not-converted: no pointer line and no numbered "
+                      "item: the file is in the old form; its lines were not checked\n\nResult: nothing needs action\n",
+                      text)
+
+    def test_a_backlog_of_blank_lines_and_headings_is_clean(self):
+        for body in ("", "\n", "\n\n  \n\t\n", "# Backlog\n", "# Backlog\n\n## Bugs\n\n## Features\n\n",
+                     "#\n", "\ufeff# Backlog\r\n\r\n## Bugs\r\n"):
+            with self.subTest(body):
+                self.assertEqual(self.notes(body), [])
+        self.assertIn("\nViolations: 0\n\nNotes: 0\n\nResult: nothing needs action\n", check.run(self.arguments())[1])
+
+    def test_a_note_does_not_change_the_exit_code_either_way(self):
+        self.write("BACKLOG.md", "- an idea\n")
+        self.write(TASKS, LONG_TASK + "\n")
+        code, report = self.run_check()
+        self.assertEqual((code, report["summary"]["violations"], report["summary"]["notes"]), (1, 1, 1))
+        self.assertEqual([v["rule"] for v in report["violations"]], ["tasks-line-too-long"])
+        # A document beside a backlog that was not converted is still an orphan.
+        self.write(TASKS, "")
+        self.write("BACKLOG-B1-a.md", "notes\n")
+        self.assertEqual(self.rules(), [("BACKLOG-B1-a.md", None, "backlog-document-orphan")])
+
+    def test_the_pointer_line(self):
+        self.assertEqual(self.found("- **B1** One\n- loose\n", head="# Backlog\n\n"),
+                         [(None, "backlog-pointer-missing"), (4, "backlog-item-form")])
+        self.assertEqual(self.found("Latest assigned: B21\n- **B1** One\n"), [(5, "backlog-pointer-duplicate")])
+        self.assertEqual(self.found("Latest assigned: B20\n", head="- **B1** One\n"), [(2, "backlog-pointer-below-item")])
+        self.assertEqual(self.found("- **B21** Above\n- **B20** At\n"), [(5, "backlog-number-above-pointer")])
+        self.assertEqual(self.found("- **B1** One\n", head="Latest assigned: B07\n"),
+                         [(None, "backlog-pointer-missing"), (1, "backlog-unknown-line")])
+
+    def test_numbers(self):
+        self.assertEqual(self.found("- **B1** One\n\n## Group\n\n- **B1** Again\n"), [(9, "backlog-number-duplicate")])
+
+    def test_the_item_grammar(self):
+        for line in ("- no number", "- **B07** Leading zero", "- **B0** Zero", "- **B7**", "- **B7** ", "- **B7**  Two spaces",
+                     "- B7 Not bold", "- **b7** Lower case", "- **B7**No space", "- [ ] **B7** A box", "- **D7** Deferred",
+                     "- **B7** **[URGENT]** Unknown tag", "- **B7** **[high]** Lower-case tag",
+                     "- **B7** Tag at the end **[HIGH]**", "- **B7** **[HIGH]** **[LOW]** Two tags",
+                     "- **B7** **[HIGH]**  Two spaces after the tag", "- **B7** **[HIGH]**"):
+            with self.subTest(line):
+                self.assertEqual(self.found(line + "\n"), [(5, "backlog-item-form")])
+        for line in ("* **B7** A star", "+ **B7** A plus", "1. **B7** Ordered", "Some prose.", "**B7** No hyphen",
+                     "-**B7** No space", "> a quote", "```", "| a | table |", "---"):
+            with self.subTest(line):
+                self.assertEqual(self.found(line + "\n"), [(5, "backlog-unknown-line")])
+
+    def test_an_item_is_one_line(self):
+        cases = {
+            "- **B7** One\n  continued\n": [(6, "backlog-item-not-one-line")],
+            "- **B7** One\ncontinued without indent\n": [(6, "backlog-item-not-one-line")],
+            "- **B7** One\n  - a sub-bullet\n": [(6, "backlog-item-not-one-line")],
+            "- **B7** One\n\n  a paragraph under it\n": [(7, "backlog-item-not-one-line")],
+            "- **B7** One\n\ta tab\n  and more\nand more\n- **B8** Two\n": [(6, "backlog-item-not-one-line"),
+                                                                         (7, "backlog-item-not-one-line"),
+                                                                         (8, "backlog-item-not-one-line")],
+            "- **B7** One\n```\ncode\n```\n": [(line, "backlog-item-not-one-line") for line in (6, 7, 8)],
+            "- **B7** One\n\n```\n": [(7, "backlog-unknown-line")],
+            "- **B7** One\n## Group\n- **B8** Two\n": [],
+        }
+        for body, expected in cases.items():
+            with self.subTest(body):
+                self.assertEqual(self.found(body), expected)
+        self.assertEqual(self.found("- " + "x" * 299 + "\n"), [(5, "backlog-item-too-long"), (5, "backlog-item-form")])
+        self.assertEqual(self.found("  " + "x" * 400 + "\n" + "x" * 400 + "\n"),
+                         [(5, "backlog-item-not-one-line"), (6, "backlog-item-not-one-line")])
+
+    def test_item_documents(self):
+        self.write("BACKLOG-B9-offline-journal.md", "notes\n")
+        good = "- **B9** Offline mode — [notes](BACKLOG-B9-offline-journal.md)\n"
+        self.assertEqual(self.rules(), [("BACKLOG-B9-offline-journal.md", None, "backlog-document-orphan")])
+        self.assertEqual(self.found(good), [])
+        self.assertEqual(self.found("- **B9** [the whole text](BACKLOG-B9-offline-journal.md)\n"), [])
+        for line in ("- **B9** See [notes](BACKLOG-B9-offline-journal.md) for more",
+                     "- **B9** [notes](BACKLOG-B9-offline-journal.md).",
+                     "- **B9** [a](BACKLOG-B9-offline-journal.md) [b](BACKLOG-B9-offline-journal.md)",
+                     "- **B8** Another item — [notes](BACKLOG-B9-offline-journal.md)"):
+            with self.subTest(line):
+                self.assertEqual(self.found(line + "\n"), [(5, "backlog-document-link")])
+        for target in ("./BACKLOG-B9-offline-journal.md", "docs/BACKLOG-B9-offline-journal.md", "BACKLOG-B9.md",
+                       "BACKLOG-B9-Offline.md", "BACKLOG-B09-offline-journal.md", "BACKLOG-B9-offline_journal.md",
+                       "BACKLOG-B9-offline-journal.md#part", "BACKLOG-B9-offline-journal.txt"):
+            with self.subTest(target):
+                self.write("BACKLOG.md", self.HEAD + f"- **B9** Offline mode — [notes]({target})\n")
+                self.assertEqual(self.rules(), [("BACKLOG.md", 5, "backlog-document-link"),
+                                                ("BACKLOG-B9-offline-journal.md", None, "backlog-document-orphan")])
+        self.assertEqual(self.found("- **B9** Offline mode — [notes](BACKLOG-B9-other.md)\n"),
+                         [(5, "backlog-document-missing")])
+
+    def test_orphan_documents(self):
+        self.write("BACKLOG.md", self.HEAD + "- **B9** Offline mode — [notes](BACKLOG-B9-a.md)\n- **B4** Other\n")
+        for name in ("BACKLOG-B9-a.md", "BACKLOG-B9-b.md", "BACKLOG-B4-c.md", "BACKLOG-B5-d.md", "BACKLOG-B05-e.md",
+                     "BACKLOG-B6-.md"):
+            self.write(name, "notes\n")
+        self.write("BACKLOG-notes.md", "not an item document\n")
+        self.write("DONE/BACKLOG-B1-archived.md", "the archive is not checked\n")
+        orphans = [name for name, _, rule in self.rules() if rule == "backlog-document-orphan"]
+        self.assertEqual(orphans, ["BACKLOG-B05-e.md", "BACKLOG-B4-c.md", "BACKLOG-B5-d.md", "BACKLOG-B6-.md",
+                                   "BACKLOG-B9-b.md"])
+        (self.docs / "BACKLOG.md").unlink()
+        self.assertEqual(len(self.rules()), 6)  # with no backlog, every document is an orphan
+
+
+# --- The lesson index ---------------------------------------------------------
+
+class LessonIndex(Case):
+    def found(self, text: str) -> list[tuple]:
+        self.write("AGENTS.md", text, self.project)
+        return [(line, rule) for _, line, rule in self.rules()]
+
+    def test_nothing_to_check(self):
+        self.assertEqual(self.rules(), [])  # no AGENTS.md
+        self.assertEqual(self.found("# Guide\n\n" + "x" * 400 + "\n" * 80), [])  # no markers
+        self.assertEqual(self.found(f"{START}\n{END}\n"), [])
+        self.assertEqual(self.found(f"text\n  {START}  \n- one\n\n- two\n{END}\n" + "x" * 400 + "\n"), [])
+        self.assertEqual(self.found(f"Write the index between `{START}` and `{END}`.\n" + "x" * 400 + "\n"), [])
+        self.assertEqual(self.found(f"```markdown\n{START}\n" + "x" * 400 + f"\n```\n\n{START}\n- one\n{END}\n"), [])
+
+    def test_markers(self):
+        self.assertEqual(self.found(f"{START}\n- one\n"), [(1, "index-marker-unpaired")])
+        self.assertEqual(self.found(f"- one\n{END}\n"), [(2, "index-marker-unpaired")])
+        self.assertEqual(self.found(f"{END}\n- one\n{START}\n"), [(1, "index-marker-unpaired")])
+        self.assertEqual(self.found(f"{START}\n{START}\n- one\n{END}\n"), [(2, "index-marker-duplicate")])
+        self.assertEqual(self.found(f"{START}\n- one\n{END}\n{END}\n"), [(4, "index-marker-duplicate")])
+
+    def test_every_line_between_the_markers_counts(self):
+        block = "- lesson\n\n" * 25
+        self.assertEqual(self.found(f"{START}\n{block}{END}\n"), [])
+        self.assertEqual(self.found(f"{START}\n{block}\n{END}\n"), [(1, "index-too-many-lines")])
+        long = "x" * 151
+        self.assertEqual(self.found(f"a\n{START}\n- one\n{long}\n{long}\n{END}\n{long}\n"),
+                         [(4, "index-line-too-long"), (5, "index-line-too-long")])
+
+    def test_only_the_project_root_is_looked_at(self):
+        self.write("AGENTS.md", f"{START}\n", self.docs)
+        self.write("AGENTS.md", f"{START}\n", self.project / "sub")
+        self.assertEqual(self.rules(), [])
+
+
+# --- Files --------------------------------------------------------------------
+
+class Files(Case):
+    def test_nothing_there_is_nothing_to_report(self):
+        code, report = self.run_check()
+        self.assertEqual((code, report["deferred"], report["violations"]), (0, [], []))
+        self.assertEqual(report["summary"], {"open": 0, "state_unknown": 0, "past_date": 0, "violations": 0,
+                                             "notes": 0})
+        self.assertEqual(report["notes"], [])
+
+    def test_a_file_that_is_not_utf8_is_reported_and_the_rest_is_checked(self):
+        for name, where in (("DEFERRED.md", self.docs), ("BACKLOG.md", self.docs), (PLAN, self.docs),
+                            (TASKS, self.docs), ("AGENTS.md", self.project)):
+            (where / name).write_bytes(b"# Title\n\nLatin-1: caf\xe9\n")
+        self.write("SPRINT02-PLAN-other.md", LONG + "\n")
+        self.write("BACKLOG-B1-a.md", "\xff\n")
+        code, report = self.run_check()
+        self.assertEqual(code, 1)
+        found = sorted((v["file"], v["line"], v["rule"]) for v in report["violations"])
+        self.assertEqual(found, sorted([
+            ("DEFERRED.md", None, "not-utf8"), ("BACKLOG.md", None, "not-utf8"), (PLAN, None, "not-utf8"),
+            (TASKS, None, "not-utf8"), ("AGENTS.md", None, "not-utf8"),
+            ("SPRINT02-PLAN-other.md", 1, "annotation-too-long"),
+        ]))
+        self.assertIn("byte 21", report["violations"][0]["message"])
+
+    def test_lone_carriage_returns_are_a_violation_of_the_file_and_it_is_not_parsed(self):
+        places = (("DEFERRED.md", self.docs), ("BACKLOG.md", self.docs), (PLAN, self.docs), (TASKS, self.docs),
+                  ("AGENTS.md", self.project))
+        bodies = {
+            "carriage returns alone": f"{LONG}\r{LONG_TASK}\r{START}\r",
+            "one among line feeds": f"# Title\n{LONG}\rmore\n{LONG_TASK}\n{START}\n",
+            "two before a line feed": f"# Title\r\r\n{LONG}\n{LONG_TASK}\n{START}\n",
+            "one at the very end": f"# Title\r\n{LONG}\n{LONG_TASK}\n{START}\r",
+        }
+        for name, body in bodies.items():
+            with self.subTest(name):
+                for file, where in places:
+                    self.write(file, body, where)
+                self.write("BACKLOG-B1-a.md", "notes\n")  # an unread backlog names no orphan
+                code, report = self.run_check()
+                self.assertEqual(code, 1)
+                self.assertEqual(sorted((v["file"], v["line"], v["rule"]) for v in report["violations"]),
+                                 sorted((file, None, "line-endings") for file, _ in places))
+                self.assertEqual((report["deferred"], report["notes"]), ([], []))
+        self.assertIn("3 carriage returns not directly before a newline", self.message_of("a\rb\rc\r"))
+        self.assertIn("1 carriage return not directly before a newline", self.message_of("a\rb\n"))
+
+    def message_of(self, body: str) -> str:
+        for name in ("DEFERRED.md", "BACKLOG.md", PLAN, "BACKLOG-B1-a.md"):
+            (self.docs / name).unlink(missing_ok=True)
+        (self.project / "AGENTS.md").unlink(missing_ok=True)
+        self.write(TASKS, body)
+        _, report = self.run_check()
+        self.assertEqual([v["rule"] for v in report["violations"]], ["line-endings"])
+        return report["violations"][0]["message"]
+
+    def test_crlf_line_ends_are_not_lone_carriage_returns(self):
+        self.write(TASKS, f"## Phase 1\r\n\r\n{LONG_TASK}\r\n")
+        self.write("BACKLOG.md", "# Backlog\r\n\r\nLatest assigned: B1\r\n\r\n- **B1** One\r\n")
+        self.assertEqual(self.rules(), [(TASKS, 3, "tasks-line-too-long")])
+
+    def test_a_directory_in_place_of_a_file(self):
+        (self.docs / "DEFERRED.md").mkdir()
+        (self.docs / PLAN).mkdir()
+        self.assertEqual(self.rules(), [("DEFERRED.md", None, "not-a-file"), (PLAN, None, "not-a-file")])
+
+    def link(self, path: Path, target: Path, directory: bool = False):
+        try:
+            path.symlink_to(target, target_is_directory=directory)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"no symbolic links here: {exc}")
+
+    def test_a_link_out_of_the_docs_directory_is_not_read(self):
+        outside = self.write("secret.md", "Latest assigned: D1\n\n" + item(1, review="2000-01-01"), self.root / "outside")
+        long_plan = self.write("plan.md", LONG + "\n", self.root / "outside")
+        self.link(self.docs / "DEFERRED.md", outside)
+        self.link(self.docs / PLAN, long_plan)
+        self.link(self.project / "AGENTS.md", self.write("agents.md", f"{START}\n", self.root / "outside"))
+        code, report = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertEqual(report["deferred"], [])
+        self.assertEqual([(v["file"], v["rule"]) for v in report["violations"]],
+                         [("DEFERRED.md", "link-outside"), (PLAN, "link-outside"), ("AGENTS.md", "link-outside")])
+        self.assertNotIn("legacy", json.dumps(report))
+
+    def test_a_link_that_stays_inside_is_read(self):
+        self.write("real.md", LONG + "\n")
+        self.link(self.docs / PLAN, self.docs / "real.md")
+        self.assertEqual(self.rules(), [(PLAN, 1, "annotation-too-long")])
+
+    def test_a_link_with_no_target_is_reported(self):
+        self.link(self.docs / "BACKLOG.md", self.docs / "gone.md")
+        self.assertEqual(self.rules(), [("BACKLOG.md", None, "unreadable")])
+
+    def test_the_docs_directory_may_itself_be_a_link(self):
+        real = self.root / "elsewhere"
+        self.write(PLAN, LONG + "\n", real)
+        self.link(self.project / "linked", real, directory=True)
+        self.assertEqual(self.rules("--docs", str(self.project / "linked")), [(PLAN, 1, "annotation-too-long")])
+
+
+# --- The command: exit codes, output, settings --------------------------------
+
+class Command(Case):
+    def rich(self):
+        self.write("DEFERRED.md", deferred(
+            item(1, review="2026-01-01", check_line="python tools/checks/a.py --days 30 'a b' \"c\" \\d"),
+            item(2, sprint="07 P3.5", title="Décider — 日本語 \x1b[31mred\u202e"),
+            "A stray line\n",
+        ))
+        self.write("BACKLOG.md", "Latest assigned: B2\n\n- **B1** One\n  more\n- **B3** Three\n")
+        self.write(PLAN, f"### P1.1 — A\n\n{LONG}\n> more\n")
+        self.write(TASKS, LONG_TASK + "\n")
+        self.write("AGENTS.md", f"{START}\n", self.project)
+
+    def code(self, *extra: str, today: str = TODAY) -> int:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = check.main(self.arguments(*extra, today=today))
+        self.assertEqual(code, self.child(*self.arguments(*extra, today=today))[0])
+        self.assertEqual(bool(err.getvalue()), code == 2)
+        self.assertEqual(bool(out.getvalue()), code != 2)
+        return code
+
+    def test_exit_codes(self):
+        self.assertEqual(self.code(), 0)
+        self.write(TASKS, LONG_TASK + "\n")
+        self.assertEqual(self.code(), 1)
+        self.write(TASKS, "")
+        self.write("DEFERRED.md", deferred(item(1, review="2026-01-01")))
+        self.assertEqual(self.code(), 1)
+        self.assertEqual(self.code(today="2026-01-01"), 0)
+        self.assertEqual(self.code(today="never"), 2)
+        self.assertEqual(self.code("--docs", str(self.root / "none")), 2)
+
+    def test_errors_are_exit_code_2(self):
+        project, home = str(self.project), str(self.home)
+        cases = {
+            "an unknown option": ["--project", project, "--run"],
+            "an abbreviated option": ["--proj", project],
+            "a positional argument": ["--project", project, "extra"],
+            "a missing value": ["--project"],
+            "a bad date": ["--project", project, "--today", "tomorrow"],
+            "a date that is none": ["--project", project, "--today", "2026-02-30"],
+            "a date in another form": ["--project", project, "--today", "20261005"],
+            "a project that is not there": ["--project", str(self.root / "none")],
+            "a project that is a file": ["--project", str(self.write("file.md", ""))],
+            "an empty project": ["--project", ""],
+            "docs that are not there": ["--project", project, "--docs", str(self.root / "none")],
+            "docs that are a file": ["--project", project, "--docs", str(self.write("file.md", ""))],
+            "empty docs": ["--project", project, "--docs", ""],
+            "a home that is not there": ["--project", project, "--home", str(self.root / "none")],
+            "a home that is a file": ["--project", project, "--home", str(self.write("home-file.md", ""))],
+            "an empty home": ["--project", project, "--home", ""],
+            "a blank home": ["--project", project, "--home", "  "],
+            "a blank project": ["--project", " "],
+            "an abbreviated home": ["--project", project, "--hom", home],
+        }
+        for name, arguments in cases.items():
+            with self.subTest(name):
+                if "--home" not in arguments:
+                    arguments = arguments + ["--home", home]
+                code, out, err = self.child(*arguments)
+                self.assertEqual((code, out), (2, ""))
+                self.assertTrue(err.startswith("error: "), err)
+                self.assertEqual(len(err.splitlines()), 1)
+                with self.assertRaises(check.CheckError):
+                    check.run(arguments)
+        shutil.rmtree(self.docs)
+        code, out, err = self.child(*self.arguments())
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("process.docs_dir", err)
+
+    def test_json_and_text_hold_the_same(self):
+        self.rich()
+        code, text = check.run(self.arguments())
+        code_json, as_json = check.run(self.arguments("--json"))
+        report = json.loads(as_json)
+        self.assertEqual((code, code_json, report["exit_code"]), (1, 1, 1))
+        self.assertEqual(check.render_text(report), text)
+        self.assertEqual(report["summary"], {"open": 2, "state_unknown": 0, "past_date": 1, "violations": 7,
+                                             "notes": 0})
+        for violation in report["violations"]:
+            place = violation["file"] if violation["line"] is None else f"{violation['file']}:{violation['line']}"
+            self.assertIn(f"{place}: {violation['rule']}: ", text)
+        for entry in report["deferred"]:
+            self.assertIn(f"\nD{entry['number']} — ", text)
+            self.assertIn(f"  at: DEFERRED.md:{entry['line']}\n", text)
+        self.assertIn("  check: python tools/checks/a.py --days 30 'a b' \"c\" \\d\n", text)
+        self.assertIn("Deferred items: 2 open, 0 state unknown, 1 past its date\n", text)
+        self.assertIn("Violations: 7\n", text)
+        self.assertIn("\nNotes: 0\n", text)
+        self.assertTrue(text.endswith("\nResult: action needed\n"))
+        child_code, child_text, _ = self.child(*self.arguments())
+        _, child_json, _ = self.child(*self.arguments("--json"))
+        self.assertEqual((child_code, child_text, child_json), (1, text, as_json))
+
+    def test_the_report_is_stable_and_ordered(self):
+        self.rich()
+        first = check.run(self.arguments("--json"))[1]
+        self.assertEqual(check.run(self.arguments("--json"))[1], first)
+        found = [(v["file"], v["line"]) for v in json.loads(first)["violations"]]
+        self.assertEqual(found, [("DEFERRED.md", 20), ("BACKLOG.md", 4), ("BACKLOG.md", 5), (PLAN, 3), (PLAN, 4),
+                                 (TASKS, 1), ("AGENTS.md", 1)])
+        files = [file for file, _ in found]
+        self.assertEqual(files, sorted(files, key=["DEFERRED.md", "BACKLOG.md", PLAN, TASKS, "AGENTS.md"].index))
+        for name in set(files):
+            lines = [line or 0 for file, line in found if file == name]
+            self.assertEqual(lines, sorted(lines))
+
+    def test_a_clean_report(self):
+        code, text = check.run(self.arguments())
+        self.assertEqual(code, 0)
+        self.assertEqual(text.split("\n")[0], f"today: {TODAY}")
+        self.assertIn("\nDeferred items: 0 open, 0 state unknown, 0 past its date\n\nViolations: 0\n\nNotes: 0\n\n"
+                      "Result: nothing needs action\n", text)
+
+    def test_the_text_report_keeps_to_one_line_per_line(self):
+        self.rich()
+        text = check.run(self.arguments())[1]
+        self.assertIn("D2 — Décider — 日本語 \\u001b[31mred\\u202e\n", text)
+        self.assertNotIn("\x1b", text)
+        report = json.loads(check.run(self.arguments("--json"))[1])
+        self.assertEqual(report["deferred"][1]["title"], "Décider — 日本語 \x1b[31mred\u202e")
+
+    # U+061C and the zero-width characters, DEL, and two C1 controls.
+    HIDDEN = "\u061c\u200b\u200c\u200d\u2060\ufeff\x7f\x85\x9b\u2028\U000e0001"
+    HIDDEN_SHOWN = ("\\u061c\\u200b\\u200c\\u200d\\u2060\\ufeff\\u007f\\u0085\\u009b\\u2028", "\\U000e0001",
+                    "\\udb40\\udc01")
+
+    def test_hidden_characters_are_escaped_in_the_text_and_in_the_json(self):
+        title = f"A{self.HIDDEN}Z"
+        self.write("DEFERRED.md", deferred(item(1, title=title, check_line=f"python a.py {self.HIDDEN}")))
+        self.write("BACKLOG.md", f"Latest assigned: B1\n\nstray {self.HIDDEN}\n")
+        text = check.run(self.arguments())[1]
+        as_json = check.run(self.arguments("--json"))[1]
+        for output in (text, as_json):
+            for char in self.HIDDEN + "\x1b":
+                self.assertNotIn(char, output, f"U+{ord(char):04X}")
+            for line in output.split("\n"):
+                self.assertEqual(line, "".join(c for c in line if c.isprintable()), line)
+        both, in_text, in_json = self.HIDDEN_SHOWN
+        self.assertIn(f"D1 — A{both}{in_text}Z\n", text)
+        self.assertIn(f"  check: python a.py {both}{in_text}\n", text)
+        self.assertIn(f'"title": "A{both}{in_json}Z"', as_json)
+        report = json.loads(as_json)  # the escapes are JSON's own: the exact text comes back
+        self.assertEqual(report["deferred"][0]["title"], title)
+        self.assertEqual(report["deferred"][0]["check"], f"python a.py {self.HIDDEN}")
+        self.assertEqual(check.render_text(report), text)
+        child_code, child_json, _ = self.child(*self.arguments("--json"))
+        self.assertEqual((child_code, child_json), (1, as_json))
+        for byte in (b"\x7f", b"\xc2\x85", b"\xc2\x9b", b"\xe2\x80\x8b", b"\xd8\x9c"):
+            self.assertNotIn(byte, child_json.encode("utf-8"))
+
+    def test_text_that_is_not_hidden_is_left_as_it_is(self):
+        title = "Décider — 日本語 👍🏽 ‘quotes’ naïve Ω"
+        self.write("DEFERRED.md", deferred(item(1, title=title)))
+        self.assertIn(f"D1 — {title}\n", check.run(self.arguments())[1])
+        self.assertIn(f'"title": "{title}"', check.run(self.arguments("--json"))[1])
+
+    def test_an_error_is_escaped_too(self):
+        odd = str(self.root / f"no\x1b[31m-such\u202e\u200b\u061c\x7f-docs")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = check.main(self.arguments("--docs", odd))
+        self.assertEqual(code, 2)
+        message = err.getvalue()
+        self.assertEqual(len(message.splitlines()), 1)
+        self.assertIn("no\\u001b[31m-such\\u202e\\u200b\\u061c\\u007f-docs", message)
+        for char in "\x1b\u202e\u200b\u061c\x7f":
+            self.assertNotIn(char, message)
+        code, out, child_err = self.child(*self.arguments("--docs", str(self.root / "no\x1b[31m-docs")))
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("no\\u001b[31m-docs", child_err)
+        self.assertNotIn("\x1b", child_err)
+        self.assertEqual(len(child_err.splitlines()), 1)
+
+    def test_a_working_directory_that_is_gone_is_an_error_of_one_line(self):
+        gone = FileNotFoundError(2, "No such file or directory")
+        err = io.StringIO()
+        with mock.patch.object(check.Path, "cwd", side_effect=gone), contextlib.redirect_stderr(err):
+            code = check.main(["--home", str(self.home), "--today", TODAY])
+        self.assertEqual(code, 2)
+        self.assertEqual(err.getvalue(), "error: the working directory cannot be read: No such file or directory; "
+                                         "name the project with --project DIR\n")
+        # With --project the working directory is not asked for.
+        with mock.patch.object(check.Path, "cwd", side_effect=gone):
+            self.assertEqual(check.run(self.arguments())[0], 0)
+
+    @unittest.skipUnless(os.name == "posix", "a working directory cannot be removed under a process here")
+    def test_a_removed_working_directory_as_a_child_process(self):
+        gone = self.root / "gone"
+        code = ("import os, runpy, sys\n"
+                f"os.mkdir({str(gone)!r}); os.chdir({str(gone)!r}); os.rmdir({str(gone)!r})\n"
+                f"sys.argv = [{str(self.lone_script)!r}, '--home', {str(self.home)!r}]\n"
+                f"runpy.run_path({str(self.lone_script)!r}, run_name='__main__')\n")
+        done = subprocess.run([sys.executable, "-B", "-c", code], capture_output=True, cwd=str(self.root), check=False)
+        err = done.stderr.decode("utf-8")
+        self.assertEqual((done.returncode, done.stdout), (2, b""), err)
+        self.assertTrue(err.startswith("error: the working directory cannot be read: "), err)
+        self.assertEqual(len(err.splitlines()), 1)
+
+    def test_an_error_no_part_of_the_command_handled_is_one_line(self):
+        for raised, expected in ((PermissionError(13, "Permission denied", "some/file"), "error: some/file: Permission denied\n"),
+                                 (OSError("odd\nfailure"), "error: odd failure\n"),
+                                 (RecursionError(), "error: the input is nested too deeply to read\n")):
+            err = io.StringIO()
+            with mock.patch.object(check, "build_report", side_effect=raised), contextlib.redirect_stderr(err):
+                code = check.main(self.arguments())
+            self.assertEqual((code, err.getvalue()), (2, expected))
+
+    def test_a_tilde_in_project_and_home_is_expanded(self):
+        self.write(TASKS, LONG_TASK + "\n")
+        env = dict(os.environ, HOME=str(self.root), USERPROFILE=str(self.root))
+        code, out, err = self.child("--project", "~/project", "--home", "~/home", "--today", TODAY, "--json", env=env)
+        self.assertEqual(code, 1, err)
+        report = json.loads(out)
+        self.assertEqual(Path(report["project"]), self.project)
+        self.assertEqual([v["rule"] for v in report["violations"]], ["tasks-line-too-long"])
+        code, out, err = self.child("--project", "~/none", "--home", str(self.home), env=env)
+        self.assertEqual((code, out, err), (2, "", "error: --project: ~/none: not a directory\n"))
+        code, out, err = self.child("--project", str(self.project), "--home", "~no-such-user-here/x", env=env)
+        self.assertEqual((code, out), (2, ""))
+        self.assertEqual(len(err.splitlines()), 1)
+
+    def test_output_is_utf8_with_lf_whatever_the_console(self):
+        self.rich()
+        env = dict(os.environ, PYTHONIOENCODING="ascii")
+        code, text, _ = self.child(*self.arguments(), env=env)
+        self.assertEqual(code, 1)
+        self.assertIn("Décider — 日本語", text)
+        self.assertEqual(text, check.run(self.arguments())[1])
+
+    def test_the_project_is_the_working_directory_by_default(self):
+        self.write(TASKS, LONG_TASK + "\n")
+        code, out, err = self.child("--home", str(self.home), "--json", cwd=self.project)
+        self.assertEqual(code, 1, err)
+        report = json.loads(out)
+        self.assertEqual([v["rule"] for v in report["violations"]], ["tasks-line-too-long"])
+        self.assertEqual(Path(report["project"]).resolve(), self.project.resolve())
+
+
+DEFAULTS = 'schema_version = 1\n[process]\ndocs_dir = "docs"\nquestions = "one-at-a-time"\nrecommend = true\n' \
+           '[roles]\nmanager_default = false\n[memory]\ndir = "docs/memory"\n'
+PROCESS_KEYS = ["process.docs_dir", "process.questions", "process.recommend"]
+
+
+class Settings(Case):
+    """The process group, in a clone and in a skill copied on its own."""
+
+    def setUp(self):
+        super().setUp()
+        self.clone = self.root / "clone"
+        self.setup_dir = self.clone / "tools" / "setup"
+        self.write("workflow_setup.py", "raise SystemExit('the setup tool must not be run')\n", self.setup_dir)
+        self.write("defaults.toml", DEFAULTS, self.setup_dir)
+        self.script = self.clone / "prd-implementation" / "scripts" / "check.py"
+        self.script.parent.mkdir(parents=True)
+        shutil.copyfile(CHECK_PY, self.script)
+        in_clone = mock.patch.object(check, "SETUP_DIR", self.setup_dir)
+        in_clone.start()
+        self.addCleanup(in_clone.stop)
+        self.write(PLAN, "")
+        self.write(PLAN, LONG + "\n", self.project / "planning")
+        self.write(TASKS, LONG_TASK + "\n", self.project / "local-docs")
+        self.project_file = self.project / ".agents" / "workflow.toml"
+
+    def both(self, *extra: str) -> dict:
+        """The report, in process and from the copy in the scratch clone."""
+        code, report = self.run_check(*extra)
+        child_code, out, err = self.child(*self.arguments("--json", *extra), script=self.script, runner=True)
+        self.assertEqual((child_code, json.loads(out) if out else err), (code, report))
+        return report
+
+    def refused(self, *arguments: str) -> str:
+        """The one line of the error, in process and as a child process."""
+        arguments = arguments or tuple(self.arguments())
+        with self.assertRaises(check.CheckError) as raised:
+            check.run(list(arguments))
+        code, out, err = self.child(*arguments, script=self.script, runner=True)
+        self.assertEqual((code, out), (2, ""), err)
+        self.assertEqual(err, f"error: {check.shown(str(raised.exception))}\n")
+        self.assertEqual(len(err.splitlines()), 1)
+        return err
+
+    def test_the_shipped_default(self):
+        report = self.both()
+        self.assertEqual(report["violations"], [])
+        self.assertEqual(report["docs_from"], "process.docs_dir")
+        self.assertEqual(Path(report["docs"]), self.docs)
+        self.assertEqual(list(report["settings"]), PROCESS_KEYS)  # the process group, and no other
+        self.assertEqual({key: (entry["value"], entry["layer"]) for key, entry in report["settings"].items()}, {
+            "process.docs_dir": ("docs", "shipped"), "process.questions": ("one-at-a-time", "shipped"),
+            "process.recommend": (True, "shipped"),
+        })
+        for entry in report["settings"].values():
+            self.assertEqual(Path(entry["file"]), self.setup_dir / "defaults.toml")
+        text = check.run(self.arguments())[1]
+        self.assertIn('process.docs_dir = "docs"  (shipped)\nprocess.questions = "one-at-a-time"  (shipped)\n'
+                      "process.recommend = true  (shipped)\n", text)
+        self.assertNotIn("memory", text)
+
+    def test_the_project_file_is_honoured(self):
+        self.write("workflow.toml", '[process]\ndocs_dir = "planning"\nquestions = "all-together"\n[memory]\ndir = "m"\n',
+                   self.project / ".agents")
+        report = self.both()
+        self.assertEqual([v["file"] for v in report["violations"]], [PLAN])
+        self.assertEqual(Path(report["docs"]), self.project / "planning")
+        setting = report["settings"]["process.docs_dir"]
+        self.assertEqual((setting["value"], setting["layer"]), ("planning", "project"))
+        self.assertEqual(Path(setting["file"]), self.project_file)
+        self.assertEqual(report["settings"]["process.questions"]["value"], "all-together")
+        self.assertEqual(report["settings"]["process.recommend"]["layer"], "shipped")
+        self.assertEqual(list(report["settings"]), PROCESS_KEYS)
+        self.assertIn('process.docs_dir = "planning"  (project)\n', check.run(self.arguments())[1])
+
+    def test_later_layers_win(self):
+        self.write("workflow.toml", '[process]\ndocs_dir = "user-docs"\nrecommend = false\n', self.home / ".agents")
+        self.write("workflow.toml", '[process]\ndocs_dir = "planning"\n', self.project / ".agents")
+        self.assertEqual(self.both()["settings"]["process.docs_dir"]["layer"], "project")
+        self.write("workflow.local.toml", '\ufeff[process]\ndocs_dir = "local-docs"\n', self.project / ".agents")
+        report = self.both()
+        self.assertEqual([v["file"] for v in report["violations"]], [TASKS])
+        self.assertEqual(report["settings"]["process.docs_dir"]["layer"], "local")
+        self.assertEqual((report["settings"]["process.recommend"]["value"], report["settings"]["process.recommend"]["layer"]),
+                         (False, "user"))
+
+    def test_an_absolute_docs_dir(self):
+        elsewhere = self.root / "other-repository" / "docs"
+        self.write(TASKS, LONG_TASK + "\n", elsewhere)
+        self.write("workflow.toml", "[process]\ndocs_dir = " + json.dumps(str(elsewhere)) + "\n", self.project / ".agents")
+        report = self.both()
+        self.assertEqual(Path(report["docs"]), elsewhere)
+        self.assertEqual([v["rule"] for v in report["violations"]], ["tasks-line-too-long"])
+
+    def test_docs_on_the_command_line_wins(self):
+        self.write("workflow.toml", '[process]\ndocs_dir = "planning"\n', self.project / ".agents")
+        report = self.both("--docs", str(self.project / "local-docs"))
+        self.assertEqual(report["docs_from"], "--docs")
+        self.assertEqual([v["file"] for v in report["violations"]], [TASKS])
+        self.write("workflow.toml", '[process]\ndocs_dir = "not-there"\n', self.project / ".agents")
+        self.assertEqual(self.both("--docs", str(self.docs))["violations"], [])
+
+    def test_a_settings_file_that_cannot_be_used_is_an_error(self):
+        cases = {
+            "[process\n": "is not valid TOML",
+            "\xff": "is not UTF-8 text (byte 0)",
+            "[process]\ndocs_dir = 3\n": "process.docs_dir: expected a string, got an integer",
+            '[process]\ndocs_dir = ["docs"]\n': "process.docs_dir: expected a string, got an array",
+            '[process]\ndocs_dir = "  "\n': "process.docs_dir: must not be blank; it holds only white space",
+            '[process]\ndocs_dir = ""\n': "process.docs_dir: must not be empty",
+            'process = "docs"\n': "process: expected a table, got a string",
+            '[process]\nquestions = "sometimes"\n':
+                'process.questions: "sometimes" is not allowed; allowed values: one-at-a-time, all-together',
+            "[process]\nquestions = 7\n": "process.questions: expected a string, got an integer",
+            '[process]\nrecommend = "yes"\n': "process.recommend: expected a boolean, got a string",
+            "[process]\nrecommend = 1\n": "process.recommend: expected a boolean, got an integer",
+            '[process]\ndocs = "docs"\n': "process.docs: unknown key; known here: docs_dir, questions, recommend",
+            '[process]\n"odd key" = 1\n': 'process."odd key": unknown key; known here: docs_dir, questions, recommend',
+            "[process.docs_dir]\nx = 1\n": "process.docs_dir: expected a string, got a table",
+            'docs_dir = "docs"\n': "docs_dir: unknown key; known here: schema_version, process, roles, memory, providers",
+            "[proces]\n": "proces: unknown key; known here: schema_version, process, roles, memory, providers",
+            "schema_version = 2\n": "schema_version: 2 is newer than this command reads (1)",
+            'schema_version = "1"\n': "schema_version: expected an integer, got a string",
+            "schema_version = true\n": "schema_version: expected an integer, got a boolean",
+            "schema_version = 0\n": "schema_version: 0 is not a schema version; the first is 1",
+            "schema_version = 1.0\n": "schema_version: expected an integer, got a float",
+            "schema_version = 2026-10-05\n": "schema_version: expected an integer, got a date",
+            "[process]\ndocs_dir = 2026-10-05T10:00:00\n": "process.docs_dir: expected a string, got a datetime",
+            "[process]\ndocs_dir = 10:00:00\n": "process.docs_dir: expected a string, got a time",
+        }
+        for content, expected in cases.items():
+            with self.subTest(content):
+                self.project_file.parent.mkdir(exist_ok=True)
+                self.project_file.write_bytes(content.encode("latin-1"))
+                err = self.refused()
+                self.assertTrue(err.startswith(f"error: {self.project_file}: {expected}"), err)
+
+    def test_every_layer_is_checked(self):
+        for file in (self.home / ".agents" / "workflow.toml", self.project_file,
+                     self.project / ".agents" / "workflow.local.toml", self.setup_dir / "defaults.toml"):
+            with self.subTest(file.name):
+                before = file.read_bytes() if file.is_file() else None
+                self.write(file.name, '[process]\nquestions = "never"\n', file.parent)
+                self.assertTrue(self.refused().startswith(f"error: {file}: process.questions: "))
+                file.unlink() if before is None else file.write_bytes(before)
+        self.assertEqual(self.both()["violations"], [])
+
+    def test_a_fault_is_an_error_even_when_a_later_layer_sets_the_key(self):
+        self.write("workflow.toml", '[process]\ndocs_dir = 3\n', self.home / ".agents")
+        self.write("workflow.toml", '[process]\ndocs_dir = "planning"\n', self.project / ".agents")
+        self.assertIn("process.docs_dir: expected a string", self.refused())
+        # And with --docs: the settings are read, and checked, all the same.
+        self.assertIn("process.docs_dir", self.refused(*self.arguments("--docs", str(self.docs))))
+
+    def test_several_faults_are_one_line(self):
+        self.write("workflow.toml", '[process]\ndocs_dir = 3\nnope = 1\n', self.home / ".agents")
+        self.write("workflow.toml", "top = 1\n", self.project / ".agents")
+        err = self.refused()
+        self.assertIn("process.docs_dir: expected a string, got an integer (and 2 more in the settings files)\n", err)
+
+    def test_a_file_of_a_newer_schema_is_not_looked_into(self):
+        self.write("workflow.toml", 'schema_version = 9\nnew_group = 1\n[process]\nnew_key = 1\n', self.project / ".agents")
+        err = self.refused()
+        self.assertIn("schema_version: 9 is newer than this command reads (1)", err)
+        self.assertNotIn("more in the settings files", err)
+
+    def test_other_groups_are_not_looked_at(self):
+        self.write("workflow.toml",
+                   '[roles]\nmanager_default = "perhaps"\nnope = 1\n[providers.x]\ntiers = 1\n[memory]\ndir = []\nx = 1\n',
+                   self.project / ".agents")
+        self.write("workflow.toml", 'memory = "nowhere"\nroles = 3\nproviders = []\n', self.home / ".agents")
+        report = self.both()
+        self.assertEqual(report["violations"], [])
+        self.assertEqual(list(report["settings"]), PROCESS_KEYS)
+
+    def test_a_settings_directory_that_is_not_one(self):
+        self.write(".agents", "a file\n", self.project)
+        self.assertEqual(self.refused(), f"error: {self.project / '.agents'}: is not a directory; workflow.toml is "
+                                         "looked for in it\n")
+        (self.project / ".agents").unlink()
+        self.project_file.mkdir(parents=True)
+        self.assertEqual(self.refused(), f"error: {self.project_file}: is not a file\n")
+
+    def test_shipped_defaults_that_are_missing(self):
+        (self.setup_dir / "defaults.toml").unlink()
+        self.assertIn("defaults.toml: the shipped defaults are missing; the clone is incomplete\n", self.refused())
+        self.write("defaults.toml", "schema_version = 1\n", self.setup_dir)
+        self.assertIn("process.docs_dir: set in no settings file; name the sprint docs directory with --docs DIR\n",
+                      self.refused())
+        self.assertEqual(self.both("--docs", str(self.docs))["settings"], {})
+
+    def test_a_link_with_no_target_in_place_of_a_settings_file(self):
+        self.project_file.parent.mkdir()
+        try:
+            self.project_file.symlink_to(self.root / "gone.toml")
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"no symbolic links here: {exc}")
+        self.assertEqual(self.refused(), f"error: link target missing: {self.project_file}\n")
+
+    def locked(self, directory: Path) -> None:
+        if os.name != "posix" or os.geteuid() == 0:
+            self.skipTest("taking a directory's permissions away keeps this process out only on POSIX, and not root")
+        directory.mkdir(parents=True, exist_ok=True)
+        os.chmod(directory, 0)
+        self.addCleanup(os.chmod, directory, 0o700)
+
+    def test_a_home_that_cannot_be_searched(self):
+        self.locked(self.home)
+        self.assertEqual(self.refused(), f"error: {self.home / '.agents'}: cannot be read: Permission denied\n")
+
+    def test_a_settings_directory_that_cannot_be_searched(self):
+        for directory in (self.home / ".agents", self.project / ".agents"):
+            with self.subTest(directory):
+                self.locked(directory)
+                self.assertEqual(self.refused(),
+                                 f"error: {directory / 'workflow.toml'}: cannot be read: Permission denied\n")
+                os.chmod(directory, 0o700)
+
+    def test_a_settings_file_that_cannot_be_read(self):
+        self.write("workflow.toml", '[process]\ndocs_dir = "planning"\n', self.project / ".agents")
+        if os.name != "posix" or os.geteuid() == 0:
+            self.skipTest("a file's permissions keep this process out only on POSIX, and not root")
+        os.chmod(self.project_file, 0)
+        self.addCleanup(os.chmod, self.project_file, 0o600)
+        self.assertEqual(self.refused(), f"error: {self.project_file}: cannot be read: Permission denied\n")
+
+    def test_a_project_that_cannot_be_searched(self):
+        self.locked(self.project)
+        err = self.refused(*self.arguments("--docs", str(self.root)))
+        self.assertEqual(err, f"error: {self.project / '.agents'}: cannot be read: Permission denied\n")
+
+    def test_a_home_that_cannot_be_found(self):
+        with mock.patch.object(check.Path, "home", side_effect=RuntimeError("no home")):
+            with self.assertRaises(check.CheckError) as raised:
+                check.run(["--project", str(self.project), "--today", TODAY])
+            self.assertEqual(str(raised.exception), "the user's home directory cannot be found; name one with --home DIR")
+            # Named, it is not looked for; and a skill copied on its own needs none.
+            self.assertEqual(check.run(self.arguments())[0], 0)
+            with mock.patch.object(check, "SETUP_DIR", self.root / "no-clone"):
+                self.assertEqual(check.run(["--project", str(self.project), "--today", TODAY])[0], 0)
+
+    def test_a_skill_copied_on_its_own_uses_the_built_in_defaults(self):
+        lone = self.root / "lone" / "prd-implementation"
+        shutil.copytree(SKILL, lone, ignore=shutil.ignore_patterns("__pycache__"))
+        self.write("workflow.toml", '[process]\ndocs_dir = "planning"\n', self.project / ".agents")
+        self.write("workflow.toml", "not TOML at all [", self.home / ".agents")
+        self.write(TASKS, LONG_TASK + "\n")
+        code, out, err = self.child(*self.arguments("--json"), script=lone / "scripts" / "check.py", runner=True)
+        self.assertEqual(code, 1, err)
+        report = json.loads(out)
+        self.assertEqual(Path(report["docs"]), self.docs)
+        self.assertEqual(report["settings"], {
+            "process.docs_dir": {"value": "docs", "layer": "built-in", "file": None},
+            "process.questions": {"value": "one-at-a-time", "layer": "built-in", "file": None},
+            "process.recommend": {"value": True, "layer": "built-in", "file": None},
+        })
+        self.assertEqual([v["file"] for v in report["violations"]], [TASKS])
+
+    def test_the_built_in_defaults_are_those_of_the_settings_launcher_and_the_shipped_ones(self):
+        import settings
+        import tomllib
+        of_the_launcher = {key: value for key, value in settings.BUILT_IN.items() if key.startswith("process.")}
+        self.assertEqual(check.BUILT_IN, of_the_launcher)
+        self.assertEqual(list(check.BUILT_IN), list(of_the_launcher))
+        self.assertEqual(list(check.BUILT_IN), [f"process.{key}" for key in check.PROCESS_KEYS])
+        self.assertEqual(check.BUILT_IN_LAYER, settings.BUILT_IN_LAYER)
+        self.assertEqual(check.SETTINGS_SCHEMA_VERSION, settings.SCHEMA_VERSION)
+        shipped = SKILL.parent / "tools" / "setup" / "defaults.toml"
+        if shipped.is_file():
+            data = tomllib.loads(shipped.read_text(encoding="utf-8"))
+            self.assertEqual({f"process.{key}": value for key, value in data["process"].items()}, check.BUILT_IN)
+            self.assertEqual(data["schema_version"], check.SETTINGS_SCHEMA_VERSION)
+
+    def test_no_file_holds_the_path_of_one_machine(self):
+        import re
+        for file in sorted(SCRIPTS.glob("*.py")) + sorted(TESTS.glob("*.py")):
+            raw = file.read_bytes()
+            self.assertNotIn(b"\r", raw, file.name)
+            for pattern in (r"/home/\w", r"/mnt/\w", r"/Users/\w", r"\b[A-Za-z]:\\\\\w"):
+                self.assertIsNone(re.search(pattern, raw.decode("utf-8")), (file.name, pattern))
+
+
+if __name__ == "__main__":
+    unittest.main()

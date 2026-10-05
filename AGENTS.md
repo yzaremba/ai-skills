@@ -8,17 +8,15 @@ both Claude Code and Codex. There is no `CLAUDE.md`: both providers read this fi
 ```text
 AGENTS.md  README.md  LICENSE.txt  .gitattributes  .gitignore
 csv-tools/  json-tools/  self-reflection/   shared skills
+prd-implementation/  epic-implementation/   shared skills: the sprint and epic process
 usage-cost/                                 skill, Claude Code only
 multiagent-collab/                          skill with its own setup; see below
 roles/      README.md  _shared/  <role>/ROLE.md  <role>/role.toml
 rules/      avoid-bash-injection-heuristics/    rule, Claude Code only
 providers/  claude-code/  codex/                what differs between providers
 tools/      session-profile/                    session-record reader and its tests
-docs/       agent-roles-framework.md and the v1 slide
+docs/       agent-roles-framework.md, v1-to-v2.md and the v1 slide
 ```
-
-`prd-implementation.md`, `epic-implementation.md` and `agents/sprint-coder.md` at the
-root are the v1 process. They stay until the skills that replace them exist.
 
 ## One directory per logical unit
 
@@ -49,6 +47,7 @@ Run each of these from the repository root with Python 3.11 or later. On a machi
 python multiagent-collab/tests/test_multiagent_collab.py
 python -m unittest discover -s tools/session-profile/tests
 python -m unittest discover -s tools/setup/tests
+python -m unittest discover -s prd-implementation/tests
 ```
 
 ## Conventions
@@ -83,4 +82,7 @@ python -m unittest discover -s tools/setup/tests
   `references/claude-code.md` or `references/codex.md`. A location is described
   relative to the skill: "`scripts/` in this skill's directory".
 - **Scripts.** No third-party dependency: Python standard library only, Node built-in
-  modules only. Every path to the skill's own files is relative to the skill.
+  modules only. Every path to the skill's own files is relative to the skill. One
+  exception to "a skill reaches no path outside its own": a skill's script may read
+  the setup tool and its shipped defaults (`tools/setup/`) beside the skill when they
+  are there, and must work without them.

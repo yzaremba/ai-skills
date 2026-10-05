@@ -1,0 +1,68 @@
+# The binding table: which role follows which stage file of which process
+# skill. It is the only file that names both a stage and a role. The process
+# skills name no role, and a role's text says "the stages your bindings name".
+#
+# The format is stated in README.md, under "bindings.toml". A row is added
+# only for a role that exists under roles/.
+
+schema_version = 1
+
+# Product Manager: a sprint from the backlog to its final PRD.
+
+[[binding]]
+role = "product-manager"
+skill = "prd-implementation"
+stage = "stage-0-backlog.md"
+part = "plucks"
+note = "Takes the items the user picks to seed a sprint, and deletes them as the stage file says. Adds, edits and converts nothing else in the backlog."
+
+[[binding]]
+role = "product-manager"
+skill = "prd-implementation"
+stage = "stage-1-thoughts.md"
+part = "owns"
+
+[[binding]]
+role = "product-manager"
+skill = "prd-implementation"
+stage = "stage-2-prd.md"
+part = "owns"
+
+# Product Manager: an epic from the backlog to its final charter.
+
+[[binding]]
+role = "product-manager"
+skill = "epic-implementation"
+stage = "stage-e0-backlog.md"
+part = "plucks"
+note = "Takes the items the user picks to seed an epic, and deletes them as the stage file says. Adds and edits nothing else in the backlog."
+
+[[binding]]
+role = "product-manager"
+skill = "epic-implementation"
+stage = "stage-e1-thoughts.md"
+part = "owns"
+
+[[binding]]
+role = "product-manager"
+skill = "epic-implementation"
+stage = "stage-e2-charter.md"
+part = "owns"
+
+# Coder: both of its definitions, coder and coder-hard.
+
+[[binding]]
+role = "coder"
+skill = "prd-implementation"
+stage = "stage-3-implementation.md"
+part = "implementer"
+note = "The implementer's part of the stage file, as the Coder's own text narrows it."
+
+# Manager: the check of deferred items when it starts in a project.
+
+[[binding]]
+role = "manager"
+skill = "prd-implementation"
+stage = "deferred.md"
+part = "checks"
+note = "Lists the open items, runs or judges each trigger and puts what fired or is past its date to the user. Writes nothing in the file."

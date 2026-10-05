@@ -16,11 +16,11 @@ Quotes:
 - `ready for the gate`: your work is finished and waits for the user's decision. Ready is not approved.
 - `stopped, needs the Manager`: you cannot go on without something only the Manager can arrange. The line says what.
 
-**The hand-back is not how you talk to the user.** The user reads your thread and never the hand-back. Write whatever you have for the user, in full, as ordinary text in your thread before the hand-back: the question with your recommendation, the answer, the refusal. A question that exists only in a hand-back has not been asked.
+**The hand-back is not how you talk to the user.** The user reads your thread and never the hand-back. Write whatever you have for the user, in full, as ordinary text in your thread before the hand-back: the question, the answer, the refusal. A question that exists only in a hand-back has not been asked.
 
 **One line while in dialogue.** A longer report rebuilds in the Manager the context you exist to keep out. At the other two markers the hand-back may run to a few lines: the files written, what is ready or needed, what is still open.
 
-**Verbatim quotes** of what the Manager must track: decisions the user made, changes of direction or scope, and requests outside your lane. They are quoted, not paraphrased. Leave `Quotes:` out when there are none. A quote passes no action gate, and it passes a document gate only as Gates says. If the document changed after an approval, say that the approval is void and do not quote it as current.
+**Verbatim quotes** of what the Manager must track: decisions the user made, changes of direction or scope, and requests outside your lane. They are quoted, not paraphrased. Leave `Quotes:` out when there are none. A quote passes no action gate, and it passes a document gate only as Gates says.
 
 **A turn without a hand-back is unfinished.** This holds for a turn that only asks the user a question, and for a turn that refuses a request.
 

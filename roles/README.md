@@ -7,13 +7,14 @@ A role is an agent with its own instructions, a pinned model tier and effort, an
 ```text
 roles/
   README.md
+  bindings.toml     which role follows which stage file of the process
   _shared/          sections that several roles include
   <role>/ROLE.md    the role's instructions
   <role>/role.toml  the role's profile, limits and entry points
 ```
 
 - **One directory per role**, named by the role's id in kebab-case: `manager`, `product-manager`, `coder`.
-- **`_shared/`** is not a role. Each file in it is one section, starting at a level-two heading. `gates.md` reads the same for every role. The other sections come in two parts, one for each side, so that a role carries only its own:
+- **`_shared/`** is not a role. Each file in it is one section, starting at a level-two heading. `gates.md` and `questions.md` read the same for every role. The other sections come in two parts, one for each side, so that a role carries only its own:
 
   | File | For a role that |
   |---|---|
@@ -22,7 +23,8 @@ roles/
   | `hand-back-reading.md` | receives hand-backs |
   | `brief-writing.md` | dispatches: writes briefs and reads reports |
   | `brief-reading.md` | is dispatched: works from a brief and writes the report |
-- **A role's full text** is `ROLE.md` followed by its includes, in the order `role.toml` lists them. A provider's definition adds that provider's action notes after it.
+  | `questions.md` | puts questions to the user |
+- **A role's full text** is `ROLE.md` followed by its includes, in the order `role.toml` lists them. A provider's definition adds the role's rows of `bindings.toml` and that provider's action notes after it.
 
 ## `role.toml`
 
@@ -47,10 +49,48 @@ A role names a tier and an effort, never a model. The settings map both to each 
 
 A limit is enforced by the provider's definition wherever that provider can enforce it. `ROLE.md` states every limit as well, because not every provider enforces every one.
 
+## `bindings.toml`
+
+The process is two skills, `prd-implementation` and `epic-implementation`. Each is split into stage files under its `references/` directory, and neither names a role. `bindings.toml` is the binding table: the one file that says which role follows which stage file. No other file names both a stage and a role.
+
+The file holds `schema_version = 1` and one `[[binding]]` table per row:
+
+| Key | Type | Meaning |
+|---|---|---|
+| `role` | string | A role's id: a directory under `roles/`. A row of `coder` holds for both of its definitions. |
+| `skill` | string | A process skill's name: a directory at the repository root that holds `SKILL.md`. Never a path. |
+| `stage` | string | The file name of a stage file in that skill's `references/` directory, such as `stage-2-prd.md`. A file name only, with no directory. |
+| `part` | string | What the role does in that stage: `owns`, or the id of a part of it, in lower-case letters and hyphens. |
+| `note` | string, optional | One line of at most 200 characters that says what the part covers. It is given to the role with the row. |
+
+```toml
+[[binding]]
+role = "<role id>"
+skill = "<skill name>"
+stage = "<stage file name>"
+part = "owns"
+note = "<optional: what the part covers>"
+```
+
+- **`owns`** means that the role does everything the stage file asks of whoever runs the stage: it writes the stage's documents, takes the stage's own confirmations from the user, and makes the changes to shared files that the stage file calls for.
+- **Any other `part`** names a share of the stage. Where the stage file defines the part under that name, as `stage-3-implementation.md` defines the implementer's part, the id is that name. Where it does not, the row has a `note`.
+
+  | `part` | Meaning |
+  |---|---|
+  | `implementer` | The implementer's part of the implementation stage. |
+  | `plucks` | Of a backlog stage: takes the items that seed a new sprint or epic, and nothing else. |
+  | `checks` | Of the deferred items: lists them, runs or judges each trigger, and puts what needs a decision to the user. Writes nothing. |
+
+- **A row is unique** by `role`, `skill` and `stage`. A stage file may have several rows, one for each role with a part in it.
+- **A row exists only for a role that exists.** A stage with no row belongs to a role that is not installed, and the Manager says so when a request needs it.
+- **Every name is checked.** The role is a directory here, the skill is a directory at the repository root, and the stage file exists in it.
+- **A role's rows reach the role in its generated definition.** Role text therefore says "the stage file your binding names" and never names the file.
+
 ## Rules for role text
 
 - **Actions, not tools.** Role text says what is done: dispatch a role, follow up with an agent, load a role, change a file, run a command, commit. It never names a provider's tool or command. How each provider performs an action is in `providers/<provider>/actions.md`.
 - **One active role.** Every `ROLE.md` says that loading it suspends any other role loaded in the session.
-- **No machine paths.** No home directory, mounted drive or drive letter appears in any file here. A role is pointed at "the project's process text" or "the working directory your brief names", and the brief supplies the path when the work starts.
+- **The process by name.** A role follows the two process skills and names them by skill name, never by path. Which stage file it reads comes from its bindings. A command of a skill is described, as in "the check command of the `prd-implementation` skill"; the exact invocation is in the skill.
+- **No machine paths.** No home directory, mounted drive or drive letter appears in any file here. A role is pointed at "the working directory your brief names", and the brief supplies the path when the work starts.
 - **Size.** `ROLE.md` plus its includes stays under 12,000 bytes. A loaded role has to survive context compaction, and a dispatched one shares its budget with the project's instruction files.
 - **Bytes.** UTF-8, LF line endings.
