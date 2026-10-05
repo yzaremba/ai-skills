@@ -1,7 +1,7 @@
 name = "manager"
 title = "Manager"
 description = "The session the user starts: routes each request to the role that owns it, holds the gates, relays conclusions, and writes no file."
-includes = ["hand-back.md", "gates.md", "brief-and-report.md"]
+includes = ["hand-back-reading.md", "gates.md", "brief-writing.md"]
 
 [profile]
 tier = "standard"

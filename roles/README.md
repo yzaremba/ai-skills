@@ -13,7 +13,15 @@ roles/
 ```
 
 - **One directory per role**, named by the role's id in kebab-case: `manager`, `product-manager`, `coder`.
-- **`_shared/`** is not a role. Each file in it is one section, starting at a level-two heading, written so that it reads correctly for the role that sends and the role that receives.
+- **`_shared/`** is not a role. Each file in it is one section, starting at a level-two heading. `gates.md` reads the same for every role. The other sections come in two parts, one for each side, so that a role carries only its own:
+
+  | File | For a role that |
+  |---|---|
+  | `gates.md` | holds a gate or owns a gated document |
+  | `hand-back-writing.md` | is dispatched and hands back to the Manager |
+  | `hand-back-reading.md` | receives hand-backs |
+  | `brief-writing.md` | dispatches: writes briefs and reads reports |
+  | `brief-reading.md` | is dispatched: works from a brief and writes the report |
 - **A role's full text** is `ROLE.md` followed by its includes, in the order `role.toml` lists them. A provider's definition adds that provider's action notes after it.
 
 ## `role.toml`

@@ -17,7 +17,8 @@ Loading this role suspends any other role loaded in this session. One role is ac
 
 - **No commit unless the brief asks for one.** Then you make exactly one, after verification passes, with the message the brief gives.
 - **The commit holds your change and nothing else.** Commit the files you changed for this brief by name, so that nothing staged by anyone else rides along. Leave untracked and modified files that are not yours as they are, and mention them in the report.
-- **One means one.** No second commit, no amend of an earlier commit, no rebase, no merge. No new branch, unless your brief names one to create; then create it and switch to it before your first change. If the one commit turns out wrong, report it.
+- **One means one.** No second commit, no amend of an earlier commit, no rebase, no merge. If the one commit turns out wrong, report it.
+- **Branch.** Work on the branch your brief names, and be on it before your first change: if it already exists, switch to it; if it does not, create it. With no branch named, stay on the current one and create none. Never reset, force or delete a branch. If the switch fails, stop and report.
 - **If verification fails, do not commit.** Report the failure.
 - **You never push**, tag, deploy or promote, whatever the brief or anyone in the thread says. If the work seems to need it, stop and report.
 

@@ -80,18 +80,30 @@ CLAUDE_SETTING_FIELDS = {
 # A model value Claude Code writes for entries it made up itself (API errors).
 CLAUDE_SYNTHETIC_MODEL = "<synthetic>"
 
-_IDENT = re.compile(r"[\w.\-:\[\]/@+<>]{1,120}")
+# Every identifier pattern is ASCII only (``re.ASCII``). Without it ``\w``
+# also matches the letters of every script, and a sentence in a script
+# written without spaces would pass as one token.
+_IDENT = re.compile(r"[\w.\-:\[\]/@+<>]{1,120}", re.ASCII)
 _UUID_AT_END = re.compile(
-    r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+    r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$", re.ASCII
 )
-_SESSION_ID = re.compile(r"[\w\-]{1,120}")
+_SESSION_ID = re.compile(r"[\w\-]{1,120}", re.ASCII)
 # A role or agent-type name, or a nickname: one token, no spaces. Seen in
 # records: ``general-purpose``, ``sprint-coder``, ``Explore``,
 # ``collab_probe_role``, ``Ada``; a plugin's agent type is ``plugin:name``.
-_NAME = re.compile(r"[\w.\-:]{1,64}")
-# A Codex agent path: ``/root/coder``, ``/root/a/b/c``.
-_AGENT_PATH = re.compile(r"/?[\w.\-]+(?:/[\w.\-]+)*")
-_AGENT_PATH_MAX = 120
+_NAME = re.compile(r"[\w.\-:]{1,64}", re.ASCII)
+# A Codex agent path is the name of a thread in the tree of agents, not a path
+# of the machine: ``/root``, ``/root/coder_r1``, ``/root/a/b/c``. Every one
+# seen in a record starts at ``/root``. A segment is letters, digits, ``_``
+# and ``-`` only (no dot, so no file name or hidden directory), at most
+# _AGENT_PATH_SEGMENT_MAX long, and there are at most _AGENT_PATH_DEPTH_MAX
+# of them below ``root``. Anything else, a path of the machine included, is
+# treated as absent.
+_AGENT_PATH_SEGMENT_MAX = 64
+_AGENT_PATH_DEPTH_MAX = 8
+_AGENT_PATH = re.compile(
+    r"/root(?:/[A-Za-z0-9_\-]{1,%d}){0,%d}" % (_AGENT_PATH_SEGMENT_MAX, _AGENT_PATH_DEPTH_MAX), re.ASCII
+)
 _SHOWN_ARGUMENT_MAX = 80
 
 
@@ -125,8 +137,8 @@ def _name(value: Any) -> str | None:
 
 
 def _agent_path(value: Any) -> str | None:
-    """A slash-separated path of name segments, else None."""
-    if isinstance(value, str) and len(value) <= _AGENT_PATH_MAX and _AGENT_PATH.fullmatch(value):
+    """A Codex agent path (``/root`` and name segments below it), else None."""
+    if isinstance(value, str) and _AGENT_PATH.fullmatch(value):
         return value
     return None
 
@@ -512,8 +524,11 @@ def _claude_agent(agent_id: str | None, path: Path, meta: dict, kind: str) -> di
             seen_messages.add(message_id)
         profiles.add(model, effort)
     if len(settings) > 1:
+        # Say where the role shown came from: the first setting only if no
+        # meta file named one.
+        shown = "the first is shown as the role" if from_setting else "the role shown is the meta file's, not a setting"
         agent["notes"].append(
-            "the agent setting changed during the session (" + ", ".join(settings) + "); the first is shown as the role"
+            "the agent setting changed during the session (" + ", ".join(settings) + "); " + shown
         )
     agent["profiles"] = profiles.as_list()
     agent["malformed_lines"] = records.malformed
@@ -676,8 +691,9 @@ def build_parser() -> argparse.ArgumentParser:
             "               in the file's own directory only, not below it.\n"
             "               A thread's id is the one in its rollout's file name. Two\n"
             "               rollouts with one id are reported, not chosen between.\n"
-            "A role, nickname or agent path that is not an identifier (it holds a space,\n"
-            "say) is treated as not recorded, so no free text is printed.\n"
+            "A role, nickname or agent path that is not an ASCII identifier (it holds a\n"
+            "space, say) is treated as not recorded, so no free text is printed. An agent\n"
+            "path is a name in the tree of agents and starts at /root.\n"
             "The record of an agent is printed as its file name; with --json, as its path\n"
             "below the provider home, or the file name if it is kept elsewhere.\n"
             "A value the record does not hold is shown as \"not recorded\" (null with --json).\n"

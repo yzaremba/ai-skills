@@ -1,8 +1,8 @@
 {"agentSetting": "manager", "type": "agent-setting"}
 {"type": "user", "version": "2.1.289"}
 {"agentSetting": "manager", "type": "agent-setting"}
-{"effort": "high", "message": {"id": "msg_011CfjEzhoZUreQbvA8p65T2", "model": "claude-sonnet-5-5"}, "perTurnEffort": "high", "type": "assistant", "version": "2.1.289"}
-{"effort": "high", "message": {"id": "msg_011CfjEzhoZUreQbvA8p65T2", "model": "claude-sonnet-5-5"}, "perTurnEffort": "high", "type": "assistant", "version": "2.1.289"}
-{"effort": "high", "message": {"id": "msg_011CfjEzhoZUreQbvA8p65T2", "model": "claude-sonnet-5-5"}, "perTurnEffort": "high", "type": "assistant", "version": "2.1.289"}
-{"effort": "high", "message": {"id": "msg_011CfjEzwHRmWyKPxrrRC9Ld", "model": "claude-sonnet-5-5"}, "perTurnEffort": "high", "type": "assistant", "version": "2.1.289"}
-{"effort": "high", "message": {"id": "msg_011CfjF1Lhpo1DU8amdgoYS5", "model": "claude-sonnet-5-5"}, "perTurnEffort": "high", "type": "assistant", "version": "2.1.289"}
+{"effort": "high", "message": {"id": "m1", "model": "claude-sonnet-5-5"}, "perTurnEffort": "high", "type": "assistant", "version": "2.1.289"}
+{"effort": "high", "message": {"id": "m1", "model": "claude-sonnet-5-5"}, "perTurnEffort": "high", "type": "assistant", "version": "2.1.289"}
+{"effort": "high", "message": {"id": "m1", "model": "claude-sonnet-5-5"}, "perTurnEffort": "high", "type": "assistant", "version": "2.1.289"}
+{"effort": "high", "message": {"id": "m2", "model": "claude-sonnet-5-5"}, "perTurnEffort": "high", "type": "assistant", "version": "2.1.289"}
+{"effort": "high", "message": {"id": "m3", "model": "claude-sonnet-5-5"}, "perTurnEffort": "high", "type": "assistant", "version": "2.1.289"}

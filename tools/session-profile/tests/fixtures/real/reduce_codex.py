@@ -16,10 +16,11 @@ is taken from the name, never from where the source file was.
 
 Of each rollout only the ``session_meta`` and ``turn_context`` records are
 kept, in their order, and of those only the fields the reader reads, and
-only where the value is a short identifier token (an agent path may hold
-slashes). Everything else is dropped: messages, instructions, tool calls
-and their output, working directories, sandbox and permission settings, git
-information, account ids, timestamps, every path of the machine.
+only where the value is a short ASCII identifier token (an agent path is
+``/root`` and name segments below it). Everything else is dropped: messages,
+instructions, tool calls and their output, working directories, sandbox and
+permission settings, git information, account ids, the timestamp of every
+record, every path of the machine. The date and time in the file name stay.
 
 Standard library only.
 """
@@ -57,12 +58,17 @@ KEEP = {
     ),
 }
 
-_TOKEN = re.compile(r"[\w.\-:]{1,64}")
-_AGENT_PATH = re.compile(r"/?[\w.\-]+(?:/[\w.\-]+)*")
-_AGENT_PATH_MAX = 120
+# ASCII only: without re.ASCII, \w and \d match the letters and digits of
+# every script, and text written without spaces would pass as one token.
+_TOKEN = re.compile(r"[\w.\-:]{1,64}", re.ASCII)
+# The same shape session_profile.py accepts: ``/root`` and up to eight name
+# segments below it, each of letters, digits, ``_`` and ``-``. A path of the
+# machine does not have it and is dropped.
+_AGENT_PATH = re.compile(r"/root(?:/[A-Za-z0-9_\-]{1,64}){0,8}", re.ASCII)
 _ROLLOUT_NAME = re.compile(
     r"rollout-(\d{4})-(\d{2})-(\d{2})T\d{2}-\d{2}-\d{2}-"
-    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\.jsonl"
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\.jsonl",
+    re.ASCII,
 )
 
 
@@ -74,8 +80,8 @@ def token(value):
 
 
 def agent_path(value):
-    """The value if it is a slash-separated path of name segments, else None."""
-    if isinstance(value, str) and len(value) <= _AGENT_PATH_MAX and _AGENT_PATH.fullmatch(value):
+    """The value if it is a Codex agent path (``/root`` and name segments), else None."""
+    if isinstance(value, str) and _AGENT_PATH.fullmatch(value):
         return value
     return None
 

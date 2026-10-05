@@ -13,16 +13,22 @@ directory is written as a config home:
     <output>/projects/<NAME>/<session>/subagents/agent-<id>.meta.json
 
 Only the fields the reader reads are kept, and only where the value is a
-short identifier token. Everything else is dropped: message content, tool
-input and output, prompts, descriptions, working directories, every path.
-The project directory name, which encodes a path of the machine, is
+short ASCII identifier token. Everything else is dropped: message content,
+tool input and output, prompts, descriptions, working directories, every
+path. The project directory name, which encodes a path of the machine, is
 replaced by NAME.
 
 Of each transcript the following entries are kept, in their order:
 the first two ``agent-setting`` entries, the first ``user`` entry (as its
 type and version only) and every ``assistant`` entry of the first N
 responses (a response is one ``message.id``; it is written as one entry per
-content block).
+content block). An entry whose model is ``<synthetic>`` is dropped whole and
+is not one of the N: the reader does not count it either.
+
+The provider's message ids are not kept. Each distinct one is replaced by
+``m1``, ``m2``, ... in order of first appearance in its file, which is all
+the reader needs to tell one response from the next. Reducing a reduced
+record therefore gives the same bytes.
 
 Standard library only.
 """
@@ -47,7 +53,14 @@ KEEP_META = ("agentType", "parentAgentId")
 SETTING_ENTRIES = 2
 USER_ENTRIES = 1
 
-_TOKEN = re.compile(r"[\w.\-:]{1,64}")
+# The model value Claude Code writes on an entry it made up itself (an API
+# error, say). The reader leaves such an entry out; it is not a token, so
+# kept without its model it would count as a response with no model.
+SYNTHETIC_MODEL = "<synthetic>"
+
+# ASCII only: without re.ASCII, \w matches the letters of every script, and
+# text written without spaces would pass as one token.
+_TOKEN = re.compile(r"[\w.\-:]{1,64}", re.ASCII)
 
 
 def token(value):
@@ -96,7 +109,10 @@ def reduce_transcript(source: Path, target: Path, responses: int) -> int:
                 if counts[kind] >= limits[kind]:
                     continue
                 counts[kind] += 1
+                kept.append(reduce_entry(entry))
             else:
+                if dig(entry, ("message", "model")) == SYNTHETIC_MODEL:
+                    continue
                 message = token(dig(entry, ("message", "id")))
                 if message is None:
                     continue
@@ -104,7 +120,11 @@ def reduce_transcript(source: Path, target: Path, responses: int) -> int:
                     if len(messages) >= responses:
                         continue
                     messages.append(message)
-            kept.append(reduce_entry(entry))
+                reduced = reduce_entry(entry)
+                # The provider's id is not kept: the reader only tells one
+                # response from the next by it.
+                reduced["message"]["id"] = f"m{messages.index(message) + 1}"
+                kept.append(reduced)
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("w", encoding="utf-8", newline="\n") as handle:
         for entry in kept:
