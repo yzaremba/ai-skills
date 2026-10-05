@@ -1,0 +1,2 @@
+{"payload": {"cli_version": "0.160.0", "id": "01a10cb7-c7de-7200-b09d-dfa8bef8b96a", "parent_thread_id": "01a10ca9-5416-7d00-a120-40c3fbc7f394", "thread_source": "guardian_review"}, "type": "session_meta"}
+{"payload": {"collaboration_mode": {"settings": {"model": "codex-auto-review", "reasoning_effort": "low"}}, "effort": "low", "model": "codex-auto-review"}, "type": "turn_context"}

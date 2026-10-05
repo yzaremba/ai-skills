@@ -407,7 +407,11 @@ class RealClaudeCodeFixtureTests(unittest.TestCase):
 
     def test_the_fixture_names_no_machine_path_or_user(self):
         user = Path.home().name
-        for path in sorted(p for p in REAL.rglob("*") if p.is_file() and "__pycache__" not in p.parts):
+        files = sorted(p for p in REAL.rglob("*") if p.is_file() and "__pycache__" not in p.parts)
+        # Every real fixture is under REAL, so this covers them all, with their reducers.
+        for home, count in ((REAL_CLAUDE_HOME, 7), (REAL_CODEX_HOME, 5)):
+            self.assertEqual(sum(1 for p in files if home in p.parents), count, home.name)
+        for path in files:
             data = path.read_bytes()
             self.assertNotIn(b"\r", data, path.name)
             text = data.decode("utf-8")
@@ -416,6 +420,159 @@ class RealClaudeCodeFixtureTests(unittest.TestCase):
             if len(user) > 3:
                 self.assertNotIn(user, text, path.name)
                 self.assertNotIn(user, path.relative_to(REAL).as_posix())
+
+
+REAL_CODEX_HOME = REAL / "codex-0.160.0"
+REAL_CX_MAIN = "01a10c90-d1fb-7703-89d6-1e13f807a41b"
+REAL_CX_SPAWN_KEYS = {"parent_thread_id", "agent_role", "agent_path", "agent_nickname"}
+
+
+class RealCodexFixtureTests(unittest.TestCase):
+    """Rollouts Codex 0.160.0 wrote, reduced by ``reduce_codex.py``.
+
+    The session had six agents. One of the two ``guardian_review`` threads was
+    left out of the fixture, so five are read.
+    """
+
+    def report(self) -> dict:
+        code, out, err = run("--json", "codex", REAL_CX_MAIN, env={"CODEX_HOME": str(REAL_CODEX_HOME)})
+        self.assertEqual((code, err), (0, ""))
+        return json.loads(out)
+
+    def test_five_agents_with_their_roles_models_and_efforts(self):
+        report = self.report()
+        self.assertEqual(report["provider_versions"], ["0.160.0"])
+        self.assertEqual(report["written_against"], "0.160.0")
+        self.assertEqual((report["session"], report["notes"]), (REAL_CX_MAIN, []))
+        agents = report["agents"]
+        self.assertEqual(len(agents), 6 - 1)
+        self.assertEqual([a["kind"] for a in agents], ["user", "subagent", "subagent", "guardian_review", "subagent"])
+        self.assertEqual([a["depth"] for a in agents], [0, 1, 1, 2, 1])
+        self.assertEqual([a["role"] for a in agents], [None, "product_manager", "coder", None, "coder_hard"])
+        main, manager_child, coder, guardian, hard = agents
+        # The main thread's record names no role: its instructions come from the project's configuration.
+        self.assertEqual((main["id"], main["role"], main["role_source"], main["name"]), (REAL_CX_MAIN, None, None, None))
+        self.assertIsNone(main["parent_id"])
+        self.assertEqual(pairs(main), [("gpt-6.1-sol", "medium", 17)])
+        self.assertEqual(pairs(manager_child), [("gpt-6.1-sol", "high", 1)])
+        self.assertEqual(pairs(coder), [("gpt-6.1-sol", "medium", 2)])
+        self.assertEqual(pairs(hard), [("gpt-6.1-sol", "high", 1)])
+        self.assertNotEqual(pairs(hard)[0][1], pairs(main)[0][1])
+        self.assertEqual(
+            [a["name"] for a in (manager_child, coder, hard)],
+            ["/root/prd_header_edit (Tesla)", "/root/coder_r1 (Mencius)", "/root/coder_r2 (Darwin)"],
+        )
+        for agent in (manager_child, coder, hard):
+            # The role is at the top of the session_meta payload, which is where the reader looks first.
+            self.assertEqual(agent["role_source"], "session_meta.agent_role")
+            self.assertEqual(agent["parent_id"], REAL_CX_MAIN)
+        # A guardian review is a child of the thread whose command it reviewed, and has no role.
+        self.assertEqual((guardian["parent_id"], guardian["role_source"], guardian["name"]), (coder["id"], None, None))
+        self.assertEqual(pairs(guardian), [("codex-auto-review", "low", 1)])
+        for agent in agents:
+            self.assertEqual(agent["provider_versions"], ["0.160.0"])
+            self.assertEqual(agent["effort_sources"], ["turn_context.effort"])
+            self.assertEqual((agent["malformed_lines"], agent["notes"], agent["readable"]), (0, [], True))
+
+    def test_a_spawned_thread_records_its_role_in_two_places(self):
+        """The payload's own keys and ``source.subagent.thread_spawn`` agree in the real record."""
+        spawned = 0
+        for path in sorted(REAL_CODEX_HOME.rglob("*.jsonl")):
+            meta = json.loads(path.read_text(encoding="utf-8").splitlines()[0])["payload"]
+            spawn = sp._dig(meta, ("source", "subagent", "thread_spawn"))
+            if spawn is None:
+                self.assertNotIn("agent_role", meta, path.name)
+                continue
+            spawned += 1
+            self.assertEqual(set(spawn), REAL_CX_SPAWN_KEYS, path.name)
+            for key in REAL_CX_SPAWN_KEYS:
+                self.assertEqual(meta[key], spawn[key], f"{path.name} {key}")
+            self.assertEqual(meta["parent_thread_id"], REAL_CX_MAIN)
+        self.assertEqual(spawned, 3)
+
+    def test_text_output(self):
+        code, out, _ = run("codex", REAL_CX_MAIN, env={"CODEX_HOME": str(REAL_CODEX_HOME)})
+        self.assertEqual(code, 0)
+        self.assertIn("provider version recorded: 0.160.0 (reader written against 0.160.0)", out)
+        self.assertIn("agents: 5", out)
+        self.assertIn("role:    coder_hard\n", out)
+        self.assertIn("model:   gpt-6.1-sol  (17 turns)\n", out)
+        self.assertEqual(out.count("role:    " + sp.NOT_RECORDED), 2)
+        self.assertNotIn("model:   " + sp.NOT_RECORDED, out)
+        self.assertNotIn("effort:  " + sp.NOT_RECORDED, out)
+
+    def test_the_fixture_holds_only_the_fields_read(self):
+        meta_keys = {"id", "cli_version", "thread_source", "source"} | REAL_CX_SPAWN_KEYS
+        files = sorted(p for p in REAL_CODEX_HOME.rglob("*") if p.is_file())
+        self.assertEqual(len(files), 5)
+        for path in files:
+            self.assertEqual(path.parent, REAL_CODEX_HOME / "sessions" / "2026" / "10" / "05")
+            entries = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([e["type"] for e in entries[:1]], ["session_meta"], path.name)
+            self.assertTrue(path.name.endswith(entries[0]["payload"]["id"] + ".jsonl"))
+            leaves: list = []
+            for entry in entries:
+                self.assertEqual(set(entry), {"type", "payload"}, path.name)
+                payload = entry["payload"]
+                if entry["type"] == "session_meta":
+                    self.assertLessEqual(set(payload), meta_keys, path.name)
+                    spawn = {}
+                    if "source" in payload:
+                        self.assertEqual(set(payload["source"]), {"subagent"}, path.name)
+                        self.assertEqual(set(payload["source"]["subagent"]), {"thread_spawn"}, path.name)
+                        spawn = payload["source"]["subagent"]["thread_spawn"]
+                        self.assertLessEqual(set(spawn), REAL_CX_SPAWN_KEYS, path.name)
+                    for holder in (payload, spawn):
+                        leaves.extend(v for k, v in holder.items() if k not in ("source", "agent_path"))
+                        if "agent_path" in holder:
+                            self.assertIsNotNone(sp._agent_path(holder["agent_path"]), path.name)
+                else:
+                    self.assertEqual(entry["type"], "turn_context", path.name)
+                    self.assertEqual(set(payload), {"model", "effort", "collaboration_mode"}, path.name)
+                    self.assertEqual(set(payload["collaboration_mode"]), {"settings"}, path.name)
+                    settings = payload["collaboration_mode"]["settings"]
+                    self.assertEqual(set(settings), {"model", "reasoning_effort"}, path.name)
+                    leaves.extend([payload["model"], payload["effort"], *settings.values()])
+            for value in leaves:
+                self.assertIsNotNone(sp._name(value), f"{path.name} {value!r}")
+
+    def test_reducing_the_fixture_again_changes_nothing(self):
+        """The fixture is what ``reduce_codex.py`` writes: reduced once more, it is the same bytes."""
+        spec = importlib.util.spec_from_file_location("reduce_codex", REAL / "reduce_codex.py")
+        reducer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(reducer)
+        sources = sorted(REAL_CODEX_HOME.rglob("*.jsonl"))
+        with tempfile.TemporaryDirectory() as tmp:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(reducer.main([*map(str, sources), tmp]), 0)
+            for source in sources:
+                again = Path(tmp) / source.relative_to(REAL_CODEX_HOME)
+                self.assertEqual(again.read_bytes(), source.read_bytes(), source.name)
+
+    def test_the_reducer_drops_text_and_unread_fields(self):
+        spec = importlib.util.spec_from_file_location("reduce_codex", REAL / "reduce_codex.py")
+        reducer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(reducer)
+        sources = sorted(p for p in CODEX_HOME.rglob("*.jsonl") if sp._UUID_AT_END.search(p.stem))
+        self.assertTrue(any(MARKER in p.read_text(encoding="utf-8") for p in sources))
+        with tempfile.TemporaryDirectory() as tmp:
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                self.assertEqual(reducer.main([*map(str, sources), tmp]), 0)
+                self.assertEqual(reducer.main([str(Path(tmp) / "notes.jsonl"), tmp]), 2)
+            written = sorted(Path(tmp).rglob("*.jsonl"))
+            self.assertEqual([p.name for p in written], [p.name for p in sources])
+            for path in written:
+                text = path.read_text(encoding="utf-8")
+                for unwanted in (MARKER, "must-not-be-read", "a_field_added_later", "cwd", "instructions"):
+                    self.assertNotIn(unwanted, text, path.name)
+            self.assertNotIn(str(CODEX_HOME), out.getvalue() + err.getvalue())
+            code, reduced, _ = run("--json", "codex", CX_ROOT, env={"CODEX_HOME": tmp})
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [(a["id"], a["role"], a["parent_id"]) for a in json.loads(reduced)["agents"]],
+            [(a["id"], a["role"], a["parent_id"]) for a in codex(CX_ROOT)["agents"]],
+        )
 
 
 class EnvironmentTests(unittest.TestCase):

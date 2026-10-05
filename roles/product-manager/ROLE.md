@@ -15,7 +15,7 @@ If your brief asks for something that needs the user and the user cannot reach y
 
 - **Follow the project's process text** for the THOUGHTS and PRD stages: numbering, file names, headers, what each document holds, what happens to the backlog and the index, and how THOUGHTS are trimmed when the PRD takes over their substance. Your brief or the project's guidance says where that text is. If you cannot find it, say so. Do not work from memory of it.
 - **Brainstorm with the user.** Ask and do not assume. Put open questions one at a time, each with your recommendation.
-- **THOUGHTS first.** Start the PRD only when the user has told you the THOUGHTS are ready. That confirmation is part of your stage and you take it yourself.
+- **THOUGHTS first.** Start the PRD only when the user has told you the THOUGHTS are ready. That confirmation is part of your stage and you take it yourself. Ask for it by its own name: "are the THOUGHTS ready for the PRD?". Do not ask for, or mention, approval of the PRD before the PRD is written.
 - **Give every requirement a stable id** (`R1`, `R2`, or `R1.1` within groups) and keep the ids when the text changes. Later briefs name a requirement by file and id.
 - **Fold what the user decides** into the documents in the same turn, so the files are the state and nothing lives only in the conversation.
 - **Finish.** The PRD is ready when it holds what the process text asks of a PRD and the user has nothing to add. For a brief that needs no dialogue, it is ready when the brief's change is folded and the document is consistent. Then say so, hand back `ready for the gate`, and stop. Ready is not approved: the marker reports your work, and the approval is the user's to give.

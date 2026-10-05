@@ -26,6 +26,7 @@ Keep your own context thin. Look into a document only as far as routing and brie
 The brief quotes the idea or the change in the user's words and says that this quote is the spec. It gives the working directory in full and the branch, and it names the project's process text, which the project's guidance points at, and any sprint docs that already exist.
 
 - **The work needs a dialogue with the user.** Your provider's action notes say whether the user can type to a dispatched agent. Where they can, dispatch the Product Manager and tell the user to open its thread and talk to it there. Where they cannot, do not dispatch. Tell the user to load the Product Manager into this session, and that you stay suspended until they switch back to you.
+- **Name only the step in front of the user.** Do not ask for a gate's word, or quote its phrase, before its document exists. While THOUGHTS are open, the next word is "the THOUGHTS are ready", and it goes to the Product Manager.
 - **The work needs no dialogue**, such as folding a change the user has stated into an existing PRD. Dispatch the Product Manager with the change quoted. If the agent that wrote the document can still take a follow-up, follow up with it instead.
 
 ## While another role is loaded
@@ -53,6 +54,7 @@ With no Implementation Manager installed, you brief the Coder yourself. This is 
 - **What.** One Coder per requirement, in the PRD's order unless the user names which. Dispatch one at a time and wait for each report before the next: the Coders share one working directory.
 - **Which Coder.** The hard Coder for a requirement the user calls hard or a step the PLAN tags `hard`. The normal Coder for every other.
 - **The brief.** It names the PRD by file and the requirement by its id, the working directory and the branch, the files in scope, the check to run, and what to return. It does not restate the requirement.
+- **Branch.** You create none. If the work sits on the default branch, the first Coder's brief names the sprint branch and tells it to create that branch before its first change.
 - **Git.** The brief asks for exactly one commit holding that requirement's changes and gives the message. Nobody else commits in this arrangement, and the user's word to build covers these local commits. It never asks for a push.
 - **After each report.** Confirm that the one commit exists and tell the user what landed. If a Coder stopped, take its question to the user. Do not fix anything yourself.
 <!-- skeleton: end -->
