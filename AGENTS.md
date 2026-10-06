@@ -11,10 +11,11 @@ csv-tools/  json-tools/  self-reflection/   shared skills
 prd-implementation/  epic-implementation/   shared skills: the sprint and epic process
 usage-cost/                                 skill, Claude Code only
 multiagent-collab/                          skill with its own setup; see below
-roles/      README.md  _shared/  <role>/ROLE.md  <role>/role.toml
+roles/      README.md  bindings.toml  _shared/  <role>/ROLE.md  <role>/role.toml
 rules/      avoid-bash-injection-heuristics/    rule, Claude Code only
-providers/  claude-code/  codex/                what differs between providers
-tools/      session-profile/                    session-record reader and its tests
+providers/  <name>/dictionary.toml  <name>/actions.md   for claude-code and codex
+tools/      setup/            workflow_setup.py  wfsetup/  defaults.toml  tests/
+            session-profile/  session-record reader and its tests
 docs/       agent-roles-framework.md, v1-to-v2.md and the v1 slide
 ```
 
@@ -24,7 +25,7 @@ docs/       agent-roles-framework.md, v1-to-v2.md and the v1 slide
   skills root.
 - A role is a directory under `roles/`, a rule a directory under `rules/`, a tool a
   directory under `tools/`, and a provider's own material a directory under
-  `providers/`.
+  `providers/`. `README.md` shows the same layout: a change here is made there too.
 - Nothing new is added as a loose file at the root. A unit keeps its scripts,
   references and tests inside its own directory, and a skill reaches no path outside
   its own.
@@ -69,6 +70,18 @@ WFSETUP_TEST_FULL=1 python -B -m unittest discover -s tools/setup/tests -p "test
   output, pinned `-text`. A binary file type gets an explicit `binary` line there.
 - **Paths.** No file holds an absolute path of one machine: no home directory, no
   user name, no drive letter. Use `~`, a path relative to the unit, or a placeholder.
+- **Sources.** `python tools/setup/workflow_setup.py validate` checks every skill, role,
+  rule and provider file, a machine path among the faults. Run it after changing one.
+
+### Setup tool
+
+- **Generated files are never edited.** A role definition, a loaded-role skill or a
+  Codex profile in a provider home, and what `render --project DIR` wrote in a project, are
+  made from `roles/`, `providers/` and the settings. Change the source, then run
+  `render`.
+- **One write path.** Every change setup makes on a disk goes through
+  `tools/setup/wfsetup/fsio.py`; no other module of the package changes the disk, and a
+  test reads each module's syntax tree for it.
 
 ### Skills
 
