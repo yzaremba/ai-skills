@@ -44,10 +44,18 @@ Run each of these from the repository root with Python 3.11 or later. On a machi
 `python` is a project's virtual environment, use a system interpreter instead:
 
 ```bash
-python multiagent-collab/tests/test_multiagent_collab.py
-python -m unittest discover -s tools/session-profile/tests
-python -m unittest discover -s tools/setup/tests
-python -m unittest discover -s prd-implementation/tests
+python -B multiagent-collab/tests/test_multiagent_collab.py
+python -B -m unittest discover -s tools/session-profile/tests
+python -B -m unittest discover -s tools/setup/tests
+python -B -m unittest discover -s prd-implementation/tests
+```
+
+The setup suite samples its two longest tests (every kill point of every command, and the
+lock race). After a change to the setup tool's write path run them in full as well:
+
+```bash
+WFSETUP_TEST_FULL=1 python -B -m unittest discover -s tools/setup/tests -p "test_real_crash.py"
+WFSETUP_TEST_FULL=1 python -B -m unittest discover -s tools/setup/tests -p "test_lock_race.py"
 ```
 
 ## Conventions

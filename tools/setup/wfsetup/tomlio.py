@@ -2,7 +2,8 @@
 
 Reading uses ``tomllib``. Writing uses the small emitter below, which covers
 what setup writes: strings, integers, booleans, arrays of strings, and
-tables, with nested tables as ``[a.b]`` headers. Anything else is refused.
+tables, with nested tables as ``[a.b]`` headers, and comment lines at the
+head of the document. Anything else is refused.
 
 The emitter's output is UTF-8 with LF line endings on every platform, and
 any string it accepts reads back unchanged through ``tomllib``.
@@ -12,7 +13,7 @@ from __future__ import annotations
 import re
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from . import paths
 from .errors import SetupError
@@ -41,7 +42,7 @@ def load(path: Path) -> dict[str, Any]:
     try:
         raw = path.read_bytes()
     except OSError as exc:
-        raise SetupError(f"{path}: cannot be read: {exc.strerror or exc}") from None
+        raise SetupError(f"{path}: cannot be read: {paths.reason(exc)}") from None
     try:
         # A byte order mark is what some Windows editors put first.
         text = raw.decode("utf-8-sig")
@@ -140,17 +141,37 @@ def format_value(value: Any, multiline: bool = False, where: str = "value") -> s
     raise SetupError(f"{where}: cannot write {article(type_name(value))} value")
 
 
-def dumps(data: dict[str, Any]) -> str:
+def dumps(data: dict[str, Any], header: Iterable[str] = ()) -> str:
     """A table as a TOML document. Keys keep their order; in each table the
-    plain values come first and the sub-tables after them."""
-    lines: list[str] = []
-    _emit_table(data, (), lines)
+    plain values come first and the sub-tables after them.
+
+    ``header`` is written first, each item as one comment line (an empty
+    item as a bare ``#``), with an empty line between it and the data. A
+    comment changes nothing a parser reads, so the document reads back as
+    ``data`` with any header; a line TOML does not allow in a comment is
+    refused (see ``comment``).
+    """
+    lines: list[str] = [comment(line) for line in header]
+    body: list[str] = []
+    _emit_table(data, (), body)
+    if lines and body:
+        lines.append("")
+    lines.extend(body)
     return "\n".join(lines) + "\n" if lines else ""
 
 
-def dump(path: Path, data: dict[str, Any]) -> None:
-    """Write ``data`` to ``path`` as UTF-8 with LF line endings."""
-    path.write_bytes(dumps(data).encode("utf-8"))
+def comment(text: str) -> str:
+    """``text`` as one comment line. TOML allows no control character in a
+    comment but the tab, so a line break cannot end the comment early and
+    turn the rest of the text into data."""
+    if not isinstance(text, str):
+        raise SetupError(f"a comment line: cannot write {article(type_name(text))} as a comment")
+    _check_encodable(text, "a comment line")
+    for char in text:
+        code = ord(char)
+        if (code < 0x20 and char != "\t") or code == 0x7F:
+            raise SetupError(f"a comment line: holds the control character U+{code:04X}, which TOML does not allow")
+    return f"# {text}".rstrip(" ") if text.strip(" ") else "#"
 
 
 def _emit_table(table: dict[str, Any], path: tuple[str, ...], lines: list[str]) -> None:

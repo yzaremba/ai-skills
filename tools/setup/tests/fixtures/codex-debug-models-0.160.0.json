@@ -193,7 +193,7 @@
     },
     {
       "slug": "gpt-5.5",
-      "visibility": "list",
+      "visibility": "hide",
       "default_reasoning_level": "medium",
       "supported_reasoning_levels": [
         {

@@ -105,7 +105,7 @@ default_effort = "medium"
 
 [models."gpt-5.5"]
 efforts = ["low", "medium", "high", "xhigh"]
-visibility = "list"
+visibility = "hide"
 default_effort = "medium"
 
 [models.codex-auto-review]

@@ -69,7 +69,9 @@ are null, because nothing decided a value that is not written, and
 is null. The notes of the paragraph above are "notes", a list beside
 "profiles", and are then not repeated on stderr.
 
-Exit code 0, or 2 on an error, which is printed to stderr.
+Exit code 0, or 2 on an error, which is printed to stderr; 130 when
+interrupted with Ctrl-C, and 128 plus the signal's number when told to end
+by a signal; 141 when the reader of the output went away.
 """
 from __future__ import annotations
 
@@ -100,7 +102,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
 
 
 def run(args: argparse.Namespace) -> int:
-    where = locations.from_args(args)
+    where = locations.from_args(args, writes=False)
     resolved: Resolution | None = None
     if not args.key:
         entries = settings.resolve(where)

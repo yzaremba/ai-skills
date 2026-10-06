@@ -239,10 +239,10 @@ class FileTests(unittest.TestCase):
         self.addCleanup(scratch.cleanup)
         self.root = Path(scratch.name)
 
-    def test_dump_writes_utf8_with_line_feeds_only(self) -> None:
+    def test_what_dumps_gives_is_utf8_with_line_feeds_only(self) -> None:
         file = self.root / "out.toml"
         document = {"a": {"text": "caf\u00e9\r\nsecond", "n": 1}, "b": {"flag": True}}
-        tomlio.dump(file, document)
+        file.write_bytes(tomlio.dumps(document).encode("utf-8"))
         raw = file.read_bytes()
         self.assertNotIn(b"\r", raw)
         self.assertIn("caf\u00e9".encode("utf-8"), raw)

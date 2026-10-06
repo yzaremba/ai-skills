@@ -99,13 +99,23 @@ def _dictionary_documents(where: Locations) -> list[Document]:
     ]
 
 
-def resolve(where: Locations, groups: Iterable[str] = schema.GROUPS) -> dict[str, Entry]:
+def resolve(
+    where: Locations, groups: Iterable[str] = schema.GROUPS, layers: Iterable[str] = LAYERS
+) -> dict[str, Entry]:
     """The effective value of every key of ``groups``, by dotted key, in the
-    schema's order. Every fault found in those groups is reported at once."""
+    schema's order. Every fault found in those groups is reported at once.
+
+    With ``layers``, only those layers count: what the values would be
+    without the others, which is what ``init`` compares a file with. A
+    layer left out is not checked either; its file must still parse.
+    """
     groups = tuple(groups)
+    layers = tuple(layers)
     problems: list[str] = []
     merged: dict[str, Entry] = {}
     for document in documents(where, groups):
+        if document.layer not in layers:
+            continue
         if not schema.check_document(document.data, document.file, problems):
             continue
         for group in groups:

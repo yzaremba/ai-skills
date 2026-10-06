@@ -1,0 +1,1043 @@
+"""Tests for the role definitions ``render`` generates for each provider.
+
+Run from the repository root:
+    python -m unittest discover -s tools/setup/tests
+
+Every home is a scratch directory. The clone is the fixture clone of
+``test_render.RenderCase`` with roles of its own: a role that starts a
+session and dispatches (lead), one with a hard profile (worker), one that
+may neither edit, run commands nor dispatch (reviewer), one that may not
+run commands (runner), one on a model with no effort setting (quick) and
+one with no entry point at all (silent). ``RepositoryCase`` renders the
+repository's own roles and holds whatever they say.
+
+These tests are about the definitions: they run ``render`` with the parts up
+to ``roles`` (``DefinitionsCase.PARTS``). What the ``entry`` part adds, a
+loaded role's skill, a starting role's profile and the project level, is in
+``test_entry``.
+"""
+from __future__ import annotations
+
+import dataclasses
+import hashlib
+import json
+import os
+import re
+import shutil
+import tomllib
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import support
+from fileops_support import POSIX, SYMLINKS
+from test_render import LINKS, RenderCase, tree
+from wfsetup import definitions, fileops, fsio, homes, locations, render, roles, validate
+from wfsetup.errors import SetupError
+from wfsetup.locations import Locations
+
+CLAUDE = "claude-code"
+CODEX = "codex"
+
+# A description that YAML cannot take plain: a colon and a space, quotes of
+# both kinds, a backslash, a hash after a space, a leading bracket.
+ODD = '[Lead]: routes "each" request \\ and # more, it\'s all: yes'
+
+ROLE = """name = "{name}"
+title = "{title}"
+description = {description}
+includes = {includes}
+
+[profile]
+tier = "{tier}"
+effort = "{effort}"
+{hard}
+[limits]
+edits = {edits}
+commands = {commands}
+dispatches = {dispatches}
+
+[entry]
+dispatch = {dispatch}
+load = {load}
+start = {start}
+"""
+
+HARD = """
+[profile.hard]
+tier = "deep"
+effort = "high"
+"""
+
+BINDINGS = """schema_version = 1
+
+[[binding]]
+role = "worker"
+skill = "alpha"
+stage = "stage-1.md"
+part = "owns"
+
+[[binding]]
+role = "lead"
+skill = "alpha"
+stage = "stage-1.md"
+part = "checks"
+note = "Reads the stage and writes nothing."
+"""
+
+ALL_FILES = {
+    ".claude/agents/lead.md", ".claude/agents/quick.md", ".claude/agents/reviewer.md", ".claude/agents/runner.md",
+    ".claude/agents/worker.md", ".claude/agents/worker-hard.md",
+    ".codex/agents/quick.toml", ".codex/agents/reviewer.toml", ".codex/agents/runner.toml",
+    ".codex/agents/worker.toml", ".codex/agents/worker-hard.toml",
+}
+
+_ESCAPES = {'"': '"', "\\": "\\", "n": "\n", "t": "\t", "r": "\r"}
+_PLAIN = re.compile(r"[A-Za-z][A-Za-z0-9._-]*(?:, [A-Za-z][A-Za-z0-9]*)*")
+_WORDS = ("true", "false", "yes", "no", "on", "off", "null", "y", "n")
+
+
+def yaml_value(raw: str) -> str:
+    """One scalar as a strict reader takes it: double-quoted with the
+    escapes YAML defines, or plain where plain can be nothing but a string."""
+    if not raw.startswith('"'):
+        if not _PLAIN.fullmatch(raw) or raw.lower() in _WORDS:
+            raise ValueError(f"not a plain string: {raw!r}")
+        return raw
+    if len(raw) < 2 or not raw.endswith('"'):
+        raise ValueError(f"an open quote: {raw!r}")
+    out, at, end = [], 1, len(raw) - 1
+    while at < end:
+        char = raw[at]
+        if char == '"':
+            raise ValueError(f"a quote inside the string: {raw!r}")
+        if char != "\\":
+            if ord(char) < 0x20:
+                raise ValueError("a control character")
+            out.append(char)
+            at += 1
+            continue
+        if at + 1 >= end:
+            raise ValueError("an escape with nothing after it")
+        code = raw[at + 1]
+        if code in _ESCAPES:
+            out.append(_ESCAPES[code])
+            at += 2
+        elif code in "xu":
+            width = 2 if code == "x" else 4
+            digits = raw[at + 2:at + 2 + width]
+            if len(digits) != width or at + 2 + width > end:
+                raise ValueError("a short escape")
+            out.append(chr(int(digits, 16)))
+            at += 2 + width
+        else:
+            raise ValueError(f"an unknown escape: \\{code}")
+    return "".join(out)
+
+
+def frontmatter(text: str) -> tuple[dict[str, str], str]:
+    """The fields of a Claude Code definition, in order, and its body."""
+    if not text.startswith("---\n"):
+        raise ValueError("no frontmatter")
+    head, found, body = text[4:].partition("\n---\n")
+    if not found:
+        raise ValueError("the frontmatter is not closed")
+    fields: dict[str, str] = {}
+    for line in head.split("\n"):
+        matched = re.fullmatch(r"([A-Za-z]+): (\S.*)", line)
+        if not matched or matched.group(1) in fields:
+            raise ValueError(f"not a `key: value` line: {line!r}")
+        fields[matched.group(1)] = yaml_value(matched.group(2))
+    return fields, body
+
+
+def digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+class DefinitionsCase(RenderCase):
+    ROLES = ()
+    # How many of ``render.PARTS`` a run has; None for all of them.
+    PARTS: int | None = 3
+
+    def setUp(self) -> None:
+        super().setUp()
+        if self.PARTS is not None:
+            patch = mock.patch.object(render, "PARTS", render.PARTS[:self.PARTS])
+            patch.start()
+            self.addCleanup(patch.stop)
+        for name in ("worker", "lead"):
+            shutil.rmtree(self.clone / "roles" / name)
+        self.fill(self.clone)
+        self.claude_agents = self.claude / "agents"
+        self.codex_agents = self.codex / "agents"
+
+    def fill(self, clone: Path) -> None:
+        def put(name: str, text: str) -> None:
+            file = clone / name
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(text.encode("utf-8"))
+
+        for provider, text in support.FIXTURE_DICTIONARIES.items():
+            put(f"providers/{provider}/dictionary.toml", text)
+            put(f"providers/{provider}/actions.md", f"## How actions are done on {provider}\n\n- Dispatch a role.\n")
+        put("roles/_shared/brief.md", "## The brief\n\nWork from the brief.\n")
+        put("roles/_shared/gates.md", "## Gates\n\nHold the gate.\n")
+        put("roles/bindings.toml", BINDINGS)
+        self.source(clone, "lead", description=json.dumps(ODD), includes='["gates.md"]', edits="false",
+                  dispatches='["worker", "worker-hard"]', dispatch="false", load="true", start="true")
+        self.source(clone, "worker", hard=HARD, includes='["brief.md"]')
+        self.source(clone, "reviewer", includes='["brief.md", "gates.md"]', edits="false", commands="false")
+        self.source(clone, "runner", commands="false", dispatches='["worker"]')
+        self.source(clone, "quick", tier="fast")
+        self.source(clone, "silent", dispatch="false")
+
+    def source(self, clone: Path, name: str, **changes: str) -> None:
+        values = {
+            "name": name, "title": name.title(), "description": f'"Does {name} work."', "includes": "[]",
+            "tier": "standard", "effort": "medium", "hard": "", "edits": "true", "commands": "true",
+            "dispatches": "[]", "dispatch": "true", "load": "false", "start": "false",
+        }
+        values.update(changes)
+        directory = clone / "roles" / name
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "role.toml").write_bytes(ROLE.format(**values).encode("utf-8"))
+        (directory / "ROLE.md").write_bytes(f"# {name.title()}\n\nYou are the {name}. Do the work.\n".encode("utf-8"))
+
+    def where(self, project: bool = False) -> Locations:
+        return Locations(home=self.home, project=self.project if project else None, clone=self.clone)
+
+    def generated(self, home: Path | None = None) -> dict[str, bytes]:
+        """Every file in the two agents directories, by its path in the home."""
+        home = home or self.home
+        found: dict[str, bytes] = {}
+        for directory in (home / ".claude" / "agents", home / ".codex" / "agents"):
+            if directory.is_dir():
+                for file in sorted(directory.iterdir()):
+                    found[file.relative_to(home).as_posix()] = file.read_bytes()
+        return found
+
+    def changed_by(self, change) -> set[str]:
+        """Render, make ``change``, render again: the files whose bytes differ."""
+        self.assertEqual(self.render()[0], 0)
+        before = self.generated()
+        self.assertEqual(set(before), ALL_FILES)
+        change()
+        code, out, err = self.render()
+        self.assertEqual((code, err), (0, ""), out)
+        after = self.generated()
+        self.assertEqual(set(after), set(before))
+        return {name for name in after if after[name] != before[name]}
+
+    def claude_file(self, name: str) -> tuple[dict[str, str], str]:
+        return frontmatter((self.claude_agents / f"{name}.md").read_bytes().decode("utf-8"))
+
+    def codex_file(self, name: str) -> dict:
+        return tomllib.loads((self.codex_agents / f"{name}.toml").read_bytes().decode("utf-8"))
+
+    def entries(self) -> dict:
+        return json.loads(self.manifest_file.read_text(encoding="utf-8"))["entries"]
+
+
+class FilesCase(DefinitionsCase):
+    def test_each_provider_gets_the_definitions_its_entry_flags_ask_for(self) -> None:
+        code, out, err = self.render()
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(set(self.generated()), ALL_FILES)
+        # A role that only starts a session is an agent file on Claude Code alone.
+        self.assertNothingAt(self.codex_agents / "lead.toml")
+        # A role with no entry point gives nothing.
+        self.assertNothingAt(self.claude_agents / "silent.md")
+        self.assertNothingAt(self.codex_agents / "silent.toml")
+        self.assertIn("11 files written, 0 removed", out.splitlines()[-1])
+        for file in (*self.claude_agents.iterdir(), *self.codex_agents.iterdir()):
+            self.assertFalse(os.path.islink(file))
+            data = file.read_bytes()
+            self.assertNotIn(b"\r", data)
+            self.assertTrue(data.endswith(b"\n"))
+
+    def test_the_frontmatter_of_a_claude_code_definition(self) -> None:
+        self.render()
+        fields, _ = self.claude_file("worker")
+        self.assertEqual(list(fields.items()), [
+            ("name", "worker"), ("description", "Does worker work."), ("model", "sonnet"), ("effort", "medium"),
+            ("disallowedTools", "Agent, Workflow"),
+        ])
+        hard, _ = self.claude_file("worker-hard")
+        self.assertEqual(list(hard.items()), [
+            ("name", "worker-hard"), ("description", "The Worker for steps marked hard. Does worker work."),
+            ("model", "opus"), ("effort", "high"), ("disallowedTools", "Agent, Workflow"),
+        ])
+        text = (self.claude_agents / "worker.md").read_text(encoding="utf-8")
+        self.assertTrue(text.startswith('---\nname: worker\ndescription: "Does worker work."\nmodel: sonnet\n'))
+        for name in ("lead", "worker", "worker-hard", "reviewer", "runner", "quick"):
+            self.assertNotIn("tools", [key for key in self.claude_file(name)[0] if key != "disallowedTools"])
+
+    def test_the_keys_of_a_codex_definition(self) -> None:
+        self.render()
+        data = self.codex_file("worker-hard")
+        self.assertEqual(list(data), ["name", "description", "model", "model_reasoning_effort", "developer_instructions"])
+        self.assertEqual(data["name"], "worker_hard")
+        self.assertEqual(data["description"], "The Worker for steps marked hard. Does worker work.")
+        self.assertEqual((data["model"], data["model_reasoning_effort"]), ("gpt-6.1-sol", "high"))
+        self.assertEqual(self.codex_file("worker")["name"], "worker")
+        self.assertEqual(self.codex_file("worker")["model_reasoning_effort"], "medium")
+
+    def test_a_description_that_needs_quoting_reads_back_the_same(self) -> None:
+        self.render()
+        fields, _ = self.claude_file("lead")
+        self.assertEqual(fields["description"], ODD)
+        raw = (self.claude_agents / "lead.md").read_text(encoding="utf-8").split("\n")[2]
+        self.assertEqual(raw, 'description: "[Lead]: routes \\"each\\" request \\\\ and # more, it\'s all: yes"')
+        # The same text through the Codex format.
+        self.source(self.clone, "worker", hard=HARD, includes='["brief.md"]', description=json.dumps(ODD))
+        self.assertEqual(self.render()[0], 0)
+        self.assertEqual(self.codex_file("worker")["description"], ODD)
+        self.assertEqual(self.codex_file("worker-hard")["description"], f"The Worker for steps marked hard. {ODD}")
+
+    def test_any_description_text_survives_both_formats(self) -> None:
+        for text in ("plain", "- a dash first", "yes", "a: b", "tab\there", "line\nbreak", "é ü   ﻿ \x85 \x7f",
+                     "'single'", '"', "\\", "trailing \\", "# hash", "{a: 1}", "100%", "null", "> folded", "|"):
+            with self.subTest(text):
+                self.assertEqual(yaml_value(definitions.yaml_quoted(text)), text)
+                self.assertEqual(yaml_value(definitions.yaml_scalar(text)), text)
+                fields = {"name": "x", "role": "x", "description": text, "model": "m", "effort": None}
+                made = definitions.claude_code_text(fields, ["A notice."], ["Body."])
+                self.assertEqual(frontmatter(made)[0]["description"], text)
+                self.assertEqual(tomllib.loads(definitions.codex_text(fields, ["A notice."], ["Body."]))["description"], text)
+        for model in ("opus", "gpt-6.1-sol", "claude-opus-5-5"):
+            self.assertEqual(definitions.yaml_scalar(model), model)
+        for model in ("opus[1m]", "1", "true", "a b"):
+            self.assertTrue(definitions.yaml_scalar(model).startswith('"'), model)
+            self.assertEqual(yaml_value(definitions.yaml_scalar(model)), model)
+
+    def test_the_strict_reader_refuses_what_is_not_a_string(self) -> None:
+        for raw in ("yes", "a: b", "# x", "[a]", '"open', '"a"b"', '"\\q"', "1", "- a", "a #b"):
+            with self.subTest(raw):
+                with self.assertRaises(ValueError):
+                    yaml_value(raw)
+
+    def test_the_limits_of_each_combination(self) -> None:
+        self.render()
+        denied = {name: self.claude_file(name)[0].get("disallowedTools") for name in ("lead", "reviewer", "runner", "worker")}
+        self.assertEqual(denied, {
+            "lead": "Edit, Write, NotebookEdit",                                   # edits = false, dispatches some
+            "reviewer": "Edit, Write, NotebookEdit, Bash, PowerShell, Monitor, Agent, Workflow",  # nothing allowed
+            "runner": "Bash, PowerShell, Monitor",                                 # commands = false, dispatches some
+            "worker": "Agent, Workflow",                                           # dispatches = []
+        })
+        # An empty ``dispatches`` denies every tool that starts an agent:
+        # the one that spawns one, and the one that runs a script spawning many.
+        self.assertEqual(definitions.DISPATCH_TOOLS, ("Agent", "Workflow"))
+        self.assertEqual(definitions.denied_tools({"dispatches": []}), ("Agent", "Workflow"))
+        self.assertEqual(definitions.denied_tools({"dispatches": ["worker"]}), ())
+        self.assertEqual(self.codex_file("reviewer")["sandbox_mode"], "read-only")
+        self.assertEqual(list(self.codex_file("reviewer")), [
+            "name", "description", "model", "model_reasoning_effort", "sandbox_mode", "developer_instructions",
+        ])
+        for name in ("runner", "worker", "worker-hard", "quick"):
+            self.assertNotIn("sandbox_mode", self.codex_file(name))
+
+    def test_a_role_with_no_limit_denies_nothing(self) -> None:
+        self.assertEqual(definitions.denied_tools({"edits": True, "commands": True, "dispatches": ["worker"]}), ())
+        self.assertEqual(definitions.denied_tools({}), ())
+        self.source(self.clone, "runner", dispatches='["worker"]')
+        self.render()
+        self.assertEqual(list(self.claude_file("runner")[0]), ["name", "description", "model", "effort"])
+
+    def test_no_effort_is_written_for_a_model_that_takes_none(self) -> None:
+        self.render()
+        fields, _ = self.claude_file("quick")
+        self.assertEqual(list(fields.items()), [
+            ("name", "quick"), ("description", "Does quick work."), ("model", "haiku"),
+            ("disallowedTools", "Agent, Workflow"),
+        ])
+        # The Codex model of the same tier takes one.
+        self.assertEqual(self.codex_file("quick")["model_reasoning_effort"], "medium")
+        self.write(self.user_file, '[providers.codex.tiers]\nfast = "gpt-unlisted"\n')
+        self.assertEqual(self.render()[0], 0)
+        self.assertEqual(self.codex_file("quick")["model_reasoning_effort"], "medium")  # unlisted: unchecked, kept
+
+    def test_the_body_is_the_notice_the_role_its_includes_its_bindings_and_the_actions(self) -> None:
+        self.render()
+        _, body = self.claude_file("reviewer")
+        self.assertEqual(body, "\n" + roles.join_text([
+            "<!--\n" + "\n".join(definitions.notice_lines(CLAUDE, "reviewer", "reviewer")) + "\n-->",
+            "# Reviewer\n\nYou are the reviewer. Do the work.",
+            "## The brief\n\nWork from the brief.",
+            "## Gates\n\nHold the gate.",
+            definitions.bindings_section([]),
+            "## How actions are done on claude-code\n\n- Dispatch a role.",
+        ]))
+        instructions = self.codex_file("reviewer")["developer_instructions"]
+        self.assertEqual(instructions, roles.join_text([
+            definitions.notice_inline("reviewer"),
+            "# Reviewer\n\nYou are the reviewer. Do the work.",
+            "## The brief\n\nWork from the brief.",
+            "## Gates\n\nHold the gate.",
+            definitions.bindings_section([]),
+            "## How actions are done on codex\n\n- Dispatch a role.",
+        ]))
+        # What validation measured is in the file as measured.
+        measured = roles.join_text([
+            "# Reviewer\n\nYou are the reviewer. Do the work.\n", "## The brief\n\nWork from the brief.\n",
+            "## Gates\n\nHold the gate.\n",
+        ])
+        sizes = validate.check(self.where()).role_sizes
+        self.assertEqual(sizes["reviewer"], len(measured.encode("utf-8")))
+        self.assertIn(measured.rstrip("\n") + "\n\n## Your bindings", body)
+        self.assertIn(measured.rstrip("\n") + "\n\n## Your bindings", instructions)
+
+    def test_the_notice_names_the_source_and_breaks_neither_format(self) -> None:
+        self.render()
+        text = (self.claude_agents / "worker-hard.md").read_text(encoding="utf-8")
+        _, body = frontmatter(text)
+        self.assertTrue(body.startswith("\n<!--\nGenerated by workflow setup for the definition worker-hard of the role worker. Do not edit"))
+        comment = body[body.index("<!--") + 4:body.index("-->")]
+        self.assertNotIn("--", comment)
+        self.assertIn("roles/worker/ (ROLE.md, role.toml)", comment)
+        self.assertIn("providers/claude-code/actions.md", comment)
+        self.assertIn("run `python tools/setup/workflow_setup.py render`", comment)
+        self.assertEqual(body.count("<!--"), 1)
+
+        raw = (self.codex_agents / "worker-hard.toml").read_text(encoding="utf-8")
+        head = raw.split("\n\n", 1)[0].split("\n")
+        self.assertEqual(head, [f"# {line}" for line in definitions.notice_lines(CODEX, "worker", "worker-hard")])
+        self.assertIn("providers/codex/actions.md", head[1])
+        instructions = self.codex_file("worker-hard")["developer_instructions"]
+        self.assertTrue(instructions.startswith(
+            "[This text is generated by workflow setup from roles/worker/ of the skills repository."
+        ))
+        self.assertIn('developer_instructions = """\n[This text is generated', raw)
+
+    def test_the_binding_rows_reach_the_right_roles_and_the_hard_definition(self) -> None:
+        self.render()
+        owns = "- Skill `alpha`, stage file `stage-1.md`, part `owns`: you do everything the stage file asks of whoever runs the stage."
+        checks = "- Skill `alpha`, stage file `stage-1.md`, part `checks`: Reads the stage and writes nothing."
+        for name in ("worker", "worker-hard"):
+            body = self.claude_file(name)[1]
+            self.assertIn("## Your bindings\n\nEach row binds you to one stage file", body)
+            self.assertIn(owns, body)
+            self.assertNotIn(checks, body)
+            self.assertIn(owns, self.codex_file(name)["developer_instructions"])
+        self.assertIn(checks, self.claude_file("lead")[1])
+        self.assertNotIn(owns, self.claude_file("lead")[1])
+        for name in ("reviewer", "runner", "quick"):
+            self.assertIn("## Your bindings\n\nNone: no stage file of the process skills is bound to you.", self.claude_file(name)[1])
+            self.assertNotIn("stage-1.md", self.codex_file(name)["developer_instructions"])
+
+    def test_a_part_without_a_note_points_at_the_stage_file(self) -> None:
+        section = definitions.bindings_section([
+            definitions.Binding("r", "alpha", "s.md", "implementer"),
+            definitions.Binding("r", "alpha", "t.md", "owns", "And the index."),
+        ])
+        self.assertIn("part `implementer`: the part the stage file defines under that name.", section)
+        self.assertIn("part `owns`: you do everything the stage file asks of whoever runs the stage. And the index.", section)
+
+    def test_the_report_gives_each_definition_its_size_model_and_effort(self) -> None:
+        code, report, _ = self.report()
+        self.assertEqual(code, 0)
+        listed = {(found["provider"], found["file"]): found for found in report["definitions"]}
+        self.assertEqual(len(listed), 11)
+        for (provider, name), found in listed.items():
+            file = (self.claude_agents if provider == CLAUDE else self.codex_agents) / name
+            self.assertEqual(found["bytes"], len(file.read_bytes()))
+            self.assertEqual(found["status"], render.CREATE)
+        self.assertEqual(
+            (listed[(CLAUDE, "quick.md")]["model"], listed[(CLAUDE, "quick.md")]["effort"]), ("haiku", None)
+        )
+        self.assertEqual(listed[(CODEX, "worker-hard.toml")]["definition"], "worker-hard")
+        self.assertEqual(listed[(CODEX, "worker-hard.toml")]["role"], "worker")
+        self.assertEqual(self.items(report, CLAUDE, "agents")["lead.md"], render.CREATE)
+        self.assertEqual(report["counts"]["file_write"], 11)
+        self.assertEqual(report["counts"]["create"], 6)  # the links are counted apart
+
+        code, out, _ = self.render()
+        size = len((self.claude_agents / "quick.md").read_bytes())
+        self.assertIn(f"    quick.md: up to date: as generated ({size:,} bytes; model haiku, no effort setting)", out.splitlines())
+        size = len((self.codex_agents / "worker.toml").read_bytes())
+        self.assertIn(f"    worker.toml: up to date: as generated ({size:,} bytes; model gpt-6.1-sol, effort medium)", out.splitlines())
+
+    def test_help_states_the_options_and_the_rule(self) -> None:
+        code, out, _ = support.run("render", "--help")
+        flat = " ".join(out.split())
+        self.assertEqual(code, 0)
+        for text in ("--no-roles", "--overwrite-edited", "installs the process alone", "<role>-hard",
+                     "Edit, Write, NotebookEdit; Bash, PowerShell, Monitor; Agent", "read-only sandbox",
+                     "one generated file, key or block was kept that --overwrite-edited would replace"):
+            self.assertIn(text, flat)
+
+
+class StableCase(DefinitionsCase):
+    def test_a_second_run_writes_nothing(self) -> None:
+        self.assertEqual(self.render()[0], 0)
+        before = tree(self.root)
+        code, report, err = self.report()
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(tree(self.root), before)
+        self.assertEqual((report["plan"], report["changed"]), ([], False))
+        self.assertEqual(report["counts"]["file_up_to_date"], 11)
+        self.assertEqual(report["counts"]["file_write"], 0)
+        self.assertEqual({found["status"] for found in report["definitions"]}, {render.UP_TO_DATE})
+        code, out, _ = self.render()
+        self.assertTrue(out.splitlines()[-1].startswith(f"{fileops.UP_TO_DATE}; nothing was written"))
+        self.assertEqual(tree(self.root), before)
+
+    def test_a_dry_run_writes_nothing_and_says_what_it_would(self) -> None:
+        before = tree(self.root)
+        code, out, err = self.render("--dry-run")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(tree(self.root), before)
+        self.assertIn("  create file home:.codex/agents/worker-hard.toml", out.splitlines())
+        self.assertEqual(
+            out.splitlines()[-1],
+            "dry run: would create 6 links and remove 0, write 11 files and remove 0; nothing was written; 2 skipped "
+            "(each is listed as skipped, with the reason)",
+        )
+
+    def test_two_clone_paths_give_the_same_bytes(self) -> None:
+        self.assertEqual(self.render()[0], 0)
+        other_clone = self.root / "elsewhere" / "a longer name" / "clone-two"
+        shutil.copytree(self.clone, other_clone)
+        other_home = self.root / "second-home"
+        (other_home / ".claude").mkdir(parents=True)
+        (other_home / ".codex").mkdir()
+        with mock.patch.object(locations, "CLONE", other_clone), \
+                mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
+            code, _, err = support.run("render", "--home", str(other_home))
+        self.assertEqual((code, err), (0, ""))
+        first, second = self.generated(), self.generated(other_home)
+        self.assertEqual(set(first), ALL_FILES)
+        self.assertEqual(first, second)
+        for name, data in first.items():
+            for machine in (str(self.root), self.root.as_posix(), self.root.name, "clone-two", "fake-clone"):
+                self.assertNotIn(machine.encode("utf-8"), data, name)
+        # The record's digests are the same too, and hold no path.
+        mine = self.entries()
+        theirs = json.loads((other_home / ".agents/workflow-setup/manifest.json").read_text(encoding="utf-8"))["entries"]
+        for key in (f"home:{name}" for name in ALL_FILES):
+            self.assertEqual(mine[key], theirs[key])
+
+    def test_a_crlf_checkout_gives_the_same_bytes_and_the_same_digest(self) -> None:
+        self.assertEqual(self.render()[0], 0)
+        before, digests = self.generated(), definitions.digests(self.where())
+        for file in (self.clone / "roles/worker/ROLE.md", self.clone / "roles/_shared/brief.md",
+                     self.clone / "providers/codex/actions.md", self.clone / "roles/worker/role.toml"):
+            file.write_bytes(b"\xef\xbb\xbf" + file.read_bytes().replace(b"\n", b"\r\n"))
+        self.assertEqual(definitions.digests(self.where()), digests)
+        code, report, _ = self.report()
+        self.assertEqual((code, report["plan"]), (0, []))
+        self.assertEqual(self.generated(), before)
+
+    def test_the_reversal_restores_the_home_byte_for_byte(self) -> None:
+        self.keep(self.claude / "CLAUDE.md")
+        self.keep(self.claude_agents / "mine.md")
+        self.keep(self.codex / "config.toml", 'model = "x"\n')
+        self.write(self.user_file, '[roles.worker]\ntier = "deep"\n')
+        home_before, clone_before = tree(self.home), tree(self.clone)
+        self.assertEqual(self.render()[0], 0)
+        self.assertNotEqual(tree(self.home), home_before)
+        roots = self.roots()
+        result = fileops.plan_reversal(roots).apply()
+        self.assertEqual(result.kept, [])
+        self.assertTrue(fileops.remove_state(roots))
+        self.assertEqual(tree(self.home), home_before)
+        self.assertEqual(tree(self.clone), clone_before)
+
+
+class DependsCase(DefinitionsCase):
+    """A change reaches exactly the definitions made from what changed."""
+
+    def test_a_roles_text(self) -> None:
+        file = self.clone / "roles/worker/ROLE.md"
+        changed = self.changed_by(lambda: file.write_bytes(file.read_bytes() + b"\nOne more line.\n"))
+        self.assertEqual(changed, {
+            ".claude/agents/worker.md", ".claude/agents/worker-hard.md",
+            ".codex/agents/worker.toml", ".codex/agents/worker-hard.toml",
+        })
+
+    def test_an_include(self) -> None:
+        file = self.clone / "roles/_shared/gates.md"
+        changed = self.changed_by(lambda: file.write_bytes(b"## Gates\n\nHold every gate.\n"))
+        self.assertEqual(changed, {".claude/agents/lead.md", ".claude/agents/reviewer.md", ".codex/agents/reviewer.toml"})
+
+    def test_a_binding_row(self) -> None:
+        file = self.clone / "roles/bindings.toml"
+        changed = self.changed_by(lambda: file.write_bytes(file.read_bytes().replace(b"writes nothing", b"writes a note")))
+        self.assertEqual(changed, {".claude/agents/lead.md"})
+
+    def test_a_new_binding_row_for_a_role_with_a_hard_definition(self) -> None:
+        file = self.clone / "roles/bindings.toml"
+        (self.clone / "beta/references").mkdir()
+        (self.clone / "beta/references/stage-2.md").write_bytes(b"# Stage 2\n")
+        row = b'\n[[binding]]\nrole = "worker"\nskill = "beta"\nstage = "stage-2.md"\npart = "owns"\n'
+        changed = self.changed_by(lambda: file.write_bytes(file.read_bytes() + row))
+        self.assertEqual(changed, {
+            ".claude/agents/worker.md", ".claude/agents/worker-hard.md",
+            ".codex/agents/worker.toml", ".codex/agents/worker-hard.toml",
+        })
+
+    def test_a_providers_action_notes(self) -> None:
+        file = self.clone / "providers/codex/actions.md"
+        changed = self.changed_by(lambda: file.write_bytes(file.read_bytes() + b"- Follow up.\n"))
+        self.assertEqual(changed, {name for name in ALL_FILES if name.startswith(".codex/")})
+
+    def test_a_limit_in_role_toml(self) -> None:
+        changed = self.changed_by(lambda: self.source(self.clone, "runner", commands="false", edits="false", dispatches='["worker"]'))
+        self.assertEqual(changed, {".claude/agents/runner.md", ".codex/agents/runner.toml"})
+
+    def test_a_user_level_override_of_one_roles_tier_changes_that_roles_files_only(self) -> None:
+        """R8.3, at the user level."""
+        self.assertEqual(self.render()[0], 0)
+        hashes = {key: entry.get("sha256") for key, entry in self.entries().items()}
+        changed = self.changed_by(lambda: self.write(self.user_file, '[roles.worker]\ntier = "frontier"\n'))
+        self.assertEqual(changed, {".claude/agents/worker.md", ".codex/agents/worker.toml"})
+        self.assertEqual(self.claude_file("worker")[0]["model"], "fable")
+        self.assertEqual(self.codex_file("worker")["model"], "gpt-6-astra")
+        self.assertEqual(self.claude_file("worker-hard")[0]["model"], "opus")  # the hard definition is its own
+        after = {key: entry.get("sha256") for key, entry in self.entries().items()}
+        self.assertEqual(
+            {key for key in after if after[key] != hashes[key]},
+            {"home:.claude/agents/worker.md", "home:.codex/agents/worker.toml"},
+        )
+        for key in changed:
+            self.assertEqual(after[f"home:{key}"], digest((self.home / key).read_bytes()))
+
+    def test_a_model_named_for_one_definition_on_one_provider(self) -> None:
+        text = '[providers.codex.role_models]\nworker-hard = "gpt-6-astra"\n'
+        self.assertEqual(self.changed_by(lambda: self.write(self.user_file, text)), {".codex/agents/worker-hard.toml"})
+
+    def test_an_effort_override(self) -> None:
+        changed = self.changed_by(lambda: self.write(self.user_file, '[roles.quick]\neffort = "high"\n'))
+        # The Claude Code model of that tier takes no effort: its file is the same.
+        self.assertEqual(changed, {".codex/agents/quick.toml"})
+
+    def test_a_project_override_changes_that_roles_definitions_only(self) -> None:
+        """R8.3, at the project level: the home's files do not move, and the
+        definitions built for the project differ in that role alone."""
+        self.assertEqual(self.render()[0], 0)
+        before, record = self.generated(), self.manifest_file.read_bytes()
+        self.write(self.project_file, '[roles.worker]\ntier = "frontier"\n')
+        code, report, err = self.report("--project", str(self.project))
+        self.assertEqual((code, err, report["plan"]), (0, "", []))
+        self.assertEqual(self.generated(), before)
+        self.assertEqual(self.manifest_file.read_bytes(), record)
+
+        user = {(found.provider, found.definition): found for found in definitions.build(self.where())}
+        project = {(found.provider, found.definition): found for found in definitions.build(self.where(project=True))}
+        self.assertEqual(set(user), set(project))
+        self.assertEqual({key for key in user if user[key].text != project[key].text}, {(CLAUDE, "worker"), (CODEX, "worker")})
+        self.assertEqual({key for key in user if user[key].inputs != project[key].inputs}, {(CLAUDE, "worker"), (CODEX, "worker")})
+        for key, found in user.items():
+            if key[1] != "worker":
+                self.assertEqual(found.sha256, project[key].sha256)
+        self.assertEqual(project[(CLAUDE, "worker")].model, "fable")
+        # The text built for the home is what is in the home.
+        for (provider, _), found in user.items():
+            directory = ".claude/agents" if provider == CLAUDE else ".codex/agents"
+            self.assertEqual(found.text.encode("utf-8"), before[f"{directory}/{found.name}"])
+        self.assertEqual(definitions.user_level(self.where(project=True)), self.where())
+
+    def test_an_unrelated_change_changes_nothing(self) -> None:
+        def change() -> None:
+            (self.clone / "roles/README.md").write_bytes(b"# Roles\n\nMore.\n")
+            (self.clone / "roles/silent/ROLE.md").write_bytes(b"# Silent\n\nOther text.\n")
+            (self.clone / "providers/acme/actions.md").write_bytes(b"## Other\n\n- Other.\n")
+            self.write(self.user_file, '[roles.silent]\ntier = "deep"\n[process]\ndocs_dir = "documents"\n')
+
+        self.assertEqual(self.changed_by(change), set())
+
+
+class DigestCase(DefinitionsCase):
+    def test_the_recorded_inputs_are_recomputed_without_writing(self) -> None:
+        self.write(self.user_file, '[roles.worker]\ntier = "deep"\n')
+        self.assertEqual(self.render()[0], 0)
+        entries = self.entries()
+        before = tree(self.root)
+        found = definitions.digests(self.where())
+        self.assertEqual(tree(self.root), before)
+        self.assertEqual(len(found), 11)
+        for (provider, definition), inputs in found.items():
+            directory = ".claude/agents" if provider == CLAUDE else ".codex/agents"
+            entry = entries[f"home:{directory}/{definitions.file_name(provider, definition)}"]
+            self.assertEqual(entry["inputs"], inputs)
+            self.assertEqual(entry["kind"], "file")
+            self.assertEqual(entry["sha256"], digest((self.home / directory / definitions.file_name(provider, definition)).read_bytes()))
+            self.assertTrue(inputs.startswith(definitions.INPUTS_SCHEME + ":"))
+            self.assertRegex(inputs, rf"^render:role-definition:{definitions.FORMAT}:[0-9a-f]{{64}}$")
+        # The text for the same inputs changed with the tools denied for an
+        # empty ``dispatches``, so the format number did.
+        self.assertEqual(definitions.FORMAT, 2)
+        self.assertTrue(definitions.INPUTS_SCHEME.startswith(render.GENERATED_PREFIX))
+        self.assertEqual(len(set(found.values())), 11)
+
+    def test_a_changed_source_shows_as_drift_in_the_digests_of_its_dependents(self) -> None:
+        self.assertEqual(self.render()[0], 0)
+        recorded = definitions.digests(self.where())
+        (self.clone / "roles/_shared/brief.md").write_bytes(b"## The brief\n\nWork from the brief alone.\n")
+        before = tree(self.root)
+        now = definitions.digests(self.where())
+        self.assertEqual(tree(self.root), before)
+        self.assertEqual(
+            {key for key in now if now[key] != recorded[key]},
+            {(CLAUDE, "worker"), (CLAUDE, "worker-hard"), (CLAUDE, "reviewer"),
+             (CODEX, "worker"), (CODEX, "worker-hard"), (CODEX, "reviewer")},
+        )
+        self.write(self.user_file, '[providers.claude-code.tiers]\nfast = "sonnet"\n')
+        later = definitions.digests(self.where())
+        self.assertEqual({key for key in later if later[key] != now[key]}, {(CLAUDE, "quick")})
+
+    def test_a_comment_in_role_toml_is_an_input_and_changes_no_byte(self) -> None:
+        self.assertEqual(self.render()[0], 0)
+        before = self.generated()
+        hashes = {key: entry["inputs"] for key, entry in self.entries().items() if entry["kind"] == "file"}
+        file = self.clone / "roles/runner/role.toml"
+        file.write_bytes(b"# A comment.\n" + file.read_bytes())
+        code, report, _ = self.report()
+        self.assertEqual(code, 0)
+        self.assertEqual(report["plan"], ["update record home:.claude/agents/runner.md", "update record home:.codex/agents/runner.toml"])
+        self.assertEqual(self.generated(), before)
+        after = {key: entry["inputs"] for key, entry in self.entries().items() if entry["kind"] == "file"}
+        self.assertEqual({key for key in after if after[key] != hashes[key]},
+                         {"home:.claude/agents/runner.md", "home:.codex/agents/runner.toml"})
+        self.assertEqual(self.report()[1]["plan"], [])
+
+    def test_build_for_one_provider_gives_that_providers_definitions(self) -> None:
+        built = definitions.build(self.where(), [CODEX])
+        self.assertEqual([found.name for found in built],
+                         ["quick.toml", "reviewer.toml", "runner.toml", "worker.toml", "worker-hard.toml"])
+        self.assertEqual({found.provider for found in built}, {CODEX})
+        worker = built[3]
+        self.assertEqual(worker.sources, ("roles/worker/ROLE.md", "roles/worker/role.toml", "roles/_shared/brief.md",
+                                          "providers/codex/actions.md"))
+        self.assertEqual(worker.size, len(worker.text.encode("utf-8")))
+        with self.assertRaises(SetupError):
+            definitions.build(self.where(), ["acme"])
+
+
+class NoRolesCase(DefinitionsCase):
+    def test_no_roles_generates_nothing(self) -> None:
+        code, out, err = self.render("--no-roles")
+        self.assertEqual((code, err), (0, ""))
+        self.assertNothingAt(self.claude_agents)
+        self.assertNothingAt(self.codex_agents)
+        self.assertLinked(self.claude_skills / "alpha", self.clone / "alpha")
+        self.assertIn("done: 6 links created, 0 removed", out.splitlines()[-1])
+        self.assertNotIn("files", out.splitlines()[-1])
+
+    def test_no_roles_removes_the_definitions_of_an_earlier_run(self) -> None:
+        self.assertEqual(self.render()[0], 0)
+        code, report, err = self.report("--no-roles")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.generated(), {})
+        self.assertLinked(self.claude_skills / "alpha", self.clone / "alpha")
+        self.assertLinked(self.rules / "sample", self.clone / "rules" / "sample")
+        self.assertEqual(sorted(item["key"] for item in report["stale"]), sorted(f"home:{name}" for name in ALL_FILES))
+        self.assertEqual({item["status"] for item in report["stale"]}, {render.REMOVE})
+        self.assertEqual(report["counts"]["file_remove"], 11)
+        self.assertEqual(report["definitions"], [])
+        self.assertIn("0 files written, 11 removed", report["summary"])
+        self.assertEqual([key for key, entry in self.entries().items() if entry["kind"] == "file"], [])
+        before = tree(self.root)
+        code, report, _ = self.report("--no-roles")
+        self.assertEqual((code, report["plan"], report["stale"]), (0, [], []))
+        self.assertEqual(tree(self.root), before)
+        # Without the option they are generated again.
+        self.assertEqual(self.render()[0], 0)
+        self.assertEqual(set(self.generated()), ALL_FILES)
+
+    def test_no_roles_keeps_a_definition_that_was_edited(self) -> None:
+        self.assertEqual(self.render()[0], 0)
+        mine = self.claude_agents / "lead.md"
+        mine.write_bytes(mine.read_bytes() + b"\nMy own line.\n")
+        edited = mine.read_bytes()
+        code, report, err = self.report("--no-roles")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.generated(), {".claude/agents/lead.md": edited})
+        kept = [item for item in report["stale"] if item["status"] == render.KEPT]
+        self.assertEqual([item["key"] for item in kept], ["home:.claude/agents/lead.md"])
+        self.assertIn("it was edited since setup wrote it; kept, it is yours", kept[0]["says"])
+        self.assertIn("1 kept", report["summary"])
+
+    def test_a_settings_file_init_wrote_is_not_a_stale_generated_file(self) -> None:
+        self.assertEqual(self.render()[0], 0)
+        plan = fileops.Plan(self.roots())
+        plan.write_file(self.user_file, '[roles.worker]\ntier = "deep"\n', replace=fileops.ANY)
+        plan.apply()
+        code, report, _ = self.report("--no-roles")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.user_file.read_text(encoding="utf-8"), '[roles.worker]\ntier = "deep"\n')
+        self.assertNotIn("home:.agents/workflow.toml", [item["key"] for item in report["stale"]])
+
+
+class StaleCase(DefinitionsCase):
+    def test_a_role_that_left_the_clone_loses_its_definitions(self) -> None:
+        self.assertEqual(self.render()[0], 0)
+        shutil.rmtree(self.clone / "roles" / "quick")
+        code, out, err = self.render()
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(set(self.generated()), ALL_FILES - {".claude/agents/quick.md", ".codex/agents/quick.toml"})
+        self.assertIn("  remove file home:.claude/agents/quick.md (backup)", out.splitlines())
+        self.assertIn("  home:.codex/agents/quick.toml: remove: no longer generated; it still holds what setup wrote, so it is removed", out.splitlines())
+
+    def test_a_role_that_is_no_longer_dispatched_loses_its_codex_definition(self) -> None:
+        self.assertEqual(self.render()[0], 0)
+        self.source(self.clone, "runner", commands="false", dispatches='["worker"]', dispatch="false", start="true")
+        self.assertEqual(self.render()[0], 0)
+        self.assertNothingAt(self.codex_agents / "runner.toml")
+        self.assertEqual(self.claude_file("runner")[0]["name"], "runner")
+
+    def test_a_stale_definition_that_is_gone_is_forgotten(self) -> None:
+        self.assertEqual(self.render()[0], 0)
+        shutil.rmtree(self.clone / "roles" / "quick")
+        (self.codex_agents / "quick.toml").unlink()
+        code, report, _ = self.report()
+        self.assertEqual(code, 0)
+        self.assertEqual({item["key"]: item["status"] for item in report["stale"]},
+                         {"home:.claude/agents/quick.md": render.REMOVE, "home:.codex/agents/quick.toml": render.FORGET})
+        self.assertNotIn("home:.codex/agents/quick.toml", self.entries())
+
+
+class EditedCase(DefinitionsCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.assertEqual(self.render()[0], 0)
+        self.mine = self.codex_agents / "worker.toml"
+        self.original = self.mine.read_bytes()
+        self.edited = self.original.replace(b'model = "gpt-6.1-sol"', b'model = "my-own"')
+        self.assertNotEqual(self.edited, self.original)
+        self.mine.write_bytes(self.edited)
+
+    def test_a_hand_edited_definition_is_kept_and_reported(self) -> None:
+        before = tree(self.root)
+        for argv in (("--dry-run",), ()):
+            code, out, err = self.render(*argv)
+            self.assertEqual((code, err), (render.EXIT_NEEDS_FLAG, ""))
+            self.assertEqual(code, 3)
+            self.assertEqual(tree(self.root), before)
+            flat = " ".join(out.split())
+            self.assertIn("worker.toml: kept: edited by hand since setup wrote it, and kept; --overwrite-edited backs "
+                          "it up and replaces it, or remove the file and run render again", flat)
+            self.assertIn("1 edited by hand and kept, which --overwrite-edited would replace", out.splitlines()[-1])
+        code, report, _ = self.report()
+        self.assertEqual((code, report["exit_code"], report["counts"]["edited"], report["errors"]), (3, 3, 1, []))
+        self.assertEqual(self.items(report, CODEX, "agents")["worker.toml"], render.EDITED)
+
+    def test_the_rest_of_the_run_is_done_beside_a_kept_file(self) -> None:
+        file = self.clone / "roles/worker/ROLE.md"
+        file.write_bytes(file.read_bytes() + b"\nOne more line.\n")
+        code, _, err = self.render()
+        self.assertEqual((code, err), (3, ""))
+        self.assertEqual(self.mine.read_bytes(), self.edited)
+        self.assertIn(b"One more line.", (self.claude_agents / "worker.md").read_bytes())
+        self.assertIn(b"One more line.", (self.codex_agents / "worker-hard.toml").read_bytes())
+
+    def test_the_overwrite_flag_backs_it_up_and_replaces_it(self) -> None:
+        code, out, err = self.render("--overwrite-edited", "--dry-run")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.mine.read_bytes(), self.edited)
+        self.assertIn("  replace file home:.codex/agents/worker.toml (backup)", out.splitlines())
+
+        code, out, err = self.render("--overwrite-edited")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.mine.read_bytes(), self.original)
+        self.assertIn("worker.toml: replace: edited by hand since setup wrote it; backed up and replaced", " ".join(out.split()))
+        record = json.loads(self.manifest_file.read_text(encoding="utf-8"))
+        backups = [backup for backup in record["backups"] if backup["path"] == "home:.codex/agents/worker.toml"]
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0]["sha256"], digest(self.edited))
+        saved = [
+            Path(directory) / name
+            for directory, _, names in os.walk(self.home / ".agents" / "workflow-setup" / "backups")
+            for name in names
+        ]
+        self.assertEqual([file.read_bytes() for file in saved], [self.edited])
+        self.assertEqual(self.render()[0], 0)
+
+    def test_removing_the_file_has_it_written_again(self) -> None:
+        self.mine.unlink()
+        code, _, err = self.render()
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.mine.read_bytes(), self.original)
+
+    def test_an_edit_that_says_what_would_be_written_is_no_edit(self) -> None:
+        self.write(self.user_file, '[providers.codex.role_models]\nworker = "my-own"\n')
+        code, report, err = self.report()
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.mine.read_bytes(), self.edited)
+        self.assertEqual(self.items(report, CODEX, "agents")["worker.toml"], render.UP_TO_DATE)
+        self.assertEqual(self.report()[1]["plan"], [])
+
+    def test_a_users_own_file_in_the_way_is_a_conflict(self) -> None:
+        self.assertEqual(self.render("--no-roles")[0], 0)  # the edited one is kept; the others go
+        self.mine.unlink()
+        self.assertEqual(self.render("--no-roles")[0], 0)
+        self.keep(self.claude_agents / "lead.md")
+        before = tree(self.root)
+        code, out, err = self.render()
+        self.assertEqual(code, 2)
+        self.assertIn(f"{self.claude_agents / 'lead.md'}: a file is there, and setup did not write it", err)
+        self.assertEqual(tree(self.root), before)
+        self.assertIn("nothing was written", out.splitlines()[-1])
+
+
+class GateCase(DefinitionsCase):
+    def refused(self, *expected: str) -> str:
+        before = tree(self.root)
+        for argv in ((), ("--dry-run",)):
+            code, out, err = self.render(*argv)
+            self.assertEqual(code, 2, out)
+            self.assertEqual(tree(self.root), before)
+            for text in expected:
+                self.assertIn(text, err)
+            self.assertIn("stopped: ", out.splitlines()[-1])
+            self.assertIn("nothing was written", out.splitlines()[-1])
+        return err
+
+    def test_a_profile_that_does_not_resolve_stops_before_any_write(self) -> None:
+        self.write(self.user_file, '[roles.worker]\neffort = "max"\n[providers.codex.tiers]\nstandard = "gpt-5.5"\n')
+        err = self.refused('role worker, provider codex: the model "gpt-5.5" does not accept the effort "max"')
+        self.assertIn("it accepts: low, medium, high, xhigh", err)
+        self.assertNothingAt(self.claude_skills)
+        self.assertNothingAt(self.manifest_file)
+
+    def test_an_installed_provider_with_no_dictionary_stops_before_any_write(self) -> None:
+        shutil.rmtree(self.clone / "providers" / "codex")
+        err = self.refused("codex: no such provider among those with a dictionary (acme, claude-code)")
+        self.assertIn("providers/codex/dictionary.toml is missing", err)
+        self.assertIn("quick, reviewer, runner, worker, worker-hard", err)
+        self.assertEqual(len(err.splitlines()), 1, err)
+        self.assertNothingAt(self.claude_agents)
+        # With the process alone there is nothing to resolve.
+        self.assertEqual(self.render("--no-roles")[0], 0)
+
+    def test_a_provider_that_is_not_installed_needs_no_dictionary(self) -> None:
+        shutil.rmtree(self.clone / "providers" / "codex")
+        self.codex.rmdir()
+        code, _, err = self.render()
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(set(self.generated()), {name for name in ALL_FILES if name.startswith(".claude/")})
+        self.assertNothingAt(self.codex)
+
+    def test_a_source_fault_stops_before_the_definitions(self) -> None:
+        (self.clone / "roles/worker/ROLE.md").unlink()
+        before = tree(self.root)
+        code, out, err = self.render()
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn("[role-text]", err)
+        self.assertEqual(tree(self.root), before)
+
+    def test_a_directory_where_a_definition_goes_is_a_conflict(self) -> None:
+        self.keep(self.codex_agents / "worker.toml" / "inside.txt")
+        self.refused(f"{self.codex_agents / 'worker.toml'}: a directory is there, where setup would write a file")
+
+
+@unittest.skipUnless(LINKS, "needs links to directories")
+class PlacesCase(DefinitionsCase):
+    @unittest.skipUnless(SYMLINKS and POSIX, "the view from WSL is rebuilt from symlinks on a POSIX file system")
+    def test_an_agents_place_of_the_other_side_is_skipped(self) -> None:
+        drive = self.root / "drive"
+        theirs = drive / "Users" / "someone" / ".claude" / "agents"
+        self.keep(theirs / "theirs.md")
+        os.symlink(str(theirs), self.claude_agents)
+        wsl = homes.Host(homes.WSL, {"PATH": ""}, (str(drive),))
+        before = tree(drive)
+        code, out, err = self.render(host=wsl)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(tree(drive), before)
+        self.assertIn("    not written here: lead.md, quick.md, reviewer.md, runner.md, worker.md, worker-hard.md", out.splitlines())
+        self.assertEqual(set(self.generated()) - {".claude/agents/theirs.md"}, {name for name in ALL_FILES if name.startswith(".codex/")})
+        self.assertNotIn("home:.claude/agents/lead.md", self.entries())
+
+    def test_an_agents_place_that_leads_out_of_the_home_is_skipped_with_and_without_the_flag(self) -> None:
+        elsewhere = self.root / "another-home" / "agents"
+        self.keep(elsewhere / "theirs.md")
+        fsio.make_link(str(elsewhere), self.codex_agents, True)   # a symlink, or on Windows a junction
+        before = tree(self.root / "another-home")
+        for argv in ((), ("--dry-run",), ("--follow-config-symlinks", "--dry-run"), ("--follow-config-symlinks",),
+                     ("--follow-config-symlinks", "--overwrite-edited")):
+            with self.subTest(argv=argv):
+                code, out, err = self.render(*argv)
+                # No option makes a run write there, so the code asks for none.
+                self.assertEqual((code, err), (0, ""), out)
+                self.assertEqual(tree(self.root / "another-home"), before)
+                self.assertIn("    not written here: quick.toml, reviewer.toml, runner.toml, worker.toml, worker-hard.toml",
+                              out.splitlines())
+                self.assertIn(f"skipped: a link to {elsewhere}, which leads out of the directories this run may write "
+                              "to: skipped, whatever the options", out)
+                self.assertNotIn("needs --follow-config-symlinks", out)
+        self.assertEqual(fsio.look(self.codex_agents).kind, fsio.LINK)
+        self.assertFalse(any(key.startswith("home:.codex/agents") for key in self.entries()))
+        # The other provider's definitions are written as always.
+        self.assertTrue((self.claude_agents / "lead.md").is_file())
+
+    def test_an_agents_place_shared_on_this_side_needs_the_flag(self) -> None:
+        elsewhere = self.home / "dotfiles" / "agents"   # in the home, where a run may write
+        self.keep(elsewhere / "theirs.md")
+        fsio.make_link(str(elsewhere), self.codex_agents, True)   # a symlink, or on Windows a junction
+        code, out, err = self.render()
+        self.assertEqual((code, err), (3, ""))
+        self.assertEqual(os.listdir(elsewhere), ["theirs.md"])
+        self.assertIn("    not written here: quick.toml, reviewer.toml, runner.toml, worker.toml, worker-hard.toml", out.splitlines())
+        code, _, err = self.render("--follow-config-symlinks")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(sorted(os.listdir(elsewhere)),
+                         ["quick.toml", "reviewer.toml", "runner.toml", "theirs.md", "worker-hard.toml", "worker.toml"])
+
+
+class RepositoryCase(RenderCase):
+    """The repository's own roles, whatever they say: subsets only, so a
+    role added later breaks nothing here."""
+
+    ROLES = ()
+
+    def test_the_repositorys_roles_render_for_both_providers(self) -> None:
+        # The roles part alone: where the repository is a clone the other
+        # side sees through a network name, no link to it can be made, and
+        # the links are not what this test is about.
+        where = Locations(home=self.home, clone=support.REPOSITORY)
+        found, sources, parts = homes.resolve(where, self.host), validate.require(where), render.PARTS[2:3]
+        outcome = render.execute(found, sources, parts=parts)
+        self.assertEqual((outcome.code, outcome.errors), (0, []))
+        report = outcome.report
+        before = tree(self.home)
+        again = render.execute(found, sources, parts=parts)
+        self.assertEqual((again.code, again.report["plan"]), (0, []))
+        self.assertEqual(tree(self.home), before)
+        claude = {file.name for file in (self.claude / "agents").iterdir()}
+        codex = {file.name for file in (self.codex / "agents").iterdir()}
+        self.assertLessEqual({"manager.md", "product-manager.md", "coder.md", "coder-hard.md"}, claude)
+        self.assertLessEqual({"product-manager.toml", "coder.toml", "coder-hard.toml"}, codex)
+        # The Manager starts a session and is not dispatched: no Codex agent file.
+        self.assertNotIn("manager.toml", codex)
+
+        where = Locations(home=self.home, clone=support.REPOSITORY)
+        loaded = roles.load_all(where)
+        for file in (self.claude / "agents").iterdir():
+            fields, body = frontmatter(file.read_bytes().decode("utf-8"))
+            self.assertEqual(fields["name"], file.stem)
+            self.assertLessEqual({"name", "description", "model"}, set(fields))
+            self.assertNotIn("tools", fields)
+            self.assertIn("## Your bindings", body)
+            role = loaded[fields["name"].removesuffix("-hard") if fields["name"] not in loaded else fields["name"]]
+            self.assertIn(role.description, fields["description"])
+            self.assertEqual(fields.get("disallowedTools", ""), ", ".join(definitions.denied_tools(role.data["limits"])))
+        for file in (self.codex / "agents").iterdir():
+            data = tomllib.loads(file.read_bytes().decode("utf-8"))
+            self.assertEqual(data["name"], file.stem.replace("-", "_"))
+            self.assertLessEqual({"name", "description", "model", "developer_instructions"}, set(data))
+            self.assertIn("## Your bindings", data["developer_instructions"])
+        coder, _ = frontmatter((self.claude / "agents" / "coder.md").read_bytes().decode("utf-8"))
+        hard, _ = frontmatter((self.claude / "agents" / "coder-hard.md").read_bytes().decode("utf-8"))
+        self.assertEqual(hard["description"], f"The Coder for steps marked hard. {coder['description']}")
+        self.assertIn("stage-3-implementation.md", (self.codex / "agents" / "coder-hard.toml").read_text(encoding="utf-8"))
+        self.assertEqual({found["file"] for found in report["definitions"]}, claude | codex)
+        for found in report["definitions"]:
+            self.assertGreater(found["bytes"], 1000)
+        for data in (file.read_bytes() for directory in (self.claude / "agents", self.codex / "agents") for file in directory.iterdir()):
+            self.assertNotIn(str(support.REPOSITORY).encode("utf-8"), data)
+            self.assertNotIn(str(self.root).encode("utf-8"), data)
+
+
+if __name__ == "__main__":
+    unittest.main()

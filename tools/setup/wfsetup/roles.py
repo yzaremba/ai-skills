@@ -3,8 +3,13 @@
 The format is stated in ``roles/README.md``. This module reads what names a
 role and what profiles it: ``name``, ``title``, ``description`` and the
 ``[profile]`` table. The other keys (``includes``, ``[limits]``,
-``[entry]``) are left as they are in ``Role.data``; source validation
-checks them, and adds its checks in ``check_file``.
+``[entry]``) are left as they are in ``Role.data``. A reader of profiles
+does not need them, so ``check_file`` looks at them only when asked to be
+``strict``, which is how source validation (``validate``) asks: then every
+key of the format must be there, with its type, and no other.
+
+``join_text`` is how a role's full text is put together from ``ROLE.md``
+and its includes, and ``TEXT_LIMIT`` the size it must stay under.
 
 A role gives one definition, or two when it has ``[profile.hard]``: the
 second is named ``<name>-hard`` and has a tier and an effort of its own.
@@ -21,17 +26,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from . import paths, schema, tomlio
 from .errors import SetupError
 from .locations import Locations
-from .schema import Table, Value
+from .schema import Strings, Table, Value
 
 ROLE_FILE = "role.toml"
+TEXT_FILE = "ROLE.md"
+SHARED_DIR = "_shared"
 HARD_SUFFIX = "-hard"
 
+# ``ROLE.md`` with its includes stays under this many bytes: a loaded role
+# has to survive context compaction, and a dispatched one shares its budget
+# with the project's instruction files (roles/README.md, "Size").
+TEXT_LIMIT = 12_000
+
 _STRING = Value("string")
+_BOOLEAN = Value("boolean")
 _TIER = Value("string", choices=schema.TIERS)
 _EFFORT = Value("string", choices=schema.EFFORTS)
 
@@ -39,6 +52,25 @@ _IDENTITY: dict[str, schema.Node] = {"name": _STRING, "title": _STRING, "descrip
 _HARD = Table({"tier": _TIER, "effort": _EFFORT})
 _PROFILE = Table({"tier": _TIER, "effort": _EFFORT, "high_stakes_tier": _TIER, "hard": _HARD})
 _PROFILE_REQUIRED = ("tier", "effort")
+
+# What ``strict`` adds: the rest of the format, every key of it required.
+_REST: dict[str, schema.Node] = {
+    "includes": Strings(),
+    "limits": Table({"edits": _BOOLEAN, "commands": _BOOLEAN, "dispatches": Strings()}),
+    "entry": Table({"dispatch": _BOOLEAN, "load": _BOOLEAN, "start": _BOOLEAN}),
+}
+_KNOWN = (*_IDENTITY, "includes", "profile", "limits", "entry")
+
+
+def join_text(parts: Iterable[str]) -> str:
+    """A role's full text: ``ROLE.md`` and then its includes, in order.
+
+    Each part loses a byte order mark and its trailing white space, a CRLF
+    becomes LF, and the parts are joined by one empty line, so the same
+    sources give the same bytes on Linux and in a Windows checkout.
+    """
+    cleaned = [part.removeprefix("﻿").replace("\r\n", "\n").rstrip() for part in parts]
+    return "\n\n".join(cleaned) + "\n"
 
 
 @dataclass(frozen=True)
@@ -121,9 +153,13 @@ def load_file(file: Path, name: str | None = None) -> Role:
     return loaded
 
 
-def check_file(file: Path, name: str, problems: list[str]) -> Role | None:
+def check_file(file: Path, name: str, problems: list[str], strict: bool = False) -> Role | None:
     """Read and check ``file``, the ``role.toml`` of the directory ``name``,
-    adding a line to ``problems`` per fault. Returns None when there was any."""
+    adding a line to ``problems`` per fault. Returns None when there was any.
+
+    With ``strict`` the whole format of ``roles/README.md`` is checked:
+    ``includes``, ``[limits]`` and ``[entry]`` must be there with every key
+    and the right types, and a key the format does not have is a fault."""
     try:
         # The directory first: under a link that leads nowhere, or under a
         # directory that cannot be looked into, the file would only seem
@@ -157,6 +193,8 @@ def check_file(file: Path, name: str, problems: list[str]) -> Role | None:
             f"{tomlio.format_value(name)}"
         )
     _check_profile(data, file, problems)
+    if strict:
+        _check_rest(data, file, problems)
     if len(problems) > before:
         return None
 
@@ -166,6 +204,21 @@ def check_file(file: Path, name: str, problems: list[str]) -> Role | None:
         hard = profile["hard"]
         found.append(Definition(name + HARD_SUFFIX, name, file, "profile.hard", hard["tier"], hard["effort"]))
     return Role(name, data["title"], data["description"], file, tuple(found), data)
+
+
+def _check_rest(data: dict[str, Any], file: Path, problems: list[str]) -> None:
+    for key in data:
+        if key not in _KNOWN:
+            problems.append(f"{file}: {tomlio.format_key(key)}: unknown key; known here: {', '.join(_KNOWN)}")
+    for key, node in _REST.items():
+        if key not in data:
+            problems.append(f"{file}: {key}: missing; a role must have it")
+            continue
+        schema.check(node, data[key], (key,), file, problems)
+        if isinstance(node, Table) and isinstance(data[key], dict):
+            for inner in node.keys:
+                if inner not in data[key]:
+                    problems.append(f"{file}: {key}.{inner}: missing; a role must have it")
 
 
 def _check_profile(data: dict[str, Any], file: Path, problems: list[str]) -> None:

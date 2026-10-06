@@ -9,6 +9,12 @@ EXIT_ERROR = 2
 # SIGPIPE, 128 + 13. Nothing is printed; there is no one left to read it.
 EXIT_PIPE = 141
 
+# The exit code when the run was interrupted (Ctrl-C): what a shell reports
+# for a program ended by SIGINT, 128 + 2. One line says so on stderr. A run
+# ended by another signal that setup handles (SIGTERM, SIGHUP, and on
+# Windows Ctrl-Break) exits the same way with 128 + that signal's number.
+EXIT_INTERRUPT = 130
+
 
 class SetupError(Exception):
     """A problem with the input: a settings file, an argument, a path.

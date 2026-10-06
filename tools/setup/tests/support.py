@@ -31,8 +31,14 @@ REPOSITORY = SETUP.parents[1]
 if str(SETUP) not in sys.path:
     sys.path.insert(0, str(SETUP))
 
-from wfsetup import cli, locations  # noqa: E402
+from wfsetup import cli, fsio, locations  # noqa: E402
 from wfsetup.locations import Locations  # noqa: E402
+
+# A test builds its scratch world with ``fsio``'s own functions (a link, a
+# junction, a file). Outside the bounds of a run those may change the
+# system's temporary directory and nothing else; the tool itself has no
+# such base, and changes nothing outside a run's bounds.
+fsio._BASE = fsio.bounds([tempfile.gettempdir()])
 
 FIXTURES = TESTS / "fixtures"
 
