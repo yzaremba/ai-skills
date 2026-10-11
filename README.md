@@ -12,13 +12,13 @@ the tag `v1.0`; [Moving from v1](#moving-from-v1) says how to get from there to 
 
 | Path | Holds |
 |------|-------|
-| `prd-implementation/`, `epic-implementation/` | The sprint and epic process as two skills: a short entry file and one reference file per stage. |
+| `prd-implementation/`, `epic-implementation/` | The sprint and epic process as two skills: a short entry file and, in `references/`, the files it points to: one or two for each stage, the conventions and completion; for the sprint also the state file, deferred items, backlog conversion, abandoning a sprint, and one file for each provider. |
 | `csv-tools/`, `json-tools/`, `self-reflection/`, `usage-cost/` | Skills. A skill is a directory at the root that holds `SKILL.md`. |
 | `multiagent-collab/` | A skill with its own setup, protocol file, hooks and tests. |
 | `roles/` | The sources of the roles: `<role>/ROLE.md` and `<role>/role.toml`, the sections roles share in `_shared/`, and `bindings.toml`, which says which role follows which stage of the process. Format: [`roles/README.md`](roles/README.md). |
 | `rules/` | `avoid-bash-injection-heuristics/`, a rule for Claude Code: how to shape a Bash command so that the permission checks that ignore the allowlist do not fire. Codex has no place for a rule. |
 | `providers/` | What differs between providers, in `claude-code/` and `codex/`: `dictionary.toml` (what the tiers and effort names mean there, and the version it was checked on) and `actions.md` (how a role's actions are done there). |
-| `tools/` | `setup/`: the setup tool, `workflow_setup.py`, with its shipped defaults and tests. `session-profile/`: prints the role, model and effort a provider recorded for each agent of a session. |
+| `tools/` | `setup/`: the setup tool, `workflow_setup.py`, with its package `wfsetup/`, its shipped defaults (`defaults.toml`) and tests; `manifest-keys.json`, the keys setup may change in a settings file; `v1-known-hashes.json`, the hashes of the committed v1 files, and `build_v1_hashes.py`, which builds it. `session-profile/`: prints the role, model and effort a provider recorded for each agent of a session. |
 | `docs/` | [`agent-roles-framework.md`](docs/agent-roles-framework.md): the design of the roles and what was checked on each provider. [`v1-to-v2.md`](docs/v1-to-v2.md). The v1 slide. |
 | [`AGENTS.md`](AGENTS.md) | The repository's conventions. Both providers read it; there is no `CLAUDE.md`. |
 
@@ -136,7 +136,8 @@ home exists). It writes only inside the provider homes (`~/.claude`, `~/.codex`,
 where `CLAUDE_CONFIG_DIR` and `CODEX_HOME` point), `~/.agents`, and a project named with
 `--project`; never inside the clone, and never at a credentials file. It backs up every
 file it replaces or removes, under `~/.agents/workflow-setup/backups/`, and `uninstall`
-puts back what was there.
+puts back what was there. A project has its own backups, install record and lock, under
+`DIR/.agents/workflow-setup/`.
 
 **One shared clone.** Every home links to the clone, so one clone has to be readable
 from every home. On a Linux machine any persistent clone will do. On a Windows machine
@@ -150,8 +151,9 @@ git clone https://github.com/yzaremba/ai-skills.git <clone>
 ```
 
 **Then, once on each side** (once on Linux; on Windows with WSL, once from Windows and
-once from WSL), from the root of the clone. Where `python` is a project's virtual
-environment, use a system interpreter.
+once from WSL), from the root of the clone. Where a v1 install is present the order is
+required: Windows first, then WSL straight after; see [Moving from v1](#moving-from-v1).
+Where `python` is a project's virtual environment, use a system interpreter.
 
 ```bash
 python tools/setup/workflow_setup.py homes
@@ -168,7 +170,14 @@ python tools/setup/workflow_setup.py doctor
 - `init` writes `~/.agents/workflow.toml`: which model each tier means and which value
   each effort name means, for each installed provider, and the process, roles and memory
   settings. It asks, proposes the value in effect, and shows the mapping before it
-  writes. For Codex it checks the mapping against `codex debug models`.
+  writes. It asks on a terminal only. Where standard input is not one (an agent session,
+  a pipe) a question without an answer stops the run and names its flag: give `--yes`,
+  which accepts what is proposed, or the answer flags (`--tier`, `--effort` and the
+  others `init --help` lists). This holds for `--dry-run` and for `init --project DIR`
+  too. `--yes` does not rewrite a settings file written or edited by hand; that takes
+  `--rewrite-settings` as well. For Codex it checks the mapping against
+  `codex debug models`, also with `--dry-run`: a program of the provider's, which may
+  write state of its own into the provider's home.
 - `render` links each skill into the skills directory of each provider it names
   (`~/.claude/skills`, and `~/.agents/skills` for Codex), links the rule into
   `~/.claude/rules`, and generates the role definitions and the entry points of a
@@ -180,13 +189,17 @@ python tools/setup/workflow_setup.py doctor
   Exit code 1 means an error. It starts provider programs (`--version`, the model list,
   offline discovery commands) and the collaboration skill's own doctor; a provider's
   program may write state of its own into its home. Only `doctor --prove-discovery`
-  starts a session with a model, one per provider, and that spends quota.
+  starts a session with a model, one for each provider, and that spends quota. Codex's
+  role definitions stay unproven after it, and are then a warning: see
+  [Limits known so far](#limits-known-so-far).
 
 Read each dry run before the real run, and run one command at a time; every command's
 `--help` states exactly what it does. `uninstall --dry-run` and `uninstall` take an
 install back. A home that holds a v1 install is migrated in the same `render`: see
 [Moving from v1](#moving-from-v1). Without the option named there, `render` stops on a
-v1 copy that is in the way of a link.
+v1 copy that is in the way of a link. With it the run still stops on a copy in the way
+that setup keeps: one edited by hand until `--remove-stale` names it, and a clone or a
+copy it cannot read until it is moved away.
 
 ## What a `git pull` in the clone does
 
@@ -224,19 +237,31 @@ What it removes, each after a backup:
   `<codex home>/skills` among them. A file goes only when its content is a committed
   version of the v1 file; a link only when it leads to such a copy or into this clone.
 
-What it keeps and reports, with exit code 3:
+What it keeps and reports:
 
-- A copy edited by hand, or a link it does not recognise. The dry run prints
-  `--remove-stale PATH` for each; add that option to remove the one named.
+- A copy edited by hand, or a link it does not recognise. The exit code is then 3. The
+  dry run prints `--remove-stale PATH` for each; add that option to remove the one
+  named. The option works only with `--migrate-v1` and may be given more than once; a
+  path the dry run did not name stops the run.
 - A git clone inside a skills directory, which is never removed, with any option. Move
   it away yourself.
+- A copy setup cannot read: on Windows, for example, a directory that holds a link made
+  in WSL. `--remove-stale` does not apply to it: naming it there stops the run. Move it
+  away by hand.
+
+A clone or an unreadable copy does not by itself make the exit code 3. Any kept item
+that is in the way of a link is a conflict: the run stops before anything is written,
+with exit code 2, and `--migrate-v1` alone does not clear that. `doctor` reports every
+kept item as an error until it is gone.
 
 Projects are not migrated: a project whose `.claude/rules/` links to a removed rule copy
 is left with a dangling link, and the run warns of it. On a machine with both sides, run
-Windows first, then WSL. Each run skips the places the other side owns, so both are
-needed; where the WSL home links its `CLAUDE.md` and rules into the Windows home, the
-Windows run is the one that changes them. `uninstall` puts back what the migration
-removed. [`docs/v1-to-v2.md`](docs/v1-to-v2.md) says, section by section, where each
+Windows first, then WSL: with a v1 install that order is required. Each run skips the
+places the other side owns, so both are needed; where the WSL home links its `CLAUDE.md`
+and rules into the Windows home, the Windows run is the one that changes them. Between
+the two runs such a WSL home has no process rule and no v2 skill links yet: run the WSL
+side straight after, and start no work there in between. `uninstall` puts back what the
+migration removed. [`docs/v1-to-v2.md`](docs/v1-to-v2.md) says, section by section, where each
 v1 rule went.
 
 ## Using it
@@ -264,6 +289,11 @@ says which model and effort it is meant for, and the user switches with `/model`
 `/effort` on Claude Code, `/model` on Codex. On Codex, start the session at the project
 root.
 
+On Claude Code a role's pinned effort applies when the role is dispatched as a subagent.
+A session started as the Manager (`claude --agent manager`, or the project default)
+takes the definition's prompt, tools and model, and runs at the session's own effort:
+`--effort`, `/effort` or the `effortLevel` setting.
+
 **A project.** Nothing is written in a project unless it is named. To make every session
 in a project start as the Manager:
 
@@ -273,11 +303,17 @@ python tools/setup/workflow_setup.py render --project DIR --dry-run
 python tools/setup/workflow_setup.py render --project DIR
 ```
 
-`init --project DIR` writes `DIR/.agents/workflow.toml`. `render --project DIR` refreshes
-the homes as without the option, and in the project sets `"agent"` in
-`DIR/.claude/settings.json`, writes a marked block at the head of
-`DIR/.codex/config.toml`, writes a role definition for each role the project's settings
-change, and lists what it generated in `DIR/.gitignore`.
+`init --project DIR` writes `DIR/.agents/workflow.toml` and puts
+`.agents/workflow.local.toml` into the project's ignore block in `DIR/.gitignore`. Away
+from a terminal it needs `--yes` or the answer flags, like any `init`. What makes the
+Manager the project default is the setting `roles.manager_default = true`; the flag
+`--manager-default` sets it. `render --project DIR` refreshes the homes as without the
+option, and in the project, with that setting, sets `"agent"` in
+`DIR/.claude/settings.json` and writes a marked block at the head of
+`DIR/.codex/config.toml`. It also writes a role definition for each role the project's
+settings change, and lists what it generated in `DIR/.gitignore`. Setup's backups,
+install record and lock for the project are in `DIR/.agents/workflow-setup/`, a
+directory it creates in DIR and lists in the same ignore block.
 
 **Settings.** Four layers, later wins: the shipped defaults, `~/.agents/workflow.toml`,
 `DIR/.agents/workflow.toml` and `DIR/.agents/workflow.local.toml`.
@@ -313,22 +349,29 @@ and each skill's `SKILL.md`.
   the first 5,000 tokens of an invoked skill. `render` marks both loaded roles LONG at
   this commit: about 5,900 tokens for `/manager` and 6,100 for `/product-manager`, by an
   estimate of one token per three bytes, which errs high. What would be cut is the end,
-  the provider's action notes.
+  the provider's action notes. `doctor` reports each as a warning (the check
+  `loaded-skill-size`), so a clean install ends with those two warnings.
 - **Git on Codex.** The default sandbox keeps `.git` read-only, so a commit or a
   worktree needs approval command by command, or a permission profile (beta in Codex).
   `render --apply-codex-settings` defines one, `workflow`, and with
   `--default-codex-permissions` also selects it. While the user's `config.toml` sets
   `sandbox_mode` no profile is written, because Codex then ignores
   `default_permissions`; setup never changes `sandbox_mode`.
-- **Four agents on Codex by default**, counting the main session; the same option sets
-  `agents.max_concurrent_threads_per_session = 8` where the file sets no limit.
+- **Four agents on Codex by default**, counting the main session;
+  `render --apply-codex-settings` sets `agents.max_concurrent_threads_per_session = 8`
+  where the file sets no limit.
 - **Codex reads a project's `.codex/config.toml` only in a trusted project.** In an
   untrusted one the Manager default does nothing on Codex.
 - **Discovery cannot be shown for everything.** No provider output that was found lists
   Codex's role definitions, and Claude Code lists nothing without a session: `doctor`
-  reports those items as unproven.
-- **The Manager's effort on Claude Code is open.** Its definition pins medium, and the
-  session record showed the main thread at high.
+  reports those items as unproven. `doctor --prove-discovery` starts one session for
+  each provider; Codex's role definitions stay unproven after it, and each is then a
+  warning. The proof for those is the session record of a real spawn, which
+  `tools/session-profile` reads.
+- **The Manager's effort on Claude Code is the session's, not the definition's.** Its
+  definition pins medium, and the session record showed the main thread at high. Setting
+  it with `--effort` at launch or `effortLevel` in a project's settings has not been
+  tried yet.
 - **Not exercised yet:** an approval of a document said to the role that owns it and
   taken at the Manager, on either provider; a loaded role on Codex beyond six turns or
   across a compaction.

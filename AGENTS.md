@@ -15,6 +15,7 @@ roles/      README.md  bindings.toml  _shared/  <role>/ROLE.md  <role>/role.toml
 rules/      avoid-bash-injection-heuristics/    rule, Claude Code only
 providers/  <name>/dictionary.toml  <name>/actions.md   for claude-code and codex
 tools/      setup/            workflow_setup.py  wfsetup/  defaults.toml  tests/
+                              manifest-keys.json  v1-known-hashes.json  build_v1_hashes.py
             session-profile/  session-record reader and its tests
 docs/       agent-roles-framework.md, v1-to-v2.md and the v1 slide
 ```
