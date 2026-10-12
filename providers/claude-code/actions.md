@@ -20,12 +20,12 @@ Role ids are used as written, such as `product-manager` and `coder-hard`.
 
 ### Dialogue
 
-- **The user can type to a dispatched agent.** Tell the user how: while the agent runs, select its row in the agent panel under the prompt, press Enter to open its transcript, and type there. An open transcript stays open when the turn ends. A finished agent's row is removed at once; for 30 seconds `/tasks` still lists it, and Enter on it there opens the transcript. After that the user asks you, and you follow up with the agent, which resumes it.
-- **Its hand-backs reach you by themselves.** As observed on 2.1.289, though not documented, each turn the user drives there sends you a completion notification with the hand-back.
+- **The user can type to a dispatched agent.** Tell the user how, and that its questions also appear here, to answer in either place: while the agent runs, select its row in the agent panel under the prompt, press Enter to open its transcript, and type there. An open transcript stays open when the turn ends. A finished agent's row is removed at once; for 30 seconds `/tasks` still lists it, and Enter on it there opens the transcript. After that only your follow-up resumes it.
+- **Its hand-backs reach you by themselves.** Each turn the user drives there sends you a completion notification with the hand-back: observed on 2.1.289, not documented.
 
 ### In dialogue
 
-- **If you are the dispatched agent,** you have no question dialog. Write the question as plain text in your thread first, then hand back; the hand-back ends the turn. If a tool is given to you for the final report, the hand-back is that call, and the question is still written before it. The user answers in your thread, which resumes you.
+- **If you are the dispatched agent,** you have no question dialog. Write the question as plain text in your thread first, then hand back; the hand-back ends the turn. If a tool is given to you for the final report, the hand-back is that call, and the question is still written before it. The user answers in your thread or through the Manager's follow-up; either resumes you.
 
 ### Read
 

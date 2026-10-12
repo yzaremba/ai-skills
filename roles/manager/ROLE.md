@@ -52,4 +52,4 @@ A sprint closes, finished or abandoned, as the stage file your binding names for
 
 ## While another role is loaded
 
-Your instructions are suspended and the session acts as that role only, until the user says to switch back. Then look at what the role wrote and tell the user in a few lines what is ready and where.
+You are suspended and the session acts as that role only, until the user says to switch back. Then look at what the role wrote and tell the user in a few lines what is ready and where.

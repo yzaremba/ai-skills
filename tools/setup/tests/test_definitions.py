@@ -1256,6 +1256,58 @@ class RepositoryCase(RenderCase):
         # ... and the section says where a skill's scripts are.
         self.assertIn("A skill's scripts are in `scripts/`, beside `references/`.", definitions.bindings_section(manager, "~"))
 
+    def test_a_question_asked_in_a_dialogue_reaches_the_user_in_the_main_thread(self) -> None:
+        """An agent's thread may close before the user reads it, so the
+        question is in the hand-back as well, the Manager prints it, and an
+        answer given to the Manager goes back by a follow-up."""
+        where = Locations(home=self.home, clone=support.REPOSITORY)
+        texts = {(found.role.name, found.provider): "\n".join(found.body)
+                 for found in definitions.materials(where, select=lambda role: definitions.PROVIDERS, hard=False)}
+        for provider in (CLAUDE, CODEX):
+            # The writer: the two roles that hold a dialogue carry the question.
+            for role in ("product-manager", "architect"):
+                with self.subTest(role=role, provider=provider):
+                    text = texts[role, provider]
+                    self.assertIn("<one line>\nQuestion:\n<what you asked the user>\nQuotes:\n", text)
+                    self.assertIn("**The user reads your thread first, and it may close before they do.**", text)
+                    self.assertIn("goes there first, in full, as ordinary text", text)
+                    self.assertIn("A question is then repeated under `Question:`, word for word with its options and any "
+                                  "recommendation, for the Manager to print; so is your reply, when the "
+                                  "Manager's follow-up started the turn", text)
+                    self.assertIn("**One line while in dialogue**, besides the question.", text)
+                    # What the rule replaced is gone.
+                    self.assertNotIn("never the hand-back", text)
+                    self.assertNotIn("has not been asked", text)
+                    self.assertNotIn("the Manager does nothing", text)
+                    self.assertNotIn("## Reading hand-backs", text)
+            # The reader: the Manager prints it, and relays the answer.
+            with self.subTest(role="manager", provider=provider):
+                text = texts["manager", provider]
+                self.assertIn("- **`in dialogue, no action`.** Do nothing: no dispatch, lookup, question of your own, summary, "
+                              "acknowledgement or comment on the quotes.", text)
+                self.assertIn("A `Question:` you print to the user word for word under that role's name, adding only that "
+                              "they may answer here.", text)
+                self.assertIn("- **The user answers it here.** Follow up with that agent, quoting question and answer "
+                              "word for word. It passes no gate.", text)
+                # A quote that passes nothing leaves the user to be asked, not waiting.
+                self.assertIn("If none does, ask for the word here.", text)
+                # The rules the reader no longer repeats are the gates section's.
+                self.assertIn("passes nothing and triggers nothing", text)
+                self.assertIn("only on the user's word", text)
+                # The gate rule the relay leans on: a follow-up ends the quote's standing.
+                self.assertIn("has sent the agent nothing since, not even a follow-up", text)
+                self.assertNotIn("## Writing hand-backs", text)
+        # How it is done where the user can type to a dispatched agent.
+        self.assertIn("Tell the user how, and that its questions also appear here, to answer in either place:",
+                      texts["manager", CLAUDE])
+        self.assertIn("After that only your follow-up resumes it.", texts["manager", CLAUDE])
+        for role in ("product-manager", "architect"):
+            self.assertIn("The user answers in your thread or through the Manager's follow-up; either resumes you.",
+                          texts[role, CLAUDE])
+            # On Codex no role is dispatched for a dialogue.
+            self.assertIn("you cannot ask the user anything", texts[role, CODEX])
+        self.assertIn("no role is dispatched for dialogue", texts["manager", CODEX])
+
 
 if __name__ == "__main__":
     unittest.main()
