@@ -11,7 +11,9 @@
 # provider, and `doctor` compares it with what is installed.
 #
 # Sources, read on the checked date:
-#   https://code.claude.com/docs/en/sub-agents     (a definition's `model` and `effort`)
+#   https://code.claude.com/docs/en/sub-agents     (a definition's `model` and `effort`;
+#                                                   `experimental.cacheTtl`, read 2026-10-12)
+#   https://code.claude.com/docs/en/prompt-caching (cache lifetimes, read 2026-10-12)
 #   https://code.claude.com/docs/en/model-config   (aliases; effort levels per model;
 #                                                   the versions at which an alias changed)
 #   https://code.claude.com/docs/en/memory         (the version that reads AGENTS.md)
@@ -56,6 +58,29 @@ low = "low"
 medium = "medium"
 high = "high"
 max = "max"
+
+# Framework cache name (`[profile]` `cache` in a role.toml) -> the prompt cache
+# lifetime written into that role's subagent definition, as the frontmatter
+#   experimental:
+#     cacheTtl: 1h
+# Not a setting: no settings file changes it. A definition takes `5m` or `1h`
+# and Claude Code ignores any other value.
+#
+# Read on 2026-10-12 (the sub-agents page, the row `experimental`, and the
+# prompt-caching page):
+#   - on a Claude subscription the main conversation's cache lasts one hour
+#     and a subagent's five minutes, until a longer one is chosen;
+#   - `cacheTtl` goes inside the `experimental` map, not at the top level of
+#     the frontmatter, and is read from subagent files only;
+#   - it requires Claude Code 2.1.248 or later, which is older than
+#     `oldest_supported_version` above, so nothing checks a version for it;
+#   - `1h` is ignored while the subscription is drawing on usage credits;
+#   - the setting `subagentPromptCacheTtl` or the variable
+#     CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL overrides the frontmatter, and
+#     FORCE_PROMPT_CACHING_5M=1 overrides everything;
+#   - a one-hour cache write is billed at a higher rate than a five-minute one.
+[cache]
+long = "1h"
 
 # The models a definition can name by alias. A definition may also name a full
 # model id, such as claude-opus-5-5; such a model is not listed here and

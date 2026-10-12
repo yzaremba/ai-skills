@@ -964,7 +964,14 @@ def fill_roles(run: Run) -> None:
             if found.provider == provider.name:
                 run.file(provider, place, found.name, found.text, found.inputs, detail={
                     "definition": found.definition, "role": found.role, "model": found.model, "effort": found.effort,
+                    **_cache(found),
                 })
+
+
+def _cache(found: definitions.Generated) -> dict[str, Any]:
+    """The cache value of a definition that holds one, for its item; nothing
+    for any other, so that their items and lines are what they were."""
+    return {} if found.cache is None else {"cache": found.cache}
 
 
 def _entry_providers(run: Run) -> list[homes.Provider]:
@@ -1093,7 +1100,7 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
             if found.provider == provider.name:
                 run.file(provider, place, found.name, found.text, found.inputs, detail={
                     "definition": found.definition, "role": found.role, "model": found.model,
-                    "effort": found.effort, "level": PROJECT,
+                    "effort": found.effort, "level": PROJECT, **_cache(found),
                 })
 
     # The starting role as the project's default.
@@ -1330,6 +1337,7 @@ def _report(run: Run, result: fileops.Result | None, errors: list[str], dry_run:
             "file": item.name, "bytes": item.size, "model": item.detail.get("model"),
             "effort": item.detail.get("effort"), "status": item.status,
             "level": PROJECT if item.project else "home",
+            **({"cache": item.detail["cache"]} if "cache" in item.detail else {}),
         }
         for item in run.items if item.kind == FILE and "definition" in item.detail
     ]
@@ -1519,7 +1527,9 @@ def _project_name(project: Path, item: Item) -> str:
 
 def _profile(found: dict[str, Any]) -> str:
     effort = f", effort {found['effort']}" if found.get("effort") is not None else ", no effort setting"
-    return f"model {found['model']}{effort}"
+    # Only a definition that holds a cache value has the key.
+    cache = f", cache {found['cache']}" if found.get("cache") is not None else ""
+    return f"model {found['model']}{effort}{cache}"
 
 
 def _point_line(point: dict[str, Any]) -> str:

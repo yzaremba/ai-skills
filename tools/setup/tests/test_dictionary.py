@@ -18,7 +18,7 @@ import unittest
 from unittest import mock
 
 import support
-from wfsetup import dictionary, schema, settings, tomlio
+from wfsetup import definitions, dictionary, schema, settings, tomlio
 from wfsetup.errors import SetupError
 
 CODEX_LIST_PATTERN = "codex-debug-models-*.json"
@@ -116,6 +116,18 @@ class RepositoryDictionaryTests(support.ScratchCase):
                 self.assertEqual(loaded.provider, name)
                 self.assertEqual(loaded.file, support.REPOSITORY / "providers" / name / "dictionary.toml")
                 self.assertEqual(dictionary.load_file(loaded.file), loaded)
+
+    def test_the_cache_each_maps(self) -> None:
+        claude, codex = self.all["claude-code"], self.all["codex"]
+        # Claude Code maps the long cache to a lifetime a definition takes;
+        # Codex has no such setting and maps nothing.
+        self.assertEqual(set(claude.cache), {"long"})
+        self.assertIn(claude.cache["long"], definitions.CACHE_TTLS)
+        self.assertNotEqual(claude.cache["long"], definitions.CACHE_TTLS[0])
+        self.assertEqual(codex.cache, {})
+        # The frontmatter key needs Claude Code 2.1.248: no supported version
+        # is older, so nothing checks a version for it.
+        self.assertGreaterEqual(dictionary.parse_version(claude.oldest_supported_version), (2, 1, 248))
 
     def test_each_has_line_feeds_only_and_a_comment_header(self) -> None:
         for name, file in self.files.items():
@@ -296,6 +308,35 @@ class LoadTests(support.CloneCase):
         self.assertEqual(loaded.role_models, {"coder-hard": "a-full-model-id"})
         self.assertEqual(loaded.settings["role_models"], {"coder-hard": "a-full-model-id"})
 
+    def test_a_dictionarys_cache_is_no_setting(self) -> None:
+        self.write(self.dictionary, support.VALID_DICTIONARY)
+        self.assertEqual(dictionary.load_file(self.dictionary).cache, {})
+        self.write(self.dictionary, support.VALID_DICTIONARY + '\n[cache]\nlong = "1h"\n')
+        loaded = dictionary.load_file(self.dictionary)
+        self.assertEqual(loaded.cache, {"long": "1h"})
+        self.assertEqual(set(loaded.settings), {"tiers", "efforts"})
+        self.assertFalse([key for key in settings.resolve(self.where(), ("providers",)) if ".cache" in key])
+
+    def test_a_cache_value_is_one_the_providers_definition_takes(self) -> None:
+        self.assertEqual(dictionary.CACHE_VALUES, {"claude-code": ("5m", "1h")})
+        self.assertIs(definitions.CACHE_TTLS, dictionary.CACHE_VALUES["claude-code"])
+        for value in ("5m", "1h"):
+            self.write(self.dictionary, support.VALID_DICTIONARY + f'\n[cache]\nlong = "{value}"\n')
+            problems: list[str] = []
+            self.assertEqual(dictionary.check_file(self.dictionary, "claude-code", problems).cache, {"long": value})
+            self.assertEqual(problems, [])
+        for value in ("2h", "1H", "1h ", " 1h", "60m", "1hr"):
+            with self.subTest(value):
+                self.write(self.dictionary, support.VALID_DICTIONARY + f'\n[cache]\nlong = "{value}"\n')
+                problems = []
+                self.assertIsNone(dictionary.check_file(self.dictionary, "claude-code", problems))
+                self.assertEqual(problems, [
+                    f'{self.dictionary}: cache.long: a claude-code definition does not take "{value}"; '
+                    "accepted values: 5m, 1h"
+                ])
+                # A provider with no such key: the entry is used by nothing and not looked at.
+                self.assertEqual(dictionary.load_file(self.dictionary).cache, {"long": value})
+
     def test_a_byte_order_mark_and_windows_line_endings_are_read(self) -> None:
         self.dictionary.parent.mkdir(parents=True)
         self.dictionary.write_bytes(b"\xef\xbb\xbf" + support.VALID_DICTIONARY.replace("\n", "\r\n").encode("utf-8"))
@@ -383,7 +424,15 @@ class FaultTests(support.CloneCase):
     def test_an_unknown_key(self) -> None:
         known = (
             "schema_version, checked_on_version, checked_on_date, oldest_supported_version, model_list, "
-            "tiers, efforts, role_models, models"
+            "tiers, efforts, role_models, cache, models"
+        )
+        self.assertEqual(
+            self.problems(support.VALID_DICTIONARY + '\n[cache]\nlong = "1h"\nshort = "5m"\n'),
+            ["cache.short: unknown key; known here: long"],
+        )
+        self.assertEqual(
+            self.problems(support.VALID_DICTIONARY + "\n[cache]\nlong = 60\n"),
+            ["cache.long: expected a string, got an integer"],
         )
         self.assertEqual(
             self.changed("schema_version = 1\n", 'schema_version = 1\nchecked_on = "9.9.9"\n'),

@@ -340,6 +340,19 @@ class FakeCloneTests(support.CloneCase):
         self.write(self.user_file, "[roles]\nhigh_stakes = true\n")
         self.assertEqual(self.values(), {("builder", "acme"): ("a.large", "minimal"), ("builder-hard", "acme"): ("a-mid", "medium")})
 
+    def test_the_cache_is_the_providers_value_and_none_where_it_has_no_such_setting(self) -> None:
+        self.write_role("lead", 'tier = "fast"\neffort = "low"\ncache = "long"\n\n[profile.hard]\ntier = "standard"\neffort = "medium"\n')
+        self.write_role("scout", 'tier = "fast"\neffort = "low"\n')
+        caches = lambda: {item.definition: item.cache for item in profiles.resolve_all(self.where())}
+        # The dictionary maps no cache: the key is accepted, nothing comes of it, and nothing is said.
+        self.assertEqual(caches(), {"lead": None, "lead-hard": None, "scout": None})
+        self.assertEqual([item.notes for item in profiles.resolve_all(self.where())], [(), (), ()])
+        self.assertEqual(profiles.resolution(self.where()).notes, ())
+        self.write(self.dictionary, support.VALID_DICTIONARY + '\n[cache]\nlong = "an-hour"\n')
+        # The hard definition does not take it, and a role that names none has none.
+        self.assertEqual(caches(), {"lead": "an-hour", "lead-hard": None, "scout": None})
+        self.assertEqual(roles.load_all(self.where())["lead"].definitions[0].cache, "long")
+
     def test_an_unaccepted_effort_from_the_role_file_names_it(self) -> None:
         file = self.write_role("scout", 'tier = "fast"\neffort = "high"\n')
         self.assertEqual(
@@ -453,7 +466,11 @@ class RoleFileTests(support.CloneCase):
             'tier = "huge"\neffort = "low"\n': 'profile.tier: "huge" is not allowed; allowed values: fast, standard, deep, frontier',
             'tier = "fast"\neffort = "xhigh"\n': 'profile.effort: "xhigh" is not allowed; allowed values: low, medium, high, max',
             'tier = "fast"\n': "profile.effort: missing; a profile names a tier and an effort",
-            'tier = "fast"\neffort = "low"\nmodel = "x"\n': "profile.model: unknown key; known here: tier, effort, high_stakes_tier, hard",
+            'tier = "fast"\neffort = "low"\nmodel = "x"\n': "profile.model: unknown key; known here: tier, effort, high_stakes_tier, cache, hard",
+            'tier = "fast"\neffort = "low"\ncache = "forever"\n': 'profile.cache: "forever" is not allowed; allowed values: long',
+            'tier = "fast"\neffort = "low"\ncache = true\n': "profile.cache: expected a string, got a boolean",
+            'tier = "fast"\neffort = "low"\n[profile.hard]\ntier = "deep"\neffort = "low"\ncache = "long"\n':
+                "profile.hard.cache: unknown key; known here: tier, effort",
             'tier = "fast"\neffort = "low"\nhigh_stakes_tier = 4\n': "profile.high_stakes_tier: expected a string, got an integer",
             'tier = "fast"\neffort = "low"\n[profile.hard]\ntier = "deep"\n': "profile.hard.effort: missing; a profile names a tier and an effort",
             'tier = "fast"\neffort = "low"\n[profile.hard]\ntier = "deep"\neffort = "low"\nhigh_stakes_tier = "frontier"\n':

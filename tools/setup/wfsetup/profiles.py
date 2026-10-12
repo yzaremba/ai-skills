@@ -29,6 +29,12 @@ The effort value is then checked against the provider's dictionary:
     - the dictionary does not list the model: the value stands unchecked,
       and a note says so.
 
+The cache is apart from these steps: ``[profile]`` ``cache`` of ``role.toml``
+names one, the provider's dictionary maps the name to its own value under
+``[cache]``, and no setting changes either. A provider whose dictionary has
+no such entry has no such setting: the key is accepted and nothing is
+written for it there, without a note.
+
 Each value keeps where it came from (``Source``). A value read from
 ``role.toml`` has the layer ``role``; the others have a settings layer.
 When the high-stakes tier is the tier in effect, the setting that switched
@@ -84,6 +90,8 @@ class Resolved:
     ``tiers``, or of ``role_models``. ``effort_from`` is the entry of
     ``efforts`` that mapped the effort name. ``effort`` is None for a model
     that takes no effort setting; a definition is then written without one.
+    ``cache`` is the provider's value for the cache the role names, and
+    None for a role that names none or a provider that has no such setting.
     """
 
     definition: str
@@ -97,6 +105,7 @@ class Resolved:
     effort_from: Source
     notes: tuple[str, ...] = ()
     high_stakes: Source | None = None
+    cache: str | None = None
 
     @property
     def explicit_model(self) -> bool:
@@ -296,6 +305,7 @@ def resolve_definition(definition: Definition, known: Dictionary, entries: dict[
         effort_from=effort_from,
         notes=tuple(notes),
         high_stakes=high_stakes,
+        cache=None if definition.cache is None else known.cache.get(definition.cache),
     )
 
 

@@ -8,6 +8,7 @@ actions = ["session", "dispatch", "in-dialogue", "commands", "files", "commit"]
 tier = "deep"
 effort = "high"
 high_stakes_tier = "frontier"
+cache = "long"
 
 [limits]
 edits = true

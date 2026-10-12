@@ -18,6 +18,10 @@ VERSION_KEY = "schema_version"
 
 TIERS = ("fast", "standard", "deep", "frontier")
 EFFORTS = ("low", "medium", "high", "max")
+# How long a role's context stays cached between its turns, where a provider
+# lets a definition say: ``long`` for a role that waits on the user or on
+# other agents. A role without the key takes the provider's own lifetime.
+CACHES = ("long",)
 QUESTIONS = ("one-at-a-time", "all-together")
 
 # A role id, as in roles/README.md, and a provider name: kebab-case.

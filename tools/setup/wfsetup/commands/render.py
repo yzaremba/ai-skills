@@ -68,8 +68,15 @@ dispatch, the Claude Code definition denies the tools (Edit, Write,
 NotebookEdit; Bash, PowerShell, Monitor; Agent), and the Codex definition
 asks for a read-only sandbox where the role may not change files. A role
 that may not dispatch is denied both tools that start an agent, Agent and
-Workflow. The size of each definition, with its model and effort, is in the
-output.
+Workflow. A role whose profile has cache = "long" waits between its turns, on
+the user or on agents it dispatched: the Product Manager, the Architect and
+the Implementation Manager. Its Claude Code definition names the one-hour
+prompt cache (experimental.cacheTtl: 1h), where a dispatched role is
+otherwise on the five-minute one; a one-hour cache write is billed at a
+higher rate, and Claude Code's own subagentPromptCacheTtl setting or
+CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL variable overrides the definition.
+Codex has no such key. The size of each definition, with its model and
+effort, and its cache where it names one, is in the output.
 
 Entry points. A role is given to a session in one of two ways, by "load" and
 "start" under [entry] in its role.toml.

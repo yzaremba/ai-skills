@@ -44,6 +44,7 @@ roles/
 | `[profile]` `tier` | string | `fast`, `standard`, `deep` or `frontier`. |
 | `[profile]` `effort` | string | `low`, `medium`, `high` or `max`. |
 | `[profile]` `high_stakes_tier` | string, optional | The tier used in place of `tier` when the settings mark the work as high-stakes. |
+| `[profile]` `cache` | string, optional | `long`: the role waits between its turns, on the user or on agents it dispatched, and its context stays cached the longer time where the provider's definition can say so. Without the key the provider's own lifetime holds. On Claude Code a dispatched role's definition then names the one-hour prompt cache (`providers/claude-code/dictionary.toml`, `[cache]`); Codex has no such key and nothing is written there. No setting changes it, and `[profile.hard]` does not take it. |
 | `[profile.hard]` | table, optional | A second profile, with `tier` and `effort`. It yields a second definition named `<name>-hard` from the same instructions. Only the Coder has one. |
 | `[limits]` `edits` | boolean | May the role change files. |
 | `[limits]` `commands` | boolean | May the role run shell commands. |

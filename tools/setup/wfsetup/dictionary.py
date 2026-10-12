@@ -16,6 +16,10 @@ A dictionary records what was checked about one provider on one day:
     [tiers]                   tier -> model; all four tiers
     [efforts]                 effort name -> the provider's value; all four
     [role_models]             optional: role id -> model
+    [cache]                   optional: cache name (``schema.CACHES``) -> the
+                              provider's value for a definition; a provider
+                              with no such setting has no table, and a role
+                              that names a cache then gets nothing written
     [models.<name>]           one table per known model
         efforts               the effort values the model accepts; empty for a
                               model that takes no effort setting
@@ -28,7 +32,8 @@ is not a setting and no settings file can override it.
 
 Beyond keys and types a dictionary must agree with itself: a tier maps to a
 model the file lists, an effort name maps to a value at least one listed
-model accepts, a default effort is one the model accepts, and the oldest
+model accepts, a default effort is one the model accepts, a cache value is
+one the provider's definition takes (``CACHE_VALUES``), and the oldest
 supported version is not newer than the checked one. Every fault names the
 file and the key, and all of a file's faults are reported at once.
 
@@ -39,7 +44,7 @@ from __future__ import annotations
 
 import datetime
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +60,14 @@ DICTIONARY_FILE = "dictionary.toml"
 SCHEMA_VERSION = 1
 
 _STRING = Value("string")
+
+# The values a provider's definition takes for a cache, by provider name: a
+# ``[cache]`` entry of that provider's dictionary is one of them. Claude Code:
+# code.claude.com/docs/en/sub-agents, read 2026-10-12, "Set its `cacheTtl`
+# key to `5m` or `1h` ... Claude Code ignores any other value", so a wrong
+# one would be written and do nothing, without a word. A provider that is
+# not named here has no key for it, and its entries are not looked at.
+CACHE_VALUES: dict[str, tuple[str, ...]] = {"claude-code": ("5m", "1h")}
 
 # A version is numbers separated by dots. A part has a bounded number of
 # digits: no provider's version needs more, and Python refuses to convert a
@@ -86,6 +99,7 @@ _KEYS: dict[str, schema.Node | None] = {
         "note": _STRING,
     }),
     **schema.PROVIDER.keys,
+    "cache": Table({name: _STRING for name in schema.CACHES}),
     "models": None,
 }
 _REQUIRED = ("checked_on_version", "checked_on_date", "model_list", "tiers", "efforts", "models")
@@ -133,6 +147,9 @@ class Dictionary:
     efforts: dict[str, str]
     role_models: dict[str, str]
     models: dict[str, Model]
+    # Cache name -> the provider's value. Not a setting: what a definition
+    # of this provider can say, which no settings file changes.
+    cache: dict[str, str] = field(default_factory=dict)
 
     def model(self, name: str) -> Model | None:
         """The entry of a model, or None for a model the file does not list
@@ -262,7 +279,7 @@ def check_file(file: Path, provider: str, problems: list[str]) -> Dictionary | N
         return None
     before = len(problems)
     if _check_shape(data, file, problems) and len(problems) == before:
-        _check_agreement(data, file, problems)
+        _check_agreement(data, file, problems, provider)
     if len(problems) > before:
         return None
     listing = data["model_list"]
@@ -285,6 +302,7 @@ def check_file(file: Path, provider: str, problems: list[str]) -> Dictionary | N
             name: Model(name, tuple(entry["efforts"]), entry.get("visibility"), entry.get("default_effort"))
             for name, entry in data["models"].items()
         },
+        cache=dict(data.get("cache", {})),
     )
 
 
@@ -369,8 +387,16 @@ def _is_date(text: str) -> bool:
     return True
 
 
-def _check_agreement(data: dict[str, Any], file: Path, problems: list[str]) -> None:
-    """What must hold between the keys of a file whose shape is right."""
+def _check_agreement(data: dict[str, Any], file: Path, problems: list[str], provider: str = "") -> None:
+    """What must hold between the keys of a file whose shape is right, and
+    between the file and what ``provider``'s definition takes."""
+    taken = CACHE_VALUES.get(provider)
+    for name, value in data.get("cache", {}).items() if taken is not None else ():
+        if value not in taken:
+            problems.append(
+                f"{file}: cache.{name}: a {provider} definition does not take {tomlio.format_value(value)}; "
+                f"accepted values: {', '.join(taken)}"
+            )
     models: dict[str, Any] = data["models"]
     listed = ", ".join(models)
     for tier, model in data["tiers"].items():

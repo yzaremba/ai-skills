@@ -32,7 +32,7 @@ from unittest import mock
 import support
 from fileops_support import POSIX, SYMLINKS
 from test_render import LINKS, RenderCase, tree
-from wfsetup import definitions, fileops, fsio, homes, locations, render, roles, validate
+from wfsetup import definitions, dictionary, fileops, fsio, homes, locations, render, roles, validate
 from wfsetup.errors import SetupError
 from wfsetup.locations import Locations
 
@@ -143,11 +143,24 @@ def frontmatter(text: str) -> tuple[dict[str, str], str]:
     if not found:
         raise ValueError("the frontmatter is not closed")
     fields: dict[str, str] = {}
-    for line in head.split("\n"):
+    lines = head.split("\n")
+    # The one nested map a definition may end with, in exactly the form the
+    # provider documents: ``experimental:`` and, two spaces in, ``cacheTtl``
+    # with a lifetime. It is read as the field ``experimental.cacheTtl``.
+    if len(lines) >= 2 and lines[-2] == "experimental:":
+        matched = re.fullmatch(r"  cacheTtl: ([0-9]+[mh])", lines[-1])
+        if not matched:
+            raise ValueError(f"not the cache line of the map: {lines[-1]!r}")
+        fields["experimental.cacheTtl"] = matched.group(1)
+        lines = lines[:-2]
+    nested = dict(fields)
+    fields = {}
+    for line in lines:
         matched = re.fullmatch(r"([A-Za-z]+): (\S.*)", line)
         if not matched or matched.group(1) in fields:
             raise ValueError(f"not a `key: value` line: {line!r}")
         fields[matched.group(1)] = yaml_value(matched.group(2))
+    fields.update(nested)
     return fields, body
 
 
@@ -831,6 +844,224 @@ class DigestCase(DefinitionsCase):
             definitions.build(self.where(), ["acme"])
 
 
+CACHE = 'cache = "long"\n'
+CACHE_TABLE = '\n[cache]\nlong = "1h"\n'
+CACHE_LINES = "experimental:\n  cacheTtl: 1h\n"
+
+
+class CacheCase(DefinitionsCase):
+    """``[profile]`` ``cache``: a Claude Code definition of a dispatched role
+    says how long its context stays cached, and nothing else changes."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.dictionary = self.clone / "providers" / CLAUDE / "dictionary.toml"
+        self.map(CACHE_TABLE)
+
+    def map(self, table: str) -> None:
+        self.dictionary.write_bytes((support.FIXTURE_DICTIONARIES[CLAUDE] + table).encode("utf-8"))
+
+    def name(self, role: str, **changes: str) -> None:
+        """Give the fixture role the key; ``hard`` of ``ROLE`` is the place
+        straight after the profile's effort."""
+        self.source(self.clone, role, hard=CACHE + changes.pop("hard", ""), **changes)
+
+    def test_the_key_ends_the_frontmatter_of_that_roles_claude_code_definition_only(self) -> None:
+        self.assertEqual(self.render()[0], 0)
+        before = (self.claude_agents / "runner.md").read_text(encoding="utf-8")
+        records = {key: entry["inputs"] for key, entry in self.entries().items() if entry["kind"] == "file"}
+        changed = self.changed_by(lambda: self.name("runner", commands="false", dispatches='["worker"]'))
+        self.assertEqual(changed, {".claude/agents/runner.md"})
+        text = (self.claude_agents / "runner.md").read_text(encoding="utf-8")
+        # The file it was, with the map as the last lines of the frontmatter.
+        self.assertEqual(text, before.replace("\n---\n", "\n" + CACHE_LINES + "---\n", 1))
+        self.assertTrue(text.startswith(
+            '---\nname: runner\ndescription: "Does runner work."\nmodel: sonnet\neffort: medium\n'
+            "disallowedTools: Bash, PowerShell, Monitor\nexperimental:\n  cacheTtl: 1h\n---\n\n<!--\n"
+        ), text[:300])
+        self.assertEqual(list(self.claude_file("runner")[0]), [
+            "name", "description", "model", "effort", "disallowedTools", "experimental.cacheTtl",
+        ])
+        # Codex has no such key: the same bytes, and only the record of what
+        # the file was made from moves, since ``role.toml`` is an input.
+        self.assertNotIn("cache", (self.codex_agents / "runner.toml").read_text(encoding="utf-8").lower())
+        after = {key: entry["inputs"] for key, entry in self.entries().items() if entry["kind"] == "file"}
+        self.assertEqual({key for key in after if after[key] != records[key]},
+                         {"home:.claude/agents/runner.md", "home:.codex/agents/runner.toml"})
+        self.assertEqual(self.report()[1]["plan"], [])
+
+    def test_the_hard_definition_does_not_take_it(self) -> None:
+        changed = self.changed_by(lambda: self.name("worker", hard=HARD, includes='["brief.md"]'))
+        self.assertEqual(changed, {".claude/agents/worker.md"})
+        self.assertEqual(self.claude_file("worker")[0]["experimental.cacheTtl"], "1h")
+        self.assertNotIn("experimental.cacheTtl", self.claude_file("worker-hard")[0])
+
+    def test_a_role_that_only_starts_a_session_gets_none(self) -> None:
+        # Its definition is the main thread's, which the provider does not read the key from.
+        def change() -> None:
+            self.name("lead", description=json.dumps(ODD), includes='["gates.md"]', edits="false",
+                      dispatches='["worker", "worker-hard"]', dispatch="false", load="true", start="true")
+
+        self.assertEqual(self.changed_by(change), set())
+        self.assertNotIn("experimental", (self.claude_agents / "lead.md").read_text(encoding="utf-8"))
+
+    def test_a_provider_that_maps_no_cache_writes_nothing_and_says_nothing(self) -> None:
+        self.map("")
+        self.assertEqual(self.render()[0], 0)
+        before = self.generated()
+        self.name("runner", commands="false", dispatches='["worker"]')
+        code, out, err = self.render()
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(self.generated(), before)
+        self.assertNotIn("cache", out.lower())
+        code, out, err = support_validate(self)
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertNotIn("cache", out.lower())
+
+    def test_a_lifetime_claude_code_does_not_take_is_one_fault_of_the_dictionary(self) -> None:
+        """Claude Code ignores such a value without a word, so every command
+        that reads the dictionary says it, once, and nothing is written."""
+        self.name("runner", commands="false", dispatches='["worker"]')
+        for value in ("2h", "1H", "1h ", "60m"):
+            with self.subTest(value):
+                self.map(f'\n[cache]\nlong = "{value}"\n')
+                fault = f'cache.long: a claude-code definition does not take "{value}"; accepted values: 5m, 1h'
+                before = tree(self.root)
+                with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
+                    runs = {
+                        "validate": support.run("validate", "--home", str(self.home)),
+                        "show": support.run("show", "roles", "--home", str(self.home)),
+                        "doctor": support.run("doctor", "--home", str(self.home)),
+                        "render": support.run("render", "--home", str(self.home)),
+                    }
+                for command, (code, out, err) in runs.items():
+                    with self.subTest(command=command):
+                        self.assertNotEqual(code, 0)
+                        said = [line for line in (out + err).splitlines() if "cache.long" in line]
+                        self.assertTrue(said and all(line.endswith(fault) for line in said), out + err)
+                        # ``doctor`` says a fault of a dictionary under its check
+                        # of the sources and again under each check it stops,
+                        # as it does for any other fault of that file.
+                        if command != "doctor":
+                            self.assertEqual(len(said), 1, out + err)
+                            self.assertIn("dictionary.toml: ", said[0])
+                self.assertEqual(tree(self.root), before)
+        # The same entry in the dictionary of a provider with no such key is not looked at.
+        other = self.clone / "providers" / CODEX / "dictionary.toml"
+        problems: list[str] = []
+        self.map(CACHE_TABLE)
+        other.write_bytes(other.read_bytes() + b'\n[cache]\nlong = "2h"\n')
+        self.assertIsNotNone(dictionary.check_file(other, CODEX, problems))
+        self.assertEqual(problems, [])
+
+    def test_build_refuses_a_lifetime_the_dictionary_let_through(self) -> None:
+        self.map('\n[cache]\nlong = "2h"\n')
+        self.name("runner", commands="false", dispatches='["worker"]')
+        with mock.patch.object(dictionary, "CACHE_VALUES", {}):
+            with self.assertRaises(SetupError) as caught:
+                definitions.build(self.where())
+        self.assertEqual(caught.exception.lines, [
+            f'{self.dictionary}: cache.long: "2h" is not a prompt cache lifetime a Claude Code definition takes '
+            "(needed for the role runner); it takes: 5m, 1h",
+        ])
+
+    def test_codex_writes_nothing_though_its_dictionary_maps_a_cache(self) -> None:
+        other = self.clone / "providers" / CODEX / "dictionary.toml"
+        plain = other.read_bytes()
+        self.name("runner", commands="false", dispatches='["worker"]')
+        self.assertEqual(self.render()[0], 0)
+        before, digests = self.generated(), definitions.digests(self.where())
+        other.write_bytes(plain + b'\n[cache]\nlong = "1h"\n')
+        self.assertEqual({item.cache for item in definitions.materials(self.where(), [CODEX])
+                          if item.definition == "runner"}, {"1h"})
+        self.assertEqual({found.cache for found in definitions.build(self.where(), [CODEX])}, {None})
+        self.assertEqual(definitions.digests(self.where()), digests)
+        code, report, err = self.report()
+        self.assertEqual((code, err, report["plan"]), (0, "", []))
+        self.assertEqual(self.generated(), before)
+        for file in self.codex_agents.iterdir():
+            self.assertNotIn(b"cache", file.read_bytes().lower(), file.name)
+
+    def test_the_definitions_line_of_the_output_names_the_cache_where_there_is_one(self) -> None:
+        self.name("runner", commands="false", dispatches='["worker"]')
+        self.assertEqual(self.render()[0], 0)
+        code, out, err = self.render()
+        self.assertEqual((code, err), (0, ""))
+        lines = out.splitlines()
+        size = (self.claude_agents / "runner.md").stat().st_size
+        self.assertIn(f"    runner.md: up to date: as generated ({size:,} bytes; model sonnet, effort medium, cache 1h)", lines)
+        self.assertEqual([line for line in lines if "cache" in line.lower()], [
+            f"    runner.md: up to date: as generated ({size:,} bytes; model sonnet, effort medium, cache 1h)",
+        ])
+        size = (self.codex_agents / "runner.toml").stat().st_size
+        self.assertIn(f"    runner.toml: up to date: as generated ({size:,} bytes; model gpt-6.1-sol, effort medium)", lines)
+        report = self.report()[1]
+        listed = {(found["provider"], found["file"]): found for found in report["definitions"]}
+        self.assertEqual(listed[(CLAUDE, "runner.md")]["cache"], "1h")
+        self.assertEqual([key for key, found in listed.items() if "cache" in found], [(CLAUDE, "runner.md")])
+
+    def test_the_digest_holds_the_value_where_one_is_written_and_is_what_it_was_elsewhere(self) -> None:
+        # A definition without the key keeps the digest it had before the
+        # key existed: the form below is that one, built by hand, and has no
+        # ``cache`` in it. Were it there, every recorded definition would
+        # show as drift after an upgrade.
+        files = {"roles/x/ROLE.md": "# X\r\n\r\nText.\n\n", "roles/x/role.toml": 'name = "x"\n'}
+        form = {
+            "scheme": definitions.INPUTS_SCHEME, "provider": CLAUDE, "definition": "x", "role": "x",
+            "files": {name: digest(roles.join_text([text]).encode("utf-8")) for name, text in files.items()},
+            "bindings": [], "skills": None, "model": "opus", "effort": "high",
+        }
+
+        def hashed(form: dict) -> str:
+            raw = json.dumps(form, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+            return f"{definitions.INPUTS_SCHEME}:{digest(raw)}"
+
+        self.assertEqual(definitions.inputs_digest(CLAUDE, "x", "x", files, (), "opus", "high"), hashed(form))
+        self.assertEqual(definitions.inputs_digest(CLAUDE, "x", "x", files, (), "opus", "high", cache=None), hashed(form))
+        self.assertEqual(definitions.inputs_digest(CLAUDE, "x", "x", files, (), "opus", "high", cache="1h"),
+                         hashed({**form, "cache": "1h"}))
+        self.assertEqual(
+            definitions.inputs_digest(CLAUDE, "x", "x", files, (), "opus", "high"),
+            # What the code gave before the key existed (commit ccbd2a9).
+            "render:role-definition:6:5a188bc0f2084527f427e3ce235cff4b252ee4cb89fcdddd38ad57b14f4f0faa",
+        )
+
+        self.map("")
+        without = definitions.digests(self.where())
+        self.map(CACHE_TABLE)
+        # A table nobody names changes no digest: no format number is raised for the key.
+        self.assertEqual(definitions.digests(self.where()), without)
+        self.name("runner", commands="false", dispatches='["worker"]')
+        named = definitions.digests(self.where())
+        self.assertEqual({key for key in named if named[key] != without[key]}, {(CLAUDE, "runner"), (CODEX, "runner")})
+        self.map('\n[cache]\nlong = "5m"\n')
+        short = definitions.digests(self.where())
+        self.assertEqual({key for key in short if short[key] != named[key]}, {(CLAUDE, "runner")})
+        self.assertEqual(self.render()[0], 0)
+        self.assertEqual(self.claude_file("runner")[0]["experimental.cacheTtl"], "5m")
+
+    def test_the_two_formats(self) -> None:
+        fields = {"name": "x", "role": "x", "description": "Does x.", "model": "opus", "effort": "high",
+                  "denied": ("Agent", "Workflow"), "cache": "1h"}
+        made = definitions.claude_code_text(fields, ["A notice."], ["Body."])
+        self.assertEqual(
+            made.split("\n\n")[0],
+            '---\nname: x\ndescription: "Does x."\nmodel: opus\neffort: high\ndisallowedTools: Agent, Workflow\n'
+            "experimental:\n  cacheTtl: 1h\n---",
+        )
+        self.assertEqual(made, definitions.claude_code_text({**fields, "cache": None}, ["A notice."], ["Body."])
+                         .replace("\n---\n", "\n" + CACHE_LINES + "---\n", 1))
+        # The Codex format has no place for it.
+        self.assertEqual(definitions.codex_text(fields, ["A notice."], ["Body."]),
+                         definitions.codex_text({**fields, "cache": None}, ["A notice."], ["Body."]))
+
+
+def support_validate(case: DefinitionsCase) -> tuple[int, str, str]:
+    """``validate`` on the case's clone."""
+    with mock.patch.object(homes.Host, "current", classmethod(lambda cls: case.host)):
+        return support.run("validate", "--home", str(case.home))
+
+
 class NoRolesCase(DefinitionsCase):
     def test_no_roles_generates_nothing(self) -> None:
         code, out, err = self.render("--no-roles")
@@ -1155,6 +1386,84 @@ class RepositoryCase(RenderCase):
         for data in (file.read_bytes() for directory in (self.claude / "agents", self.codex / "agents") for file in directory.iterdir()):
             self.assertNotIn(str(support.REPOSITORY).encode("utf-8"), data)
             self.assertNotIn(str(self.root).encode("utf-8"), data)
+
+    # The roles that wait between their turns, on the user or on Coders.
+    CACHED = ("architect", "implementation-manager", "product-manager")
+
+    def test_the_roles_that_wait_keep_their_context_cached_on_claude_code(self) -> None:
+        where = Locations(home=self.home, clone=support.REPOSITORY)
+        loaded = roles.load_all(where)
+        named = {name for name, role in loaded.items() if role.definitions[0].cache is not None}
+        self.assertLessEqual(set(self.CACHED), named)
+        self.assertNotIn("manager", named)   # the main session: on the long cache already
+        built = {(found.provider, found.definition): found for found in definitions.build(where)}
+        for (provider, name), found in built.items():
+            with self.subTest(provider=provider, definition=name):
+                if provider == CLAUDE and name in named:
+                    fields, _ = frontmatter(found.text)
+                    self.assertEqual(list(fields)[-1], "experimental.cacheTtl")
+                    self.assertEqual(fields["experimental.cacheTtl"], "1h")
+                    self.assertIn("\nexperimental:\n  cacheTtl: 1h\n---\n\n<!--\n", found.text)
+                    self.assertEqual(found.text.count("cacheTtl"), 1)
+                else:
+                    self.assertNotIn("cacheTtl", found.text)
+                    self.assertNotIn("experimental:", found.text)
+
+    def test_an_installed_home_gets_the_cache_key_in_three_files_and_no_other_change(self) -> None:
+        """The upgrade: a home rendered from the sources as they were before
+        three roles named a cache, then rendered from today's. The roles and
+        entry parts, so the loaded roles' skills and the Codex profile are
+        in the home too."""
+        # Only what the sources are: every directory that holds a skill, the
+        # roles, the rules, the providers and the shipped defaults. Nothing
+        # else of the checkout is copied, so what a tool or an editor left
+        # in it (a dot-directory, a cache, a link that leads nowhere) is
+        # never walked.
+        clone = self.root / "sources"
+        ignore = shutil.ignore_patterns(".*", "__pycache__", "tests")
+        wanted = ["roles", "rules", "providers", *sorted(
+            entry.name for entry in support.REPOSITORY.iterdir()
+            if not entry.name.startswith(".") and (entry / "SKILL.md").is_file()
+        )]
+        for name in wanted:
+            shutil.copytree(support.REPOSITORY / name, clone / name, ignore=ignore)
+        (clone / "tools" / "setup").mkdir(parents=True)
+        shutil.copy(support.DEFAULTS, clone / "tools" / "setup" / "defaults.toml")
+        files = {name: clone / "roles" / name / "role.toml" for name in self.CACHED}
+        today = {name: file.read_bytes() for name, file in files.items()}
+        for name, file in files.items():
+            self.assertEqual(today[name].count(CACHE.encode()), 1, name)
+            file.write_bytes(today[name].replace(CACHE.encode(), b""))
+        where, parts = Locations(home=self.home, clone=clone), render.PARTS[2:4]
+
+        def run() -> render.Outcome:
+            outcome = render.execute(homes.resolve(where, self.host), validate.require(where), parts=parts)
+            self.assertEqual((outcome.code, outcome.errors), (0, []))
+            return outcome
+
+        def files_of() -> dict[str, bytes]:
+            return {name: found[1] for name, found in tree(self.home).items()
+                    if found[0] == "file" and not name.startswith(".agents/workflow-setup/")}
+
+        run()
+        before = files_of()
+        self.assertLessEqual(
+            {".claude/agents/manager.md", ".claude/skills/product-manager/SKILL.md",
+             ".agents/skills/architect/SKILL.md", ".codex/agents/implementation-manager.toml"}, set(before))
+        self.assertFalse([name for name, data in before.items() if b"cacheTtl" in data])
+        for name, file in files.items():
+            file.write_bytes(today[name])
+        report = run().report
+        after = files_of()
+        self.assertEqual(set(after), set(before))
+        changed = {name for name in after if after[name] != before[name]}
+        self.assertEqual(changed, {f".claude/agents/{name}.md" for name in self.CACHED})
+        self.assertEqual(report["counts"]["file_write"], 3)
+        for name in changed:
+            old, new = before[name].decode("utf-8"), after[name].decode("utf-8")
+            self.assertEqual(new, old.replace("\n---\n", "\n" + CACHE_LINES + "---\n", 1))
+        self.assertEqual(run().report["plan"], [])
+        self.assertEqual(files_of(), after)
 
     # Who dispatches whom, and what each of the nine may do: the framework
     # document's table, as the sources state it. A role added later is not

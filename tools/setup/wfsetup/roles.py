@@ -17,7 +17,9 @@ second is named ``<name>-hard`` and has a tier and an effort of its own.
 ``[profile.hard]`` a tier and an effort and nothing else, and the framework
 document raises only the Product Manager and the Architect for high-stakes
 work, so the hard definition has no high-stakes tier and does not take the
-one of ``[profile]``.
+one of ``[profile]``. ``cache`` belongs to ``[profile]`` only in the same
+way: it is for a role that waits between its turns, and the hard definition
+is a Coder's, which does not.
 
 Every fault names the file and the key, and all of a file's faults are
 reported at once.
@@ -51,7 +53,10 @@ _EFFORT = Value("string", choices=schema.EFFORTS)
 
 _IDENTITY: dict[str, schema.Node] = {"name": _STRING, "title": _STRING, "description": _STRING}
 _HARD = Table({"tier": _TIER, "effort": _EFFORT})
-_PROFILE = Table({"tier": _TIER, "effort": _EFFORT, "high_stakes_tier": _TIER, "hard": _HARD})
+_PROFILE = Table({
+    "tier": _TIER, "effort": _EFFORT, "high_stakes_tier": _TIER, "cache": Value("string", choices=schema.CACHES),
+    "hard": _HARD,
+})
 _PROFILE_REQUIRED = ("tier", "effort")
 
 # What ``strict`` adds: the rest of the format, every key of it required.
@@ -92,6 +97,7 @@ class Definition:
     tier: str
     effort: str
     high_stakes_tier: str | None = None
+    cache: str | None = None    # one of ``schema.CACHES``, or None: the provider's own lifetime
 
 
 @dataclass(frozen=True)
@@ -204,7 +210,8 @@ def check_file(file: Path, name: str, problems: list[str], strict: bool = False)
         return None
 
     profile = data["profile"]
-    found = [Definition(name, name, file, "profile", profile["tier"], profile["effort"], profile.get("high_stakes_tier"))]
+    found = [Definition(name, name, file, "profile", profile["tier"], profile["effort"], profile.get("high_stakes_tier"),
+                        profile.get("cache"))]
     if "hard" in profile:
         hard = profile["hard"]
         found.append(Definition(name + HARD_SUFFIX, name, file, "profile.hard", hard["tier"], hard["effort"]))

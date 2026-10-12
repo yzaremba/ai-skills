@@ -57,6 +57,23 @@ The file (provider facts read on 2026-10-05)
     ``effort`` and ``model_reasoning_effort`` are left out for a model that
     takes no effort setting.
 
+The cache (``role.toml`` ``[profile]`` ``cache``; provider facts read on 2026-10-12)
+    claude-code   a role that is dispatched and names a cache the provider's
+                  dictionary maps (``[cache]``) ends its frontmatter with the
+                  map ``experimental:`` and, in it, ``cacheTtl``
+                  (code.claude.com/docs/en/sub-agents: "Set its `cacheTtl` key
+                  to `5m` or `1h` to choose the prompt cache lifetime for this
+                  subagent's requests", "Claude Code ignores any other value
+                  ... and reads the field only from subagent files", "Write
+                  `cacheTtl` inside the `experimental` map, not at the top
+                  level of the frontmatter"). A value that is not one of
+                  ``CACHE_TTLS`` would be ignored without a word, so it is a
+                  fault here. A role that only starts a session gets no such
+                  key: its definition is the main thread's, not a subagent's.
+    codex         no key: a definition there has nothing to say about it.
+    A definition without the key is the text it was before the key existed,
+    and its digest is too.
+
 Limits (``role.toml`` ``[limits]``)
     edits = false      claude-code denies ``EDIT_TOOLS``; codex asks for
                        ``sandbox_mode = "read-only"``, which costs nothing
@@ -101,7 +118,8 @@ The inputs digest (``Generated.inputs``)
     cleans it, so a CRLF checkout gives the same hash; the role's binding
     rows, and with them the skills directory they are written under
     (``skills_place``), so that a home whose provider directory moved is
-    seen as made from other inputs; the model and the effort. The title,
+    seen as made from other inputs; the model and the effort; the cache
+    value, where one is written. The title,
     the description, the limits and the entry flags are in ``role.toml``. The digest changes when any of
     these changes and not otherwise: another role's files, its rows, another
     provider's notes or a setting for another definition leave it as it was.
@@ -134,6 +152,8 @@ PROVIDERS = (CLAUDE_CODE, CODEX)
 # 6: a run of render names the skills directory of its own homes, so a home
 #    that a provider's variable moved gets other text from the same sources;
 #    that directory is in the digest.
+# Not raised for the cache key: the same inputs give the same text. A role
+# gets the key by a change of its ``role.toml``, which is an input.
 FORMAT = 6
 # Every digest ``render`` records starts with "render:"; see ``render``.
 INPUTS_SCHEME = f"render:role-definition:{FORMAT}"
@@ -153,6 +173,11 @@ INPUTS_SCHEME = f"render:role-definition:{FORMAT}"
 EDIT_TOOLS = ("Edit", "Write", "NotebookEdit")
 COMMAND_TOOLS = ("Bash", "PowerShell", "Monitor")
 DISPATCH_TOOLS = ("Agent", "Workflow")
+
+# The prompt cache lifetimes a Claude Code definition can name; see the
+# module. ``dictionary`` holds them, and checks the provider's dictionary
+# against them when it is read; ``build`` checks once more before it writes.
+CACHE_TTLS = dictionary.CACHE_VALUES[CLAUDE_CODE]
 
 READ_ONLY = "read-only"
 BINDINGS_FILE = "bindings.toml"
@@ -195,6 +220,7 @@ class Generated:
     model: str
     effort: str | None
     sources: tuple[str, ...] = ()
+    cache: str | None = None    # the cache value the file holds, where it holds one (``written_cache``)
 
     @property
     def size(self) -> int:
@@ -221,6 +247,7 @@ class Material:
     model: str
     effort: str | None
     skills: str = ""    # the skills directory the binding rows are written under (``skills_place``)
+    cache: str | None = None    # the provider's value for the cache the role names, where it has one
 
     @property
     def limits(self) -> dict[str, Any]:
@@ -272,6 +299,16 @@ def denied_tools(limits: dict[str, Any]) -> tuple[str, ...]:
     if limits.get("dispatches") == []:
         denied.extend(DISPATCH_TOOLS)
     return tuple(denied)
+
+
+def written_cache(found: "Material") -> str | None:
+    """The cache value the definition made from ``found`` holds, or None:
+    a Claude Code definition of a role that is dispatched and names a cache
+    its provider's dictionary maps. Only a subagent's file is read for it,
+    and a Codex definition has no key for it; see the module."""
+    entry = found.role.data.get("entry")
+    dispatched = isinstance(entry, dict) and entry.get("dispatch") is True
+    return found.cache if found.provider == CLAUDE_CODE and dispatched else None
 
 
 def description_of(role: roles.Role, definition: str) -> str:
@@ -477,6 +514,10 @@ def claude_code_text(fields: dict[str, Any], notice: list[str], body: list[str])
         lines.append(f"effort: {yaml_scalar(fields['effort'])}")
     if fields.get("denied"):
         lines.append(f"disallowedTools: {', '.join(fields['denied'])}")
+    if fields.get("cache") is not None:
+        # One of ``CACHE_TTLS``, written plain as the provider's page does:
+        # no YAML reader takes ``1h`` or ``5m`` for anything but a string.
+        lines += ["experimental:", f"  cacheTtl: {fields['cache']}"]
     lines.append("---")
     comment = "\n".join(["<!--", *notice, "-->"])
     return "\n".join(lines) + "\n\n" + roles.join_text([comment, *body])
@@ -511,11 +552,13 @@ def _text_hash(text: str) -> str:
 
 def inputs_digest(provider: str, definition: str, role: str, files: dict[str, str], rows: Iterable[Binding],
                   model: str, effort: str | None, *, scheme: str = INPUTS_SCHEME, skills: str = "",
-                  **more: Any) -> str:
+                  cache: str | None = None, **more: Any) -> str:
     """The digest of what one definition is made from; see the module.
     ``files`` maps each source's path in the clone to its text. ``skills``
     is the skills directory the rows are written under; it counts for a
-    role that has rows, the only text it is in. Another generator of
+    role that has rows, the only text it is in. ``cache`` is the cache value
+    written into the file; it counts only where there is one, so the digest
+    of a file without it is what it was. Another generator of
     ``render`` gives a ``scheme`` of its own, and in ``more`` whatever else
     its text is made from."""
     rows = list(rows)
@@ -530,6 +573,8 @@ def inputs_digest(provider: str, definition: str, role: str, files: dict[str, st
         "model": model,
         "effort": effort,
     }
+    if cache is not None:
+        form["cache"] = cache
     if more:
         form["more"] = more
     raw = json.dumps(form, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
@@ -634,7 +679,7 @@ def materials(where: Locations, providers: Iterable[str] = PROVIDERS, select: An
                 found.append(Material(
                     provider=name, definition=definition.id, role=role, body=body,  # type: ignore[arg-type]
                     files=read, rows=tuple(mine), model=profile.model, effort=profile.effort,  # type: ignore[arg-type]
-                    skills=skills,
+                    skills=skills, cache=profile.cache,
                 ))
     if problems:
         raise SetupError(*problems)
@@ -651,6 +696,14 @@ def build(where: Locations, providers: Iterable[str] = PROVIDERS,
     built: list[Generated] = []
     for found in materials(where, providers, homes_found=homes_found):
         role, name = found.role, found.provider
+        cache = written_cache(found)
+        if cache is not None and cache not in CACHE_TTLS:
+            problems.append(
+                f"{where.providers_dir / name / dictionary.DICTIONARY_FILE}: cache.{role.data['profile']['cache']}: "
+                f"{tomlio.format_value(cache)} is not a prompt cache lifetime a Claude Code definition takes "
+                f"(needed for the role {role.name}); it takes: {', '.join(CACHE_TTLS)}"
+            )
+            continue
         fields = {
             "name": found.definition,
             "role": role.name,
@@ -659,6 +712,7 @@ def build(where: Locations, providers: Iterable[str] = PROVIDERS,
             "effort": found.effort,
             "denied": denied_tools(found.limits),
             "read_only": found.limits.get("edits") is False,
+            "cache": cache,
         }
         notice = notice_lines(name, role.name, found.definition)
         try:
@@ -668,7 +722,8 @@ def build(where: Locations, providers: Iterable[str] = PROVIDERS,
             continue
         built.append(Generated(
             provider=name, definition=found.definition, role=role.name, name=file_name(name, found.definition),
-            text=text, inputs=found.digest(), model=found.model, effort=found.effort, sources=tuple(found.files),
+            text=text, inputs=found.digest(cache=cache), model=found.model, effort=found.effort, sources=tuple(found.files),
+            cache=cache,
         ))
     if problems:
         raise SetupError(*problems)

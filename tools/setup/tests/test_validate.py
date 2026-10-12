@@ -1112,6 +1112,20 @@ class RoleTests(TreeCase):
                 self.assertEqual([(p.file, p.key, p.rule) for p in problems], [("roles/worker/role.toml", key, "role-toml")])
                 self.assertIn("unknown key", problems[0].message)
 
+    def test_a_cache_is_one_the_format_has(self) -> None:
+        # Accepted, and nothing is said where no provider maps it.
+        self.edit('effort = "medium"', 'effort = "medium"\ncache = "long"')
+        self.assertClean()
+        self.edit('cache = "long"', 'cache = "forever"')
+        problems = self.check().problems
+        self.assertEqual([(p.file, p.key, p.rule) for p in problems], [("roles/worker/role.toml", "profile.cache", "role-toml")])
+        self.assertIn('"forever" is not allowed; allowed values: long', problems[0].message)
+        self.role("worker", hard=HARD)
+        self.edit('effort = "high"', 'effort = "high"\ncache = "long"')
+        problems = self.check().problems
+        self.assertEqual([(p.file, p.key, p.rule) for p in problems], [("roles/worker/role.toml", "profile.hard.cache", "role-toml")])
+        self.assertIn("unknown key", problems[0].message)
+
     def test_the_name_is_the_directory(self) -> None:
         self.edit('name = "worker"', 'name = "other"')
         self.assertEqual([(p.key, p.rule) for p in self.check().problems], [("name", "role-toml")])
