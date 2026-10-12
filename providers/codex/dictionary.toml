@@ -13,11 +13,17 @@
 #
 # Source: the output of `codex debug models` (the refreshed catalog) on the
 # checked version and date. What an account can actually use may differ.
+# The catalog shipped in the 0.162.1 binary (`--bundled`) is another list: it
+# has no `gpt-reserve`, two hidden models more, and other defaults.
+# Read on the same date:
+#   https://learn.chatgpt.com/docs/config-file/config-advanced  (profile files)
+#   https://learn.chatgpt.com/docs/developer-commands           (`codex debug models`)
+#   https://github.com/openai/codex/releases                    (0.160.1 to 0.162.1)
 
 schema_version = 1
 
-checked_on_version = "0.160.0"
-checked_on_date = "2026-10-05"
+checked_on_version = "0.162.1"
+checked_on_date = "2026-10-11"
 # A starting role is given to Codex as a profile file, <name>.config.toml in
 # the Codex home. The configuration page (Profiles) says: "In Codex 0.134.0
 # and later, `--profile` no longer reads `[profiles.profile-name]` from

@@ -8,7 +8,8 @@ read through its syntax tree, a Node script and every text through patterns.
     require(where)  -> Report     the same, or a SetupError of one line per problem
 
 A ``Report`` holds the problems in a fixed order, the skills that could be
-read (name, providers, invoke-only) and the size of each role's full text.
+read (name, providers, invoke-only), the size of each role's full text and,
+for each role that can be loaded, the size of the skill each provider is given.
 A ``Problem`` has a file (relative to the clone, with forward slashes), a
 line or a key where it has one, a rule id and a message. The rule ids are
 stable and are listed in ``RULES``.
@@ -40,6 +41,7 @@ What cannot be checked from the text, and is not claimed:
 from __future__ import annotations
 
 import ast
+import dataclasses
 import fnmatch
 import os
 import re
@@ -49,7 +51,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import dictionary, paths, roles, schema, tomlio
+from . import definitions, dictionary, entry, paths, roles, schema, tomlio
 from .errors import SetupError
 from .locations import Locations
 
@@ -84,10 +86,14 @@ RULES: dict[str, str] = {
     "role-toml": "role.toml: a key, a type or a value is not the format of roles/README.md",
     "role-text": "ROLE.md is missing or is not UTF-8 text",
     "role-include": "an entry of `includes` is not a file in roles/_shared/",
+    "role-actions": "an entry of `actions` is not a section of every provider's actions.md",
     "role-size": "ROLE.md with its includes reaches the size limit",
+    "loaded-skill-size": "the skill a loaded role is given on a provider is over the token limit",
     "role-dispatch": "an entry of `limits.dispatches` is not a role definition",
     "role-reserved": "a role definition's id is a scalar key of Codex's [agents] table",
-    "bindings": "roles/bindings.toml: a key, a name that does not exist, or a row given twice",
+    "bindings": "roles/bindings.toml: a key, a name that does not exist, a row given twice, or a skill that is "
+                "not installed for a provider the row's role is made for",
+    "stage-unbound": "a stage file of a process skill has no row in roles/bindings.toml",
     "provider-actions": "a provider directory has no readable actions.md",
     "dictionary": "a provider's dictionary.toml fails its schema",
     "defaults": "tools/setup/defaults.toml fails the settings schema",
@@ -114,6 +120,16 @@ DESCRIPTION_LIMIT = 400
 FIELD_LIMIT = 200          # any other string of a role, a binding or a dictionary
 # A provider's action notes end every definition and every loaded role.
 ACTIONS_LIMIT = 12_000
+# The skill of a role that can be loaded, on every provider, as ``entry``
+# estimates its tokens: what Claude Code keeps of an invoked skill after a
+# compaction, and the user's limit for the other provider as well (decision
+# of 2026-10-11). Read once, here: a test that moves ``entry``'s figure to
+# see ``render`` flag a skill does not move this rule.
+LOADED_SKILL_TOKENS = entry.COMPACTION_TOKENS
+# The home the skills are measured with: a place inside the clone that
+# holds no settings file, so the shipped settings alone decide the
+# profile, and a source's validity does not depend on the user's.
+NO_HOME = ("tools", "setup", ".no-home")
 
 # The names Windows keeps for devices, whatever follows a dot after them.
 DEVICE_NAMES = frozenset(
@@ -185,6 +201,17 @@ _SUBSTITUTION = re.compile(r"\$\{?(?:(?:CLAUDE|CODEX)_[A-Z0-9_]+|ARGUMENTS(?![A-
 _TOOL_PHRASE = re.compile(r"(?<![A-Za-z0-9_])`?(?:Agent|Bash|Edit|Write|Read|Glob|Grep|Task|Skill)`? tool\b")
 # Under a skill, the files that are one provider's own by the conventions.
 PROVIDER_FILES = ("references/claude-code.md", "references/codex.md", "/".join(OPENAI_FILE))
+
+# The stage files, which the binding table gives a role each (``stage_files``).
+REFERENCES_DIR = "references"
+STAGE_FILE = "stage-*.md"       # one such file makes a skill a process skill
+STAGE_SUFFIX = ".md"
+# In ``references/`` and no stage: the conventions hold in every stage and
+# are read through each stage file, and a provider's file says how an action
+# is done there, not who does it.
+NOT_A_STAGE = frozenset(
+    {"conventions.md"} | {name.split("/", 1)[1] for name in PROVIDER_FILES if name.startswith(REFERENCES_DIR + "/")}
+)
 
 # --- R6.10: the path of one machine ------------------------------------------
 #
@@ -269,7 +296,7 @@ LAUNCHER = "settings.py"
 # A script of a skill that carries a copy of shipped defaults, and the
 # groups of tools/setup/defaults.toml its copy must equal.
 BUILT_IN_GROUPS: dict[str, tuple[str, ...]] = {
-    LAUNCHER: ("process", "memory"),
+    LAUNCHER: ("process", "memory", "roles"),
     "check.py": ("process",),
 }
 
@@ -319,6 +346,8 @@ class Report:
     problems: tuple[Problem, ...]
     skills: dict[str, Skill]
     role_sizes: dict[str, int]
+    # By role and provider: the bytes and estimated tokens of its loaded skill.
+    loaded_sizes: dict[str, dict[str, dict[str, int]]] = dataclasses.field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -337,6 +366,7 @@ class Report:
                 for name, skill in self.skills.items()
             },
             "roles": {name: {"bytes": size, "limit": roles.TEXT_LIMIT} for name, size in self.role_sizes.items()},
+            "loaded": {"limit_tokens": LOADED_SKILL_TOKENS, "roles": self.loaded_sizes},
         }
 
 
@@ -349,7 +379,7 @@ def check(where: Locations) -> Report:
     run = _Run(where)
     for step in (_find_skills, _check_skills, _check_ids, _check_scripts, _check_texts, _check_roles,
                  _check_embedded, _check_bindings, _check_providers, _check_defaults, _check_launchers,
-                 _check_not_text):
+                 _check_not_text, _check_loaded):
         try:
             step(run)
         except SetupError as exc:
@@ -361,7 +391,8 @@ def check(where: Locations) -> Report:
         except RecursionError:
             run.add(where.clone, "source-unreadable", "a source is nested too deeply to read")
     problems = tuple(sorted(run.found, key=Problem._order))
-    return Report(problems, dict(sorted(run.report_skills.items())), dict(sorted(run.sizes.items())))
+    return Report(problems, dict(sorted(run.report_skills.items())), dict(sorted(run.sizes.items())),
+                  dict(sorted(run.loaded.items())))
 
 
 def require(where: Locations) -> Report:
@@ -392,6 +423,7 @@ class _Run:
         self.skills: dict[str, _Source] = {}
         self.report_skills: dict[str, Skill] = {}
         self.sizes: dict[str, int] = {}
+        self.loaded: dict[str, dict[str, dict[str, int]]] = {}
         self.defaults: dict[str, Any] | None = None
         self.installed: list[Path] = []   # every file of an installed unit
         self._bytes: dict[Path, bytes | None] = {}
@@ -1160,6 +1192,19 @@ def _check_roles(run: _Run) -> None:
                     f"with its includes the role's text is {size:,} bytes; it must stay under {roles.TEXT_LIMIT:,}",
                 )
 
+        actions = found.get("actions")
+        for item in actions if isinstance(actions, list) else []:
+            if not isinstance(item, str) or not item.strip():
+                continue  # the format check said so
+            missing = [provider for provider, names in _action_sections(run).items() if item not in names]
+            if missing:
+                run.add(
+                    file, "role-actions",
+                    f"{item!r} is not a section of {', '.join(f'providers/{name}/{ACTIONS_FILE}' for name in missing)}; "
+                    "a section is named by its level-three heading, in lower case with hyphens",
+                    key="actions",
+                )
+
         dispatches = _get(found, "limits", "dispatches")
         for item in dispatches if isinstance(dispatches, list) else []:
             if isinstance(item, str) and item.strip() and item not in definitions:
@@ -1168,6 +1213,56 @@ def _check_roles(run: _Run) -> None:
                     f"{item!r} is not a role definition; known: {', '.join(sorted(definitions))}",
                     key="limits.dispatches",
                 )
+
+
+def _action_sections(run: _Run) -> dict[str, set[str]]:
+    """The ids of the sections of each provider's action notes that can be
+    read. A provider whose notes cannot be read is left out: its own rule
+    says so."""
+    found: dict[str, set[str]] = {}
+    for directory in paths.entries(run.where.providers_dir):
+        if directory.name.startswith("."):
+            continue
+        try:
+            there = paths.kind(directory / ACTIONS_FILE) == paths.FILE
+        except SetupError:
+            there = False
+        text = run.text(directory / ACTIONS_FILE) if there else None
+        if text is not None:
+            found[directory.name] = {name for name, _ in definitions.action_sections(text)[1]}
+    return found
+
+
+def _check_loaded(run: _Run) -> None:
+    """The skill of each role that can be loaded, made as ``render`` makes
+    it for each provider that has a dictionary, and measured as ``render``
+    and ``doctor`` measure it. The profile is the shipped one (``NO_HOME``).
+    Sources the skills cannot be made from have a fault another rule
+    reports; where none did, the reason is reported here."""
+    where = run.where
+    if not _is_directory(run, where.roles_dir) or not _is_directory(run, where.providers_dir):
+        return
+    shipped = Locations(home=where.clone.joinpath(*NO_HOME), clone=where.clone)
+    try:
+        providers = [name for name in entry.PROVIDERS if name in dictionary.files(where)]
+        made = entry.skills(shipped, providers)
+    except SetupError as exc:
+        if not run.found:
+            for line in exc.lines:
+                run.add(where.roles_dir, "loaded-skill-size", "a loaded role's skill cannot be made, so its size "
+                        f"is not known: {run.shorten(line)}")
+        return
+    for one in made:
+        if not one.name.endswith(entry.SKILL_FILE):
+            continue
+        run.loaded.setdefault(one.role, {})[one.provider] = {"bytes": one.size, "tokens": one.tokens}
+        if one.tokens > LOADED_SKILL_TOKENS:
+            run.add(
+                where.roles_dir / one.role / roles.TEXT_FILE, "loaded-skill-size",
+                f"loaded as a skill on {one.provider} the role is about {one.tokens:,} tokens ({one.size:,} bytes, at "
+                f"{entry.BYTES_PER_TOKEN} bytes a token); at most {LOADED_SKILL_TOKENS:,}, which is what Claude Code "
+                "keeps of an invoked skill after a compaction. Cut the role's text, its includes or its actions",
+            )
 
 
 def _check_embedded(run: _Run) -> None:
@@ -1271,6 +1366,7 @@ def _check_bindings(run: _Run) -> None:
         role_names = set(roles.files(where))
     except SetupError:
         role_names = set()
+    made_for = _made_for(run)
     known = ("role", "skill", "stage", "part", "note")
     seen: dict[tuple[str, str, str], int] = {}
     for number, row in enumerate(rows, 1):
@@ -1304,6 +1400,18 @@ def _check_bindings(run: _Run) -> None:
             if not skill_there:
                 fault(f"{skill!r} is not a skill: a directory at the repository root that holds SKILL.md, "
                       "named and never given as a path", f"{place}.skill")
+            # The row reaches the role in every file made for it, under the
+            # path of the skill in that provider's skills directory: the
+            # skill has to be installed there. A compatibility line that
+            # cannot be read is its own rule's to report.
+            installed = run.skills[skill].providers if skill_there else None
+            for provider in made_for.get(role or "", ()) if installed is not None else ():
+                if provider not in installed:
+                    fault(
+                        f"the role {role} is made for {provider}, where the skill {skill!r} is not installed: its "
+                        f"compatibility line names {', '.join(installed) or 'no provider'}. The role would be told "
+                        f"to read its stage file in a skills directory that does not hold the skill. Name {provider} "
+                        f"in {skill}/{SKILL_FILE}, or bind a role that is not made for {provider}", f"{place}.skill")
         if stage is not None:
             if re.search(r"[\\/]", stage) or stage in (".", ".."):
                 fault(f"{stage!r} is not a file name; a stage is named without a directory", f"{place}.stage")
@@ -1324,6 +1432,71 @@ def _check_bindings(run: _Run) -> None:
             first = seen.setdefault((role, skill, stage), number)
             if first != number:
                 fault(f"the same role, skill and stage as row {first}; a row is unique by the three", place)
+
+    # Every stage of every process skill has a row. A row counts by its
+    # skill and stage alone: a fault in its role is reported above.
+    bound = {(row.get("skill"), row.get("stage")) for row in rows
+             if isinstance(row.get("skill"), str) and isinstance(row.get("stage"), str)}
+    for source in _judged(run):
+        for stage in stage_files(run, source.directory):
+            if (source.name, stage.name) not in bound:
+                run.add(
+                    stage, "stage-unbound",
+                    f"no row of roles/{BINDINGS_FILE} names this stage file; every stage file of a process skill "
+                    "has a row with the role that follows it",
+                )
+
+
+def _made_for(run: _Run) -> dict[str, tuple[str, ...]]:
+    """For each role that can be read, the providers ``render`` makes a
+    file for it on, of those that have a dictionary: a definition
+    (``definitions.providers_of``), the skill of a loaded role, the profile
+    of a starting role on Codex. A role whose ``role.toml`` is at fault is
+    left out; its own rule says so."""
+    where = run.where
+    try:
+        files = roles.files(where)
+        with_dictionary = dictionary.files(where)
+    except SetupError:
+        return {}
+    found: dict[str, tuple[str, ...]] = {}
+    for name, file in files.items():
+        try:
+            role = roles.check_file(file, name, [])
+        except (SetupError, OSError):
+            role = None
+        if role is None:
+            continue
+        wanted = set(definitions.providers_of(role))
+        if entry.loads(role):
+            wanted.update(entry.PROVIDERS)
+        if entry.starts(role):
+            wanted.add(entry.CODEX)
+        found[name] = tuple(provider for provider in entry.PROVIDERS if provider in wanted and provider in with_dictionary)
+    return found
+
+
+def stage_files(run: _Run, skill: Path) -> list[Path]:
+    """The stage files of the skill in the directory ``skill``, by name; none
+    for a skill that is no process skill. A process skill is one that holds
+    a file ``references/stage-*.md``. Its stage files are the ``.md`` files
+    directly in ``references/``, whatever their names, but for
+    ``NOT_A_STAGE``: so a stage file added under any name needs a row. A
+    file in a directory below ``references/`` is none, and neither is a file
+    of another type. Names are compared without regard to letter case
+    (``Stage-1.md``, ``notes.MD``): a file system that folds case opens
+    them all the same. A row still names a file exactly as it is written."""
+    references = skill / REFERENCES_DIR
+    try:
+        if paths.kind(references) != paths.DIRECTORY:
+            return []
+    except SetupError:
+        return []  # the walk of the skill's texts reports it
+    found = [file for file in run.walk(references)
+             if file.parent == references and file.name.lower().endswith(STAGE_SUFFIX)]
+    if not any(fnmatch.fnmatchcase(file.name.lower(), STAGE_FILE) for file in found):
+        return []
+    return [file for file in found if file.name.lower() not in NOT_A_STAGE]
 
 
 # --- Providers and settings ------------------------------------------------------

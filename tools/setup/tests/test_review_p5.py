@@ -599,18 +599,17 @@ class LoadedRoleProjectTests(EntryCase):
         self.ok()
         for name in (".claude/skills/lead/SKILL.md", ".agents/skills/lead/SKILL.md"):
             text = " ".join(self.text(name).split())
-            self.assertIn("That profile is the user-level one", text)
-            self.assertIn("A project may set another profile for this role", text)
+            self.assertIn("A project may set another profile: `python tools/setup/workflow_setup.py show roles", text)
             self.assertIn("show roles --project <the project>", text)
             self.assertNotIn(str(self.root), text)
 
     def test_a_skill_made_with_the_earlier_format_is_reported_as_drift(self) -> None:
-        self.assertEqual(entry.LOADED_SCHEME, "render:loaded-role:2")
+        self.assertEqual(entry.LOADED_SCHEME, "render:loaded-role:6")
         self.ok()
         record = self.manifest_file
         data = json.loads(record.read_text(encoding="utf-8"))
         key = "home:.claude/skills/lead/SKILL.md"
-        data["entries"][key]["inputs"] = data["entries"][key]["inputs"].replace("loaded-role:2", "loaded-role:1")
+        data["entries"][key]["inputs"] = data["entries"][key]["inputs"].replace("loaded-role:6", "loaded-role:5")
         record.write_text(json.dumps(data), encoding="utf-8")
         with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
             code, out, err = support.run("doctor", "--only", "drift", "--json", "--home", str(self.home))

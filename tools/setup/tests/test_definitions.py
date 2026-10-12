@@ -366,7 +366,7 @@ class FilesCase(DefinitionsCase):
             "# Reviewer\n\nYou are the reviewer. Do the work.",
             "## The brief\n\nWork from the brief.",
             "## Gates\n\nHold the gate.",
-            definitions.bindings_section([]),
+            definitions.bindings_section([], "~/anywhere"),
             "## How actions are done on claude-code\n\n- Dispatch a role.",
         ]))
         instructions = self.codex_file("reviewer")["developer_instructions"]
@@ -375,7 +375,7 @@ class FilesCase(DefinitionsCase):
             "# Reviewer\n\nYou are the reviewer. Do the work.",
             "## The brief\n\nWork from the brief.",
             "## Gates\n\nHold the gate.",
-            definitions.bindings_section([]),
+            definitions.bindings_section([], "~/anywhere"),
             "## How actions are done on codex\n\n- Dispatch a role.",
         ]))
         # What validation measured is in the file as measured.
@@ -412,27 +412,135 @@ class FilesCase(DefinitionsCase):
 
     def test_the_binding_rows_reach_the_right_roles_and_the_hard_definition(self) -> None:
         self.render()
-        owns = "- Skill `alpha`, stage file `stage-1.md`, part `owns`: you do everything the stage file asks of whoever runs the stage."
-        checks = "- Skill `alpha`, stage file `stage-1.md`, part `checks`: Reads the stage and writes nothing."
+        owns = "In `~/.claude/skills/alpha/references/`:\n\n- `stage-1.md`, part `owns`.\n"
+        codex_owns = "In `~/.agents/skills/alpha/references/`:\n\n- `stage-1.md`, part `owns`.\n"
+        said = "The part `owns` is everything the stage file asks of whoever runs the stage."
+        checks = "In `~/.claude/skills/alpha/references/`:\n\n- `stage-1.md`, part `checks`: Reads the stage and writes nothing."
         for name in ("worker", "worker-hard"):
             body = self.claude_file(name)[1]
             self.assertIn("## Your bindings\n\nEach row binds you to one stage file", body)
             self.assertIn(owns, body)
+            # What `owns` means is said once, in the paragraph above the rows.
+            self.assertEqual(body.count(said), 1)
             self.assertNotIn(checks, body)
-            self.assertIn(owns, self.codex_file(name)["developer_instructions"])
+            self.assertIn(codex_owns, self.codex_file(name)["developer_instructions"])
         self.assertIn(checks, self.claude_file("lead")[1])
         self.assertNotIn(owns, self.claude_file("lead")[1])
+        self.assertNotIn(said, self.claude_file("lead")[1])
         for name in ("reviewer", "runner", "quick"):
             self.assertIn("## Your bindings\n\nNone: no stage file of the process skills is bound to you.", self.claude_file(name)[1])
             self.assertNotIn("stage-1.md", self.codex_file(name)["developer_instructions"])
+
+    def test_a_role_is_told_where_the_skills_are_installed(self) -> None:
+        self.render()
+        for name in ("worker", "worker-hard", "lead"):
+            self.assertIn("\n\nIn `~/.claude/skills/alpha/references/`:\n\n- `stage-1.md`, part `", self.claude_file(name)[1])
+        self.assertIn(
+            "\n\nIn `~/.agents/skills/alpha/references/`:\n\n- `stage-1.md`, part `owns`.",
+            self.codex_file("worker")["developer_instructions"],
+        )
+        # A role with no row is told of no directory: it reads no stage file.
+        self.assertNotIn("/skills/", self.claude_file("reviewer")[1])
+        where = self.where()
+        self.assertEqual(definitions.skills_place(where, CLAUDE), "~/.claude/skills")
+        self.assertEqual(definitions.skills_place(where, CODEX), "~/.agents/skills")
+
+    def moved_run(self, **variables: Path) -> tuple[homes.Homes, render.Outcome]:
+        """A run of render as the command makes it for the user's own home,
+        with the providers' variables set: ``render.execute`` on the homes
+        resolved for a host that has them. ``Host.current`` is not replaced:
+        what a file says of the home must come from the run's own homes."""
+        host = homes.Host(self.host.side, {"PATH": "", **{name: str(path) for name, path in variables.items()}}, ())
+        where = dataclasses.replace(self.where(), real_home=True)
+        found = homes.resolve(where, host)
+        self.assertFalse(found.scratch)
+        sources = validate.require(where)
+        with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.fail("the host was read again"))):
+            outcome = render.execute(found, sources)
+        self.assertEqual((outcome.code, outcome.errors), (0, []))
+        return found, outcome
+
+    def test_a_home_that_a_variable_moved_is_named_in_full(self) -> None:
+        moved = self.root / "moved" / "claude-home"
+        moved.mkdir(parents=True)
+        found, _ = self.moved_run(CLAUDE_CONFIG_DIR=moved)
+        self.assertEqual(found.provider(CLAUDE).home, moved)
+        # The skills are linked into the moved home, and that is the directory a role is told.
+        self.assertTrue(fsio.is_file(moved / "skills" / "alpha" / "SKILL.md"))
+        text = (moved / "agents" / "worker.md").read_bytes().decode("utf-8")
+        self.assertIn(f"\n\nIn `{(moved / 'skills').as_posix()}/alpha/references/`:\n\n- `stage-1.md`, part `owns`.", text)
+        self.assertNotIn("~/.claude/skills", text)
+        # Nothing went to the home's default place.
+        self.assertEqual(os.listdir(self.claude), [])
+        # Codex reads the user's skills beside its home, wherever that home is.
+        self.assertIn("\n\nIn `~/.agents/skills/alpha/references/`:\n\n- `stage-1.md`, part `owns`.",
+                      self.codex_file("worker")["developer_instructions"])
+        self.assertEqual(definitions.skills_place(self.where(), CLAUDE, found), (moved / "skills").as_posix())
+        self.assertEqual(definitions.skills_place(self.where(), CODEX, found), "~/.agents/skills")
+        # A scratch home reads no variable.
+        self.assertEqual(definitions.skills_place(self.where(), CLAUDE), "~/.claude/skills")
+
+    def test_a_codex_home_that_a_variable_moved_keeps_the_skills_beside_the_users_home(self) -> None:
+        moved = self.root / "moved" / "codex-home"
+        moved.mkdir(parents=True)
+        found, _ = self.moved_run(CODEX_HOME=moved)
+        self.assertEqual(found.provider(CODEX).home, moved)
+        text = tomllib.loads((moved / "agents" / "worker.toml").read_bytes().decode("utf-8"))["developer_instructions"]
+        self.assertIn("\n\nIn `~/.agents/skills/alpha/references/`:\n\n- `stage-1.md`, part `owns`.", text)
+        self.assertTrue(fsio.is_file(self.codex_skills / "alpha" / "SKILL.md"))
+        self.assertNotIn(str(moved), text)
+        self.assertNotIn(moved.as_posix(), text)
+
+    def test_a_home_moved_inside_the_users_home_is_named_from_the_tilde(self) -> None:
+        moved = self.home / "config" / "claude"
+        moved.mkdir(parents=True)
+        self.moved_run(CLAUDE_CONFIG_DIR=moved)
+        text = (moved / "agents" / "worker.md").read_bytes().decode("utf-8")
+        self.assertIn("\n\nIn `~/config/claude/skills/alpha/references/`:\n\n", text)
+        self.assertNotIn(self.home.as_posix(), text)
+
+    def test_the_skills_directory_is_in_the_digest_of_a_role_with_rows(self) -> None:
+        moved = self.root / "moved" / "claude-home"
+        moved.mkdir(parents=True)
+        found, _ = self.moved_run(CLAUDE_CONFIG_DIR=moved)
+        there = definitions.digests(self.where(), homes_found=found)
+        here = definitions.digests(self.where())
+        # worker and lead have a row, and with it the directory in their text.
+        self.assertEqual({key for key in here if here[key] != there[key]},
+                         {(CLAUDE, "worker"), (CLAUDE, "worker-hard"), (CLAUDE, "lead")})
+        record = fileops.read_record(found.roots())
+        recorded = {entry["inputs"] for entry in record.entries.values() if entry.get("kind") == "file"}
+        self.assertEqual(recorded, set(there.values()))
 
     def test_a_part_without_a_note_points_at_the_stage_file(self) -> None:
         section = definitions.bindings_section([
             definitions.Binding("r", "alpha", "s.md", "implementer"),
             definitions.Binding("r", "alpha", "t.md", "owns", "And the index."),
-        ])
+        ], "~/some/skills")
+        self.assertIn("\n\nIn `~/some/skills/alpha/references/`:\n\n- `s.md`, part `implementer`: ", section)
+        self.assertIn("one stage file of an installed process skill and names your part in it.", section)
+        # Every role with a row is told here to read its stage file first.
+        self.assertIn("Read the file before you act on it, and take no part in a stage with no row here.", section)
+        self.assertIn("A skill's scripts are in `scripts/`, beside `references/`.", section)
         self.assertIn("part `implementer`: the part the stage file defines under that name.", section)
-        self.assertIn("part `owns`: you do everything the stage file asks of whoever runs the stage. And the index.", section)
+        self.assertIn("part `owns`: And the index.", section)
+        self.assertEqual(section.count("The part `owns` is everything the stage file asks of whoever runs the stage."), 1)
+
+    def test_a_skills_directory_is_named_once_above_its_rows(self) -> None:
+        section = definitions.bindings_section([
+            definitions.Binding("r", "alpha", "s.md", "implementer"),
+            definitions.Binding("r", "beta", "u.md", "owns"),
+            definitions.Binding("r", "alpha", "t.md", "owns", "And the index."),
+        ], "~/some/skills")
+        # The skills in the order of their first row, each skill's rows in the table's order.
+        self.assertTrue(section.endswith(
+            "\n\nIn `~/some/skills/alpha/references/`:\n\n"
+            "- `s.md`, part `implementer`: the part the stage file defines under that name.\n"
+            "- `t.md`, part `owns`: And the index.\n\n"
+            "In `~/some/skills/beta/references/`:\n\n"
+            "- `u.md`, part `owns`."
+        ), section)
+        self.assertEqual(section.count("~/some/skills"), 2)
 
     def test_the_report_gives_each_definition_its_size_model_and_effort(self) -> None:
         code, report, _ = self.report()
@@ -568,10 +676,15 @@ class DependsCase(DefinitionsCase):
 
     def test_a_new_binding_row_for_a_role_with_a_hard_definition(self) -> None:
         file = self.clone / "roles/bindings.toml"
-        (self.clone / "beta/references").mkdir()
-        (self.clone / "beta/references/stage-2.md").write_bytes(b"# Stage 2\n")
         row = b'\n[[binding]]\nrole = "worker"\nskill = "beta"\nstage = "stage-2.md"\npart = "owns"\n'
-        changed = self.changed_by(lambda: file.write_bytes(file.read_bytes() + row))
+
+        def add() -> None:
+            # Together: a stage file with no row is a fault of the sources.
+            (self.clone / "beta/references").mkdir()
+            (self.clone / "beta/references/stage-2.md").write_bytes(b"# Stage 2\n")
+            file.write_bytes(file.read_bytes() + row)
+
+        changed = self.changed_by(add)
         self.assertEqual(changed, {
             ".claude/agents/worker.md", ".claude/agents/worker-hard.md",
             ".codex/agents/worker.toml", ".codex/agents/worker-hard.toml",
@@ -667,7 +780,10 @@ class DigestCase(DefinitionsCase):
             self.assertRegex(inputs, rf"^render:role-definition:{definitions.FORMAT}:[0-9a-f]{{64}}$")
         # The text for the same inputs changed with the tools denied for an
         # empty ``dispatches``, so the format number did.
-        self.assertEqual(definitions.FORMAT, 2)
+        # 4: the section "Your bindings" says where the skills are installed.
+        # 5: it names each skill's directory once, above that skill's rows.
+        # 6: the skills directory is that of the run's homes, and is in the digest.
+        self.assertEqual(definitions.FORMAT, 6)
         self.assertTrue(definitions.INPUTS_SCHEME.startswith(render.GENERATED_PREFIX))
         self.assertEqual(len(set(found.values())), 11)
 
@@ -1006,8 +1122,10 @@ class RepositoryCase(RenderCase):
         self.assertEqual(tree(self.home), before)
         claude = {file.name for file in (self.claude / "agents").iterdir()}
         codex = {file.name for file in (self.codex / "agents").iterdir()}
-        self.assertLessEqual({"manager.md", "product-manager.md", "coder.md", "coder-hard.md"}, claude)
-        self.assertLessEqual({"product-manager.toml", "coder.toml", "coder-hard.toml"}, codex)
+        dispatched = {"product-manager", "coder", "coder-hard", "architect", "implementation-manager",
+                      "investigator", "idea-reviewer", "plan-reviewer", "code-reviewer"}
+        self.assertLessEqual({"manager.md"} | {f"{name}.md" for name in dispatched}, claude)
+        self.assertLessEqual({f"{name}.toml" for name in dispatched}, codex)
         # The Manager starts a session and is not dispatched: no Codex agent file.
         self.assertNotIn("manager.toml", codex)
 
@@ -1037,6 +1155,106 @@ class RepositoryCase(RenderCase):
         for data in (file.read_bytes() for directory in (self.claude / "agents", self.codex / "agents") for file in directory.iterdir()):
             self.assertNotIn(str(support.REPOSITORY).encode("utf-8"), data)
             self.assertNotIn(str(self.root).encode("utf-8"), data)
+
+    # Who dispatches whom, and what each of the nine may do: the framework
+    # document's table, as the sources state it. A role added later is not
+    # looked at.
+    DISPATCHES = {
+        "manager": ("product-manager", "architect", "implementation-manager", "idea-reviewer", "plan-reviewer"),
+        "product-manager": ("investigator",),
+        "architect": ("investigator",),
+        "implementation-manager": ("coder", "coder-hard", "code-reviewer"),
+        "coder": (), "investigator": (), "idea-reviewer": (), "plan-reviewer": (), "code-reviewer": (),
+    }
+
+    def test_the_nine_roles_and_who_dispatches_whom(self) -> None:
+        where = Locations(home=self.home, clone=support.REPOSITORY)
+        loaded = roles.load_all(where)
+        self.assertLessEqual(set(self.DISPATCHES), set(loaded))
+        for name, wanted in self.DISPATCHES.items():
+            with self.subTest(role=name):
+                limits, entry = loaded[name].data["limits"], loaded[name].data["entry"]
+                self.assertEqual(tuple(limits["dispatches"]), wanted)
+                # Only the Manager starts a session, and it is never dispatched.
+                self.assertEqual((entry["start"], entry["dispatch"]), (name == "manager", name != "manager"))
+                self.assertEqual(entry["load"], name in ("manager", "product-manager", "architect"))
+        # The Manager and the reviewers change no file; two reviewers run no command.
+        writes = {name for name in self.DISPATCHES if loaded[name].data["limits"]["edits"]}
+        self.assertEqual(writes, {"product-manager", "architect", "implementation-manager", "coder"})
+        shell = {name for name in self.DISPATCHES if not loaded[name].data["limits"]["commands"]}
+        self.assertEqual(shell, {"idea-reviewer", "plan-reviewer"})
+        for name in shell:
+            self.assertEqual(loaded[name].data["actions"], ["read"])
+        self.assertEqual([definition.id for definition in loaded["coder"].definitions], ["coder", "coder-hard"])
+
+    def test_every_role_that_follows_a_stage_file_has_its_rows(self) -> None:
+        where = Locations(home=self.home, clone=support.REPOSITORY)
+        rows = definitions.bindings(where)
+        found = {role: {(row.skill, row.stage, row.part) for row in mine} for role, mine in rows.items()}
+        sprint, epic = "prd-implementation", "epic-implementation"
+        for role, wanted in {
+            "manager": {(sprint, "deferred.md", "checks"), (sprint, "stage-3-implementation.md", "choices"),
+                        (sprint, "completion.md", "close-commands"), (sprint, "abandon.md", "close-commands")},
+            "product-manager": {(sprint, "stage-0-backlog.md", "owns"), (sprint, "backlog-conversion.md", "owns"),
+                                (sprint, "stage-1-thoughts.md", "owns"), (sprint, "stage-2-prd.md", "owns"),
+                                (epic, "stage-e0-backlog.md", "owns"), (epic, "stage-e1-thoughts.md", "owns"),
+                                (epic, "stage-e2-charter.md", "owns"), (epic, "stage-e3-roadmap.md", "seam"),
+                                (epic, "completion.md", "owns")},
+            "idea-reviewer": {(sprint, "stage-2-prd.md", "critical-pass"), (epic, "stage-e2-charter.md", "critical-pass")},
+            "architect": {(sprint, "stage-3-plan-tasks.md", "owns"), (epic, "stage-e3-roadmap.md", "decomposes")},
+            "plan-reviewer": {(sprint, "stage-3-plan-tasks.md", "reviews")},
+            "implementation-manager": {(sprint, "stage-3-implementation.md", "build-lead"),
+                                       (sprint, "state.md", "build-lead"),
+                                       (sprint, "completion.md", "close-writer"),
+                                       (sprint, "abandon.md", "close-writer")},
+            "coder": {(sprint, "stage-3-implementation.md", "implementer")},
+        }.items():
+            with self.subTest(role=role):
+                self.assertLessEqual(wanted, found.get(role, set()))
+        # The Manager writes nothing, so what the close and a deferred item
+        # write has a role that does.
+        self.assertIn((sprint, "deferred.md", "writes"), found["implementation-manager"])
+        # The Investigator and the Code Reviewer follow no stage file.
+        self.assertEqual(set(found) & {"investigator", "code-reviewer"}, set())
+
+    def test_every_stage_file_of_both_process_skills_has_a_row(self) -> None:
+        """The table is complete, and a role that may not write owns no
+        stage that writes."""
+        where = Locations(home=self.home, clone=support.REPOSITORY)
+        rows = [row for mine in definitions.bindings(where).values() for row in mine]
+        stages = {
+            skill: {file.name for file in (support.REPOSITORY / skill / "references").glob("*.md")}
+            - {"conventions.md", "claude-code.md", "codex.md"}
+            for skill in ("prd-implementation", "epic-implementation")
+        }
+        self.assertEqual(len(stages["prd-implementation"]), 10)
+        self.assertEqual(len(stages["epic-implementation"]), 5)
+        self.assertEqual({skill: {row.stage for row in rows if row.skill == skill} for skill in stages}, stages)
+        self.assertEqual(validate.check(where).lines(), [])
+        loaded = roles.load_all(where)
+        for row in rows:
+            if row.part == definitions.OWNS:
+                self.assertTrue(loaded[row.role].data["limits"]["edits"], row)
+
+    def test_a_loaded_role_of_the_repository_is_told_where_its_stage_files_are(self) -> None:
+        where = Locations(home=self.home, clone=support.REPOSITORY)
+        places = {CLAUDE: "~/.claude/skills", CODEX: "~/.agents/skills"}
+        seen = set()
+        for found in definitions.materials(where, select=lambda role: definitions.PROVIDERS, hard=False):
+            section = found.body[-2]
+            self.assertTrue(section.startswith("## Your bindings\n"), found.role.name)
+            for row in found.rows:
+                self.assertIn(f"\n\nIn `{places[found.provider]}/{row.skill}/references/`:\n\n", section)
+                self.assertIn(f"\n- `{row.stage}`, part `{row.part}`", section)
+                self.assertTrue((support.REPOSITORY / row.skill / "references" / row.stage).is_file(), row)
+                seen.add(found.role.name)
+        self.assertLessEqual({"manager", "product-manager", "architect", "implementation-manager", "coder"}, seen)
+        # The command the Manager runs at a session's start is one the skill has.
+        self.assertTrue((support.REPOSITORY / "prd-implementation" / "scripts" / "check.py").is_file())
+        manager = [row for row in definitions.bindings(where)["manager"] if row.part == "checks"]
+        self.assertIn("`python scripts/check.py --project <project root>`", manager[0].note)
+        # ... and the section says where a skill's scripts are.
+        self.assertIn("A skill's scripts are in `scripts/`, beside `references/`.", definitions.bindings_section(manager, "~"))
 
 
 if __name__ == "__main__":

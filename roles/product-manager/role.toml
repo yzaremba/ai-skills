@@ -1,7 +1,8 @@
 name = "product-manager"
 title = "Product Manager"
-description = "Develops one idea with the user from first thought to final PRD, writing the sprint's THOUGHTS and PRD and nothing else."
-includes = ["hand-back-writing.md", "gates.md", "brief-reading.md", "questions.md"]
+description = "Keeps the backlog and develops one idea with the user from first thought to final PRD or epic charter; writes those documents and the shared files their stages name, no plan and no code."
+includes = ["hand-back-writing.md", "gates-owning.md", "brief-writing.md", "questions.md"]
+actions = ["session", "dispatch", "in-dialogue", "commands", "files", "commit"]
 
 [profile]
 tier = "deep"
@@ -11,7 +12,7 @@ high_stakes_tier = "frontier"
 [limits]
 edits = true
 commands = true
-dispatches = []
+dispatches = ["investigator"]
 
 [entry]
 dispatch = true

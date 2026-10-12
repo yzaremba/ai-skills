@@ -15,7 +15,7 @@ the tag `v1.0`; [Moving from v1](#moving-from-v1) says how to get from there to 
 | `prd-implementation/`, `epic-implementation/` | The sprint and epic process as two skills: a short entry file and, in `references/`, the files it points to: one or two for each stage, the conventions and completion; for the sprint also the state file, deferred items, backlog conversion, abandoning a sprint, and one file for each provider. |
 | `csv-tools/`, `json-tools/`, `self-reflection/`, `usage-cost/` | Skills. A skill is a directory at the root that holds `SKILL.md`. |
 | `multiagent-collab/` | A skill with its own setup, protocol file, hooks and tests. |
-| `roles/` | The sources of the roles: `<role>/ROLE.md` and `<role>/role.toml`, the sections roles share in `_shared/`, and `bindings.toml`, which says which role follows which stage of the process. Format: [`roles/README.md`](roles/README.md). |
+| `roles/` | The sources of the nine roles: `<role>/ROLE.md` and `<role>/role.toml`, the sections roles share in `_shared/`, and `bindings.toml`, which says which role follows which stage of the process. Format: [`roles/README.md`](roles/README.md). A project's own specialist: [`roles/SPECIALISTS.md`](roles/SPECIALISTS.md). |
 | `rules/` | `avoid-bash-injection-heuristics/`, a rule for Claude Code: how to shape a Bash command so that the permission checks that ignore the allowlist do not fire. Codex has no place for a rule. |
 | `providers/` | What differs between providers, in `claude-code/` and `codex/`: `dictionary.toml` (what the tiers and effort names mean there, and the version it was checked on) and `actions.md` (how a role's actions are done there). |
 | `tools/` | `setup/`: the setup tool, `workflow_setup.py`, with its package `wfsetup/`, its shipped defaults (`defaults.toml`) and tests; `manifest-keys.json`, the keys setup may change in a settings file; `v1-known-hashes.json`, the hashes of the committed v1 files, and `build_v1_hashes.py`, which builds it. `session-profile/`: prints the role, model and effort a provider recorded for each agent of a session. |
@@ -124,12 +124,15 @@ python3 multiagent-collab/scripts/multiagent_collab.py uninstall --agent both
 
 The setup tool, `tools/setup/workflow_setup.py`, installs the skills, the rule and the
 roles. It needs Python 3.11 or later and nothing outside the standard library. The
-provider dictionaries were checked on 2026-10-05:
+provider dictionaries were checked on 2026-10-11:
 
 | Provider | Checked on | Oldest supported |
 |----------|------------|------------------|
-| Claude Code | 2.1.289 | 2.1.281 |
-| Codex CLI | 0.160.0 | 0.134.0 |
+| Claude Code | 2.1.296 | 2.1.281 |
+| Codex CLI | 0.162.1 | 0.134.0 |
+
+On Claude Code the fast tier is the `haiku` alias, which is Haiku 5.5 with effort levels
+from 2.1.293 on; an older client runs a fast-tier role on Haiku 4.5, which has none.
 
 Setup installs for each provider that is installed (its program is on `PATH`, or its
 home exists). It writes only inside the provider homes (`~/.claude`, `~/.codex`, or
@@ -273,26 +276,38 @@ runs only when named. The process names no role and needs none: `render --no-rol
 installs it alone.
 
 **Roles.** A role is an agent with its own instructions, a pinned model tier and effort,
-and limits. Three exist today; the framework document describes six more (Investigator,
-Idea Reviewer, Architect, Plan Reviewer, Implementation Manager, Code Reviewer) that are
-not written yet, and until then the Manager briefs the Coder itself. There is no
-project-memory skill yet either, though the `memory.dir` setting is already there.
+and limits. Nine are shipped. A specialist (operations, data research, a release) is a
+project's own agent and none is shipped: [`roles/SPECIALISTS.md`](roles/SPECIALISTS.md)
+says how a project defines one. There is no project-memory skill yet, though the
+`memory.dir` setting is already there.
 
 | Role | What it does | Claude Code | Codex |
 |------|--------------|-------------|-------|
-| Manager | The session the user starts: routes requests, holds the gates, writes no file. | `claude --agent manager`, or `/manager` in a session | `codex --profile manager`, or `$manager` in a session |
-| Product Manager | Develops one idea with the user into THOUGHTS and a PRD. | Dispatched by the Manager; the user types in its thread. Or loaded: `/product-manager` | Loaded: `$product-manager`. The user cannot type to a dispatched agent there |
-| Coder | Implements one brief and verifies it. A second definition, `coder-hard`, has a higher profile. | Dispatched | Dispatched |
+| Manager | The session the user starts: routes requests, holds the gates, runs the commands of a sprint's close, writes no file. | `claude --agent manager --effort medium`, or `/manager` in a session | `codex --profile manager`, or `$manager` in a session |
+| Product Manager | Keeps the backlog and develops one idea with the user into THOUGHTS and a PRD, or an epic's charter. | Dispatched by the Manager; the user types in its thread. Or loaded: `/product-manager` | Loaded: `$product-manager`. The user cannot type to a dispatched agent there |
+| Idea Reviewer | The critical pass on THOUGHTS and a PRD or a charter. Reads, and changes nothing. | Dispatched by the Manager | Dispatched by the Manager |
+| Architect | Turns a final PRD into PLAN and TASKS, and a final charter into the epic's roadmap. | Dispatched by the Manager; the user types in its thread. Or loaded: `/architect` | Dispatched by the Manager; loaded, `$architect`, when it needs a dialogue |
+| Plan Reviewer | Checks a PLAN against its PRD and the code. Reads, and changes nothing. | Dispatched by the Manager | Dispatched by the Manager |
+| Implementation Manager | The build lead of a sprint or a hotfix: briefs Coders, keeps TASKS, the PLAN's annotations and STATE, makes the local commits and merges. Writes no code. | Dispatched by the Manager | Dispatched by the Manager |
+| Coder | Implements one brief and verifies it. A second definition, `coder-hard`, has a higher profile. | Dispatched by the Implementation Manager | Dispatched by the Implementation Manager |
+| Code Reviewer | The adversarial pass on a code change. Runs the tests, and changes nothing. | Dispatched by the Implementation Manager | Dispatched by the Implementation Manager |
+| Investigator | One investigation another role needs, with its findings returned to that role. Changes nothing. | Dispatched by the Product Manager or the Architect | Dispatched by the Product Manager or the Architect |
 
 Loading a role suspends any other, and does not switch the session's model: the role
 says which model and effort it is meant for, and the user switches with `/model` and
 `/effort` on Claude Code, `/model` on Codex. On Codex, start the session at the project
-root.
+root. On Claude Code a session started as the Manager (`--agent manager`, or the project
+default) has no tool that changes a file, whatever is loaded into it: there a role that
+writes is dispatched, and loading one is for a session not started as a role.
 
 On Claude Code a role's pinned effort applies when the role is dispatched as a subagent.
-A session started as the Manager (`claude --agent manager`, or the project default)
-takes the definition's prompt, tools and model, and runs at the session's own effort:
-`--effort`, `/effort` or the `effortLevel` setting.
+By Claude Code's documentation, a session started as the Manager takes the definition's
+prompt, tools and model, and runs at the session's own effort: `--effort`, `/effort` or
+the `effortLevel` setting, and failing those the model's default. So the Manager's effort
+is given beside the role: at launch with `--effort` (`render` prints the command with the
+level the settings resolve, under "entry points"), and as a project default with
+`effortLevel`, below. No session has shown yet that the effort given this way is the one
+the session runs at.
 
 **A project.** Nothing is written in a project unless it is named. To make every session
 in a project start as the Manager:
@@ -308,9 +323,20 @@ python tools/setup/workflow_setup.py render --project DIR
 from a terminal it needs `--yes` or the answer flags, like any `init`. What makes the
 Manager the project default is the setting `roles.manager_default = true`; the flag
 `--manager-default` sets it. `render --project DIR` refreshes the homes as without the
-option, and in the project, with that setting, sets `"agent"` in
+option, and in the project, with that setting, sets `"agent"` and `"effortLevel"` in
 `DIR/.claude/settings.json` and writes a marked block at the head of
-`DIR/.codex/config.toml`. It also writes a role definition for each role the project's
+`DIR/.codex/config.toml`. `effortLevel` is the Manager's effort as the project's
+settings resolve it. Both keys go by the same rules: no other key is touched, a value
+setup did not set is kept and reported with exit code 3 until `--overwrite-edited`
+replaces it after a backup, and turning the setting off, or `uninstall --project DIR`,
+takes out what setup set and puts back what was there. The setting takes `low`,
+`medium`, `high` and `xhigh`: for a Manager set to `max`, or on a model that takes no
+effort, `effortLevel` is not written and the output says why. While `"agent"` has a
+value that is not setup's and is kept, the project's sessions do not start as the
+Manager, and setup leaves `effortLevel` alone: it sets none, and one it set earlier
+stays as it is. A project's `effortLevel` applies to every Claude Code session in the
+project, whatever it starts as. It also
+writes a role definition for each role the project's
 settings change, and lists what it generated in `DIR/.gitignore`. Setup's backups,
 install record and lock for the project are in `DIR/.agents/workflow-setup/`, a
 directory it creates in DIR and lists in the same ignore block.
@@ -346,11 +372,16 @@ and each skill's `SKILL.md`.
   command makes, is taken to be skipped the same way. Every other Claude Code session
   loads the rule through the link.
 - **A loaded role in a long Claude Code session.** After a compaction Claude Code keeps
-  the first 5,000 tokens of an invoked skill. `render` marks both loaded roles LONG at
-  this commit: about 5,900 tokens for `/manager` and 6,100 for `/product-manager`, by an
-  estimate of one token per three bytes, which errs high. What would be cut is the end,
-  the provider's action notes. `doctor` reports each as a warning (the check
-  `loaded-skill-size`), so a clean install ends with those two warnings.
+  the first 5,000 tokens of an invoked skill. The three roles that can be loaded (Manager,
+  Product Manager, Architect) are kept within that on both providers, by an estimate of
+  one token per three bytes, which errs high: `validate` refuses a role whose loaded
+  skill is over 5,000 tokens on either provider, measured with the shipped settings, and
+  `validate --json` gives each size. `doctor` (the check `loaded-skill-size`) measures
+  with your settings, which can make a skill longer, as a long model name does, and
+  warns on either provider; `render` then marks the role LONG. On Claude Code what would
+  be cut is the end, the role's binding rows and the provider's action notes. On Codex
+  the figure is this project's own rule and nothing is cut. A clean install with the
+  shipped settings ends with no such warning.
 - **Git on Codex.** The default sandbox keeps `.git` read-only, so a commit or a
   worktree needs approval command by command, or a permission profile (beta in Codex).
   `render --apply-codex-settings` defines one, `workflow`, and with
@@ -368,10 +399,12 @@ and each skill's `SKILL.md`.
   each provider; Codex's role definitions stay unproven after it, and each is then a
   warning. The proof for those is the session record of a real spawn, which
   `tools/session-profile` reads.
-- **The Manager's effort on Claude Code is the session's, not the definition's.** Its
-  definition pins medium, and the session record showed the main thread at high. Setting
-  it with `--effort` at launch or `effortLevel` in a project's settings has not been
-  tried yet.
+- **The Manager's effort on Claude Code is the session's, not the definition's, as
+  documented.** Its definition pins medium, and the session record showed the main
+  thread at high. Setup therefore names `--effort` in the launch command and sets
+  `effortLevel` in a project (see "A project"). That follows Claude Code's documentation;
+  no session record has confirmed yet that either then applies. `effortLevel` cannot
+  hold `max`.
 - **Not exercised yet:** an approval of a document said to the role that owns it and
   taken at the Manager, on either provider; a loaded role on Codex beyond six turns or
   across a compaction.

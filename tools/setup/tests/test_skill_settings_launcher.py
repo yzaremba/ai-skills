@@ -21,13 +21,20 @@ CLONE = support.SETUP.parents[1]
 SKILLS = ("prd-implementation", "epic-implementation")
 LAUNCHERS = [CLONE / skill / "scripts" / "settings.py" for skill in SKILLS]
 LAUNCHER = LAUNCHERS[0]
+# What is printed without a key. ``roles`` is served only when asked for.
 GROUPS = ("process", "memory")
+ROLES = "roles"
+KNOWN = b"not a setting a skill reads; known groups: process, memory, roles\n"
 
 
-def shipped_defaults() -> dict[str, object]:
-    """The process and memory groups of defaults.toml, by dotted key."""
+def shipped_defaults(groups: tuple[str, ...] = GROUPS) -> dict[str, object]:
+    """These groups of defaults.toml, by dotted key: the values, not the
+    tables of a role's own profile."""
     data = tomllib.loads(support.DEFAULTS.read_text(encoding="utf-8"))
-    return {f"{group}.{key}": value for group in GROUPS for key, value in data[group].items()}
+    return {
+        f"{group}.{key}": value for group in groups for key, value in data[group].items()
+        if not isinstance(value, dict)
+    }
 
 
 class LauncherCase(support.ScratchCase):
@@ -138,13 +145,49 @@ class InTheClone(LauncherCase):
         self.assertEqual((unknown.returncode, unknown.stdout), (2, b""))
         self.assertIn(b"process.nope: no such setting", unknown.stderr)
 
-    def test_a_key_outside_the_two_groups_is_refused(self) -> None:
-        for key in ("roles", "roles.coder.tier", "providers", "providers.codex.tiers.fast", "schema_version", "", "x"):
+    def test_a_key_outside_the_groups_is_refused(self) -> None:
+        for key in ("providers", "providers.codex.tiers.fast", "schema_version", "", "x", "role", "roles2.x"):
             with self.subTest(key=key):
                 done = self.launcher(key, "--json")
                 self.assertEqual((done.returncode, done.stdout), (2, b""))
-                self.assertIn(b"not a setting a skill reads; known groups: process, memory\n", done.stderr)
+                self.assertIn(KNOWN, done.stderr)
                 self.assertNotIn(b"Traceback", done.stderr)
+
+    def test_the_roles_group_is_served_when_asked_for(self) -> None:
+        self.write(self.user_file, "[roles]\nmax_parallel_coders = 2\n")
+        for script in LAUNCHERS:
+            with self.subTest(script=script.parent.parent.name):
+                one = self.launcher("roles.max_parallel_coders", script=script)
+                self.assertEqual((one.returncode, one.stderr), (0, b""))
+                self.assertEqual(one.stdout, b"roles.max_parallel_coders = 2  (user)\n")
+                self.assertEqual(one.stdout, self.tool("roles.max_parallel_coders").stdout)
+                ours = self.settings(self.launcher(ROLES, "--json", script=script))
+                self.assertEqual(ours, self.settings(self.tool(ROLES, "--json")))
+                self.assertEqual(list(ours), list(shipped_defaults((ROLES,))))
+                self.assertEqual(self.launcher(ROLES, script=script).stdout, self.tool(ROLES).stdout)
+
+    def test_a_project_sets_a_roles_key(self) -> None:
+        self.write(self.project_file, "[roles]\nmax_parallel_coders = 5\n")
+        found = self.settings(self.launcher("roles.max_parallel_coders", "--json", "--project", str(self.project)))
+        self.assertEqual(found, {
+            "roles.max_parallel_coders": {"value": 5, "layer": "project", "file": str(self.project_file)},
+        })
+
+    def test_a_fault_in_the_roles_group_is_reported_when_it_is_read(self) -> None:
+        self.write(self.user_file, "[roles]\nmax_parallel_coders = 0\n")
+        done = self.launcher("roles.max_parallel_coders")
+        self.assertEqual((done.returncode, done.stdout), (2, b""))
+        self.assertIn(b"roles.max_parallel_coders", done.stderr)
+        self.assertNotIn(b"Traceback", done.stderr)
+
+    def test_the_launcher_writes_nothing(self) -> None:
+        self.write(self.user_file, "[roles]\nmax_parallel_coders = 2\n")
+        before = sorted(str(path) for path in self.root.rglob("*"))
+        text = self.user_file.read_bytes()
+        for key in (ROLES, "roles.max_parallel_coders", "process"):
+            self.assertEqual(self.launcher(key).returncode, 0)
+        self.assertEqual(sorted(str(path) for path in self.root.rglob("*")), before)
+        self.assertEqual(self.user_file.read_bytes(), text)
 
     def test_output_is_utf8_with_line_feeds_whatever_the_locale(self) -> None:
         self.write(self.user_file, '[process]\ndocs_dir = "café/中"\n')
@@ -163,7 +206,7 @@ class InTheClone(LauncherCase):
         report = json.loads(as_json.stdout.decode("utf-8"))
         self.assertEqual(report["schema_version"], 1)
         self.assertEqual(report["settings"]["process.docs_dir"]["value"], "café/中")
-        refused = self.child(LAUNCHER, "roles", *home, env=env)
+        refused = self.child(LAUNCHER, "providers", *home, env=env)
         self.assertNotIn(b"\r", refused.stderr)
 
 
@@ -333,12 +376,27 @@ class CopiedOnItsOwn(LauncherCase):
 
     def test_keys_it_does_not_have_are_refused(self) -> None:
         script = self.lone_copy("epic-implementation")
-        for key in ("roles", "providers.codex", "process.nope", "memory.dir.x", "processes"):
+        for key in ("providers.codex", "process.nope", "memory.dir.x", "processes", "roles.coder.tier", "roles.nope"):
             with self.subTest(key=key):
                 done = self.launcher(key, script=script)
                 self.assertEqual((done.returncode, done.stdout), (2, b""))
                 self.assertTrue(done.stderr.startswith(b"error: "))
                 self.assertNotIn(b"Traceback", done.stderr)
+
+    def test_the_roles_group_has_built_in_defaults_too(self) -> None:
+        for skill in SKILLS:
+            with self.subTest(skill=skill):
+                script = self.lone_copy(skill)
+                done = self.launcher(ROLES, "--json", script=script)
+                self.assertEqual(done.returncode, 0)
+                report = json.loads(done.stdout.decode("utf-8"))
+                self.assertEqual(
+                    {key: entry["value"] for key, entry in report["settings"].items()}, shipped_defaults((ROLES,))
+                )
+                for entry in report["settings"].values():
+                    self.assertEqual((entry["layer"], entry["file"]), ("built-in", None))
+                one = self.launcher("roles.max_parallel_coders", script=script)
+                self.assertEqual(one.stdout, b"roles.max_parallel_coders = 3  (built-in)\n")
 
 
 if __name__ == "__main__":

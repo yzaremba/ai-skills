@@ -2,7 +2,7 @@
 
 The format is stated in ``roles/README.md``. This module reads what names a
 role and what profiles it: ``name``, ``title``, ``description`` and the
-``[profile]`` table. The other keys (``includes``, ``[limits]``,
+``[profile]`` table. The other keys (``includes``, ``actions``, ``[limits]``,
 ``[entry]``) are left as they are in ``Role.data``. A reader of profiles
 does not need them, so ``check_file`` looks at them only when asked to be
 ``strict``, which is how source validation (``validate``) asks: then every
@@ -38,9 +38,10 @@ TEXT_FILE = "ROLE.md"
 SHARED_DIR = "_shared"
 HARD_SUFFIX = "-hard"
 
-# ``ROLE.md`` with its includes stays under this many bytes: a loaded role
-# has to survive context compaction, and a dispatched one shares its budget
-# with the project's instruction files (roles/README.md, "Size").
+# ``ROLE.md`` with its includes stays under this many bytes: a dispatched
+# role shares its budget with the project's instruction files
+# (roles/README.md, "Size"). A role that can be loaded has a limit of its
+# own, on the whole skill it is given: ``validate.LOADED_SKILL_TOKENS``.
 TEXT_LIMIT = 12_000
 
 _STRING = Value("string")
@@ -59,7 +60,10 @@ _REST: dict[str, schema.Node] = {
     "limits": Table({"edits": _BOOLEAN, "commands": _BOOLEAN, "dispatches": Strings()}),
     "entry": Table({"dispatch": _BOOLEAN, "load": _BOOLEAN, "start": _BOOLEAN}),
 }
-_KNOWN = (*_IDENTITY, "includes", "profile", "limits", "entry")
+# Optional, and checked with ``strict`` when it is there: the sections of a
+# provider's action notes the role is given (``definitions.select_actions``).
+_OPTIONAL: dict[str, schema.Node] = {"actions": Strings()}
+_KNOWN = (*_IDENTITY, "includes", "actions", "profile", "limits", "entry")
 
 
 def join_text(parts: Iterable[str]) -> str:
@@ -159,7 +163,8 @@ def check_file(file: Path, name: str, problems: list[str], strict: bool = False)
 
     With ``strict`` the whole format of ``roles/README.md`` is checked:
     ``includes``, ``[limits]`` and ``[entry]`` must be there with every key
-    and the right types, and a key the format does not have is a fault."""
+    and the right types, ``actions`` has its type where it is given, and a
+    key the format does not have is a fault."""
     try:
         # The directory first: under a link that leads nowhere, or under a
         # directory that cannot be looked into, the file would only seem
@@ -210,6 +215,9 @@ def _check_rest(data: dict[str, Any], file: Path, problems: list[str]) -> None:
     for key in data:
         if key not in _KNOWN:
             problems.append(f"{file}: {tomlio.format_key(key)}: unknown key; known here: {', '.join(_KNOWN)}")
+    for key, node in _OPTIONAL.items():
+        if key in data:
+            schema.check(node, data[key], (key,), file, problems)
     for key, node in _REST.items():
         if key not in data:
             problems.append(f"{file}: {key}: missing; a role must have it")

@@ -3,7 +3,7 @@
   "files": {
     "claude-code-project-settings": {
       "path": "project:.claude/settings.json",
-      "keys": ["agent"]
+      "keys": ["agent", "effortLevel"]
     }
   }
 }

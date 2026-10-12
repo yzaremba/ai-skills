@@ -88,8 +88,19 @@ Entry points. A role is given to a session in one of two ways, by "load" and
              and /effort on Claude Code, /model on Codex. A role whose name is
              a skill of the clone, or multiagent-collab, stops the run before
              anything is written.
-    start    Claude Code: "claude --agent <role>", served by the role's
-             definition in the agents directory; nothing more is generated.
+    start    Claude Code: "claude --agent <role> --effort <level>", served by
+             the role's definition in the agents directory; nothing more is
+             generated. The command names the role's effort because, as
+             Claude Code documents it, a session takes the prompt, tools and
+             model of the definition it starts as and not its effort: the
+             effort comes from CLAUDE_CODE_EFFORT_LEVEL, --effort or
+             /effort, then the effortLevel setting, then the model's default
+             (code.claude.com/docs/en/model-config, read 2026-10-11). That
+             is read from the documentation: no session has shown it yet,
+             and naming the effort costs nothing if the definition's is
+             taken after all. A role
+             whose model takes no effort setting gets the command without
+             --effort, and the output says so.
              Codex: "codex --profile <role>", which reads the generated file
              <role>.config.toml in the Codex home, a layer over config.toml
              there. It holds model, model_reasoning_effort and
@@ -100,8 +111,13 @@ an invoked skill "keeping the first 5,000 tokens of each", and "Re-attached
 skills share a combined budget of 25,000 tokens"
 (code.claude.com/docs/en/skills, read 2026-10-05). The size of each loaded
 role is in the output with an estimate of its tokens, one per three bytes,
-which errs high; one that is likely over 5,000 is marked LONG. It is still
-written: what would be cut is its end, the provider's action notes.
+which errs high; one that is likely over 5,000 is marked LONG, on either
+provider: the figure is Claude Code's, and the project's own rule for a
+loaded role on Codex, which cuts nothing. It is still written: what would be
+cut is its end, the role's binding rows and the provider's action notes.
+"validate" refuses a shipped role over the figure with the shipped settings,
+so a mark here comes from the user's settings; "doctor" says the same
+(loaded-skill-size).
 
 The project (--project DIR). Without it nothing is written in any project.
 With it the homes are installed and refreshed exactly as without it, from the
@@ -116,10 +132,21 @@ user-level settings, and DIR gets, from its own settings
       other generated file, in the home or the project, changes.
     - With roles.manager_default = true, the role with "start = true" as the
       default of every session in the project. Claude Code: "agent":
-      "<role>" in DIR/.claude/settings.json; only that key is touched. A
-      value the key already has, which setup did not set, is kept and
-      reported, with exit code 3: --overwrite-edited replaces it, and it
-      comes back when setup takes its key out. Codex: model,
+      "<role>" in DIR/.claude/settings.json, and "effortLevel": "<level>"
+      beside it, the role's effort, under the same rules; only those two
+      keys are touched. A value a key already has, which setup did not
+      set, is kept and reported, with exit code 3: --overwrite-edited
+      replaces it, and it comes back when setup takes its key out. The
+      effortLevel setting takes low, medium, high and xhigh and not max:
+      for a starting role whose effort is max, or whose model takes no
+      effort setting, it is not set and the output says why, and one an
+      earlier run set is taken out. While "agent" has a value that is
+      not setup's and is kept, the project's sessions do not start as the
+      role: effortLevel is then not set for the first time, and one an
+      earlier run set is left as it is, with a note. A project's
+      effortLevel applies to every session in the project, whatever it
+      starts as, and it wins over a level saved in the user's own
+      settings; --effort and /effort win over it. Codex: model,
       model_reasoning_effort and developer_instructions in a marked block at
       the head of DIR/.codex/config.toml, the rest of the file kept byte for
       byte. Codex reads a project's config only when the project is trusted,
@@ -273,7 +300,10 @@ status and level (home or project); "entry_points" lists how each role is
 loaded or started on each provider, with the file, its bytes and for a
 loaded role the token estimate; "project" is null without --project, and
 otherwise holds what the project got and, as "loaded_roles", each loaded
-role whose profile the project's settings change.
+role whose profile the project's settings change, and as "session_effort"
+the effort of a Claude Code session that starts as the starting role: the
+role's model and effort, "setting" (what effortLevel is set to, or null) and
+"why" (why it is not set, or null).
 
 Migrating v1 (--migrate-v1). Without the option render removes nothing a v1
 install left, and stops on one that is in the way of a link. With it, in the
@@ -378,7 +408,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
         render.OVERWRITE_OPTION,
         action="store_true",
         help="replace a generated file, a key or a block that was edited by hand since setup wrote it, or that "
-        "setup did not write (a project's own `agent` value; setup's markers with other text between them), "
+        "setup did not write (a project's own `agent` or `effortLevel` value; setup's markers with other text between them), "
         "after a backup of the file. Without it such a thing is kept and reported, with exit code 3",
     )
     locations.add_arguments(parser)

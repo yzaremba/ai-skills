@@ -34,8 +34,9 @@ The checks, in the order they run:
     sources              the clone's sources, as `validate` checks them: each
                          problem is an error. Role sizes are info.
     drift                a generated file (a role definition, a loaded role,
-                         a Codex profile; in a project its definitions, its
-                         starting-role key and block) made from other
+                         a Codex profile; in a project its definitions, the
+                         starting role's keys, "agent" and "effortLevel" in
+                         .claude/settings.json, and its block) made from other
                          sources or settings than today's, and one that
                          render would no longer make: warnings. Run render.
     hand-edits           a generated file whose content is not what setup

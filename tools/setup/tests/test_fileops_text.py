@@ -507,8 +507,8 @@ class JsonTests(OpsCase):
             plan.edit_json(path, set={"agent": "manager"})
             self.assertEqual(self.refused(plan).codes(), {fileops.KEY})
 
-    def test_the_shipped_list_names_the_one_key(self) -> None:
-        self.assertEqual(jsonkeys.load_key_list(), {"project:.claude/settings.json": ("agent",)})
+    def test_the_shipped_list_names_the_two_keys_of_the_starting_role(self) -> None:
+        self.assertEqual(jsonkeys.load_key_list(), {"project:.claude/settings.json": ("agent", "effortLevel")})
 
     def test_a_plan_can_be_given_another_list(self) -> None:
         path = self.put(self.home / ".claude" / "settings.json", b"{}")

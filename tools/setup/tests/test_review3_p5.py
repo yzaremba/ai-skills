@@ -1094,7 +1094,8 @@ class LoadedSizeAfterNoRolesTests(DoctorCase):
         self.assertEqual((code, err), (0, ""), out)
         with mock.patch.object(entry, "COMPACTION_TOKENS", 100):
             code, findings = self.only("loaded-skill-size")
-        self.assertEqual(len(self.details(findings, doctor.WARNING)), 2)
+        # Two loaded roles, on each of the two providers.
+        self.assertEqual(len(self.details(findings, doctor.WARNING)), 4)
 
 
 if __name__ == "__main__":

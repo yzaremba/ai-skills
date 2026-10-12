@@ -11,21 +11,28 @@
 # provider, and `doctor` compares it with what is installed.
 #
 # Sources, read on the checked date:
-#   https://code.claude.com/docs/en/sub-agents    (a definition's `model` and `effort`)
-#   https://code.claude.com/docs/en/model-config  (aliases; effort levels per model)
-#   https://code.claude.com/docs/en/memory        (the version that reads AGENTS.md)
+#   https://code.claude.com/docs/en/sub-agents     (a definition's `model` and `effort`)
+#   https://code.claude.com/docs/en/model-config   (aliases; effort levels per model;
+#                                                   the versions at which an alias changed)
+#   https://code.claude.com/docs/en/memory         (the version that reads AGENTS.md)
+#   https://code.claude.com/docs/en/cli-reference  (no command lists models)
+#   https://code.claude.com/docs/en/changelog      (2.1.290 to 2.1.296)
 
 schema_version = 1
 
-checked_on_version = "2.1.289"
-checked_on_date = "2026-10-05"
+checked_on_version = "2.1.296"
+checked_on_date = "2026-10-11"
 # Before this version some sessions (on Amazon Bedrock, or with telemetry
 # disabled) read CLAUDE.md files only. From it on, the memory page lists
 # these cases in which a repository's AGENTS.md is still not read:
 #   - a CLAUDE.md, .claude/CLAUDE.md or CLAUDE.local.md is in the working
 #     directory or above it; by default it is read instead;
+#   - the setting "Project instructions" is `claude-md` or `managed-only`;
 #   - the built-in `agents-md` plugin is disabled;
 #   - in some cases, the first session after an upgrade from 2.1.276 or earlier.
+#
+# The `haiku` alias is another model below 2.1.293 (see [models.haiku]), so
+# a role on the fast tier needs 2.1.293 to run as this file describes it.
 oldest_supported_version = "2.1.281"
 
 [model_list]
@@ -55,14 +62,19 @@ max = "max"
 # nothing is known about its effort levels.
 #
 # The effort levels are those of the model each alias resolves to on the
-# Anthropic API at the checked version: Sonnet 5.5, Opus 5.5, Fable 5.1. On
-# another provider (Bedrock, Foundry, a gateway) an alias may resolve to an
-# older model with fewer levels, or to one with none.
+# Anthropic API at the checked version: Haiku 5.5, Sonnet 5.5, Opus 5.5,
+# Fable 5.1. On another provider (Bedrock, Foundry, a gateway) an alias may
+# resolve to an older model with fewer levels, or to one with none.
 
-# The model configuration page lists no Haiku model among those with effort
-# levels, and says "Models not listed here do not support effort".
+# "v2.1.293: `haiku` resolves to Haiku 5.5 on the Anthropic API" (the model
+# configuration page, Version history), and the page lists Haiku 5.5 with
+# the levels below. Before that version, and on Amazon Bedrock, Google
+# Cloud's Agent Platform, Microsoft Foundry and Claude Platform on AWS at the
+# checked version, the alias resolves to Haiku 4.5, which is not among the
+# models with effort levels: "Models not listed here do not support effort".
+# What such a model does with the `effort` line of a definition is not stated.
 [models.haiku]
-efforts = []
+efforts = ["low", "medium", "high", "xhigh", "max"]
 
 [models.sonnet]
 efforts = ["low", "medium", "high", "xhigh", "max"]

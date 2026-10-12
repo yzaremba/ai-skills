@@ -718,17 +718,17 @@ def expected(context: Any, provider: homes.Provider) -> list[Item]:
     ]
     items += [
         Item(name, LOADED, made.role, skills / made.role, invoke_only=True)
-        for made in entry.skills(where, [name]) if made.name.endswith(entry.SKILL_FILE)
+        for made in entry.skills(where, [name], context.homes) if made.name.endswith(entry.SKILL_FILE)
     ]
     items += [
         Item(name, DEFINITION, definitions.codex_name(made.definition) if name == homes.CODEX else made.definition,
              agents / made.name)
-        for made in definitions.build(where, [name])
+        for made in definitions.build(where, [name], context.homes)
     ]
     if name == homes.CODEX:
         items += [
             Item(name, START, made.role, provider.place(homes.PROFILES).path / made.name)
-            for made in entry.profiles(where, [name])
+            for made in entry.profiles(where, [name], context.homes)
         ]
     else:
         items += [

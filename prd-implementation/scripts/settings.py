@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Print the process and memory settings a skill reads.
+"""Print the settings a skill or a role reads.
 
 Usage:
     python scripts/settings.py [KEY] [--project DIR] [--home DIR] [--json]
 
-KEY is ``process``, ``memory``, or a dotted key in one of them, such as
-``process.docs_dir``. Without KEY both groups are printed. Any other group
-is refused: a skill reads only these two.
+KEY is ``process``, ``memory`` or ``roles``, or a dotted key in one of
+them, such as ``process.docs_dir`` or ``roles.max_parallel_coders``. Without
+KEY the process and memory groups are printed: ``roles`` is printed only
+when it is asked for, so a fault in it stops no skill that does not read
+it. Any other group is refused. Nothing is ever written.
 
 --project DIR names the project whose settings files are read
 (DIR/.agents/workflow.toml and DIR/.agents/workflow.local.toml). The
@@ -22,7 +24,9 @@ Text output is one line per value:
     process.docs_dir = "docs"  (shipped)
 
 With --json the output is one object: "schema_version", and "settings",
-which maps each dotted key to its "value", "layer" and "file".
+which maps each dotted key to its "value", "layer" and "file". For the
+whole ``roles`` group the text is what the setup tool prints for it, the
+resolved profiles included; a role asks for the one key it reads.
 
 The values come from the setup tool of the clone this skill belongs to
 (tools/setup/workflow_setup.py show). The clone is found from this file's
@@ -45,9 +49,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-GROUPS = ("process", "memory")
+GROUPS = ("process", "memory", "roles")
+# What is printed without KEY.
+DEFAULT_GROUPS = ("process", "memory")
 
-# A copy of these two groups of tools/setup/defaults.toml, for a skill that
+# A copy of these groups of tools/setup/defaults.toml, for a skill that
 # was copied without the clone. The two must stay equal.
 SCHEMA_VERSION = 1
 BUILT_IN = {
@@ -55,6 +61,9 @@ BUILT_IN = {
     "process.questions": "one-at-a-time",
     "process.recommend": True,
     "memory.dir": "docs/memory",
+    "roles.manager_default": False,
+    "roles.high_stakes": False,
+    "roles.max_parallel_coders": 3,
 }
 BUILT_IN_LAYER = "built-in"
 
@@ -76,13 +85,14 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="settings.py",
         allow_abbrev=False,
-        description="Print the process and memory settings a skill reads, and the layer each came from.",
+        description="Print the settings a skill or a role reads, and the layer each came from.",
     )
     parser.add_argument(
         "key",
         nargs="?",
         metavar="KEY",
-        help=f"a group ({', '.join(GROUPS)}) or a dotted key such as process.docs_dir; both groups when omitted",
+        help=f"a group ({', '.join(GROUPS)}) or a dotted key such as process.docs_dir; "
+        f"{' and '.join(DEFAULT_GROUPS)} when omitted",
     )
     parser.add_argument(
         "--project",
@@ -193,7 +203,7 @@ def _from_built_in(args: argparse.Namespace, keys: list[str]) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = _parse(argv)
     if args.key is None:
-        keys = list(GROUPS)
+        keys = list(DEFAULT_GROUPS)
     elif args.key.split(".")[0] in GROUPS:
         keys = [args.key]
     else:

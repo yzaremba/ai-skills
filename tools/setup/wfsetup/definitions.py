@@ -74,7 +74,9 @@ Limits (``role.toml`` ``[limits]``)
 The body, the same on both providers
     the notice, ``ROLE.md``, its includes in ``role.toml``'s order, the
     role's rows of ``roles/bindings.toml`` as the section "Your bindings",
-    and the provider's ``actions.md``; joined by ``roles.join_text``, the
+    and the provider's ``actions.md``, whole or, for a role whose
+    ``role.toml`` has ``actions``, its head and the sections named there
+    (``select_actions``); joined by ``roles.join_text``, the
     join whose result source validation measures. The notice says the file
     is generated and names its sources by their paths in the repository: an
     HTML comment after the frontmatter on Claude Code; on Codex comment
@@ -82,7 +84,14 @@ The body, the same on both providers
     instructions (``notice_inline``). The hard definition has the rows of its role.
 
 Nothing in a definition is a path of one machine: the sources hold none
-(source validation), and nothing here adds one.
+(source validation). One place is added here, in the section "Your
+bindings": the directory the provider reads the user's skills from, so that
+a role opens its stage file without searching the disk for the skill
+(``skills_place``). It is written from ``~``, which is the same text in
+every home; only a home that a provider's variable moved out of the user's
+home gets that directory in full, in the files of that home alone. A run
+of ``render`` gives its own homes (``homes_found``), so the directory named
+is the one that run links the skills into.
 
 The inputs digest (``Generated.inputs``)
     ``INPUTS_SCHEME`` and the SHA-256 of a fixed JSON form of: the scheme,
@@ -90,8 +99,10 @@ The inputs digest (``Generated.inputs``)
     by its path in the clone (``ROLE.md``, ``role.toml``, each include, the
     provider's ``actions.md``), each taken of the text as ``roles.join_text``
     cleans it, so a CRLF checkout gives the same hash; the role's binding
-    rows; the model and the effort. The title, the description, the limits
-    and the entry flags are in ``role.toml``. The digest changes when any of
+    rows, and with them the skills directory they are written under
+    (``skills_place``), so that a home whose provider directory moved is
+    seen as made from other inputs; the model and the effort. The title,
+    the description, the limits and the entry flags are in ``role.toml``. The digest changes when any of
     these changes and not otherwise: another role's files, its rows, another
     provider's notes or a setting for another definition leave it as it was.
     ``FORMAT`` is part of the scheme; raise it when this module would write
@@ -108,7 +119,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from . import dictionary, paths, profiles, roles, settings, tomlio
+from . import dictionary, homes, paths, profiles, roles, settings, tomlio
 from .errors import SetupError
 from .locations import Locations
 
@@ -116,7 +127,14 @@ CLAUDE_CODE = "claude-code"
 CODEX = "codex"
 PROVIDERS = (CLAUDE_CODE, CODEX)
 
-FORMAT = 2
+# 3: the section "Your bindings" is shorter: what `owns` means is said once.
+# 4: the section says where the skills are installed.
+# 5: it names each skill's directory once, above that skill's rows, and no
+#    longer in every row.
+# 6: a run of render names the skills directory of its own homes, so a home
+#    that a provider's variable moved gets other text from the same sources;
+#    that directory is in the digest.
+FORMAT = 6
 # Every digest ``render`` records starts with "render:"; see ``render``.
 INPUTS_SCHEME = f"render:role-definition:{FORMAT}"
 
@@ -202,6 +220,7 @@ class Material:
     rows: tuple[Binding, ...]
     model: str
     effort: str | None
+    skills: str = ""    # the skills directory the binding rows are written under (``skills_place``)
 
     @property
     def limits(self) -> dict[str, Any]:
@@ -212,7 +231,7 @@ class Material:
         """The inputs digest of a file made from this material; see
         ``inputs_digest``."""
         return inputs_digest(self.provider, self.definition, self.role.name, self.files, self.rows, self.model,
-                             self.effort, scheme=scheme or INPUTS_SCHEME, **more)
+                             self.effort, scheme=scheme or INPUTS_SCHEME, skills=self.skills, **more)
 
 
 def user_level(where: Locations) -> Locations:
@@ -298,9 +317,33 @@ def bindings(where: Locations) -> dict[str, tuple[Binding, ...]]:
     return {role: tuple(rows) for role, rows in found.items()}
 
 
-def bindings_section(rows: Iterable[Binding]) -> str:
+def skills_place(where: Locations, provider: str, found: homes.Homes | None = None) -> str:
+    """Where ``provider`` reads the user's skills in the home of ``where``,
+    as a role is told it: from ``~`` when it is inside the user's home, as
+    it is unless a variable of the provider moved its home. ``homes`` is the
+    one place that knows the directory. ``found`` is the homes of the run,
+    where the caller has them: a run names the directory it links the
+    skills into, and no other. Without it they are resolved from ``where``,
+    which reads the providers' variables for the user's own home only
+    (``where.real_home``)."""
+    found = homes.resolve(where) if found is None else found
+    place = found.provider(provider).place(homes.SKILLS).path
+    try:
+        return "~/" + place.relative_to(found.home).as_posix()
+    except ValueError:
+        return place.as_posix()
+
+
+def bindings_section(rows: Iterable[Binding], skills: str) -> str:
     """A role's rows as the section its text refers to ("the stage file
-    your binding names")."""
+    your binding names"). It is where every role is told to read its stage
+    file before it acts on it, so no role's text need say that again.
+    ``skills`` is the directory the skills are installed in
+    (``skills_place``): the rows of one skill stand under the path of that
+    skill's stage files there, given once, because a role that is told
+    where its stage file is does not search the disk for it. The skills
+    come in the order of their first row, and a skill's rows in the
+    table's order."""
     rows = list(rows)
     lines = ["## Your bindings", ""]
     if not rows:
@@ -310,21 +353,62 @@ def bindings_section(rows: Iterable[Binding]) -> str:
         )
         return "\n".join(lines)
     lines.append(
-        "Each row binds you to one stage file of a process skill and names your part in that stage. "
-        "\"The stage file your binding names\" is the file of the row that covers the work at hand. It is "
-        "in the `references/` directory of the installed skill; read it there before you act on it, and "
-        "take no part in a stage that has no row here."
+        "Each row binds you to one stage file of an installed process skill and names your part in it. Read "
+        "the file before you act on it, and take no part in a stage with no row here. A skill's scripts are "
+        "in `scripts/`, beside `references/`."
+        # Said once, not on every such row.
+        + (" The part `owns` is everything the stage file asks of whoever runs the stage."
+           if any(row.part == OWNS for row in rows) else "")
     )
-    lines.append("")
-    for row in rows:
-        if row.part == OWNS:
-            says = "you do everything the stage file asks of whoever runs the stage."
-        else:
-            says = "" if row.note else "the part the stage file defines under that name."
-        if row.note:
-            says = f"{says} {row.note}".strip()
-        lines.append(f"- Skill `{row.skill}`, stage file `{row.stage}`, part `{row.part}`: {says}")
+    for skill in dict.fromkeys(row.skill for row in rows):
+        lines += ["", f"In `{skills}/{skill}/references/`:", ""]
+        for row in rows:
+            if row.skill != skill:
+                continue
+            says = "" if row.part == OWNS or row.note else "the part the stage file defines under that name."
+            if row.note:
+                says = row.note
+            lines.append(f"- `{row.stage}`, part `{row.part}`" + (f": {says}" if says else "."))
     return "\n".join(lines)
+
+
+# --- The action notes ------------------------------------------------------------
+
+_SECTION = re.compile(r"^### +(.+?)[ \t]*$", re.M)
+
+
+def action_id(heading: str) -> str:
+    """The id of a section of the action notes: its heading in lower case,
+    with a hyphen for every run of other characters ("In dialogue" is
+    ``in-dialogue``)."""
+    return re.sub(r"[^a-z0-9]+", "-", heading.lower()).strip("-")
+
+
+def action_sections(text: str) -> tuple[str, list[tuple[str, str]]]:
+    """A provider's action notes as their head and their sections: the head
+    is everything before the first level-three heading, and a section runs
+    from its heading to the next. Each section comes with its id, in the
+    file's order."""
+    text = text.replace("\r\n", "\n")
+    found = list(_SECTION.finditer(text))
+    if not found:
+        return text, []
+    ends = [later.start() for later in found[1:]] + [len(text)]
+    return text[:found[0].start()], [
+        (action_id(match.group(1)), text[match.start():end]) for match, end in zip(found, ends)
+    ]
+
+
+def select_actions(text: str, wanted: Any) -> str:
+    """The action notes a role is given. Without ``actions`` in its
+    ``role.toml`` (``wanted`` is no list) that is the whole file. With it,
+    the head and the sections it names, in the file's order: a role carries
+    the notes of the actions it takes and no others. A name with no section
+    gives nothing; source validation reports it."""
+    if not isinstance(wanted, list):
+        return text
+    head, sections = action_sections(text)
+    return roles.join_text([head, *[section for name, section in sections if name in wanted]])
 
 
 # --- The notice ------------------------------------------------------------------
@@ -426,11 +510,15 @@ def _text_hash(text: str) -> str:
 
 
 def inputs_digest(provider: str, definition: str, role: str, files: dict[str, str], rows: Iterable[Binding],
-                  model: str, effort: str | None, *, scheme: str = INPUTS_SCHEME, **more: Any) -> str:
+                  model: str, effort: str | None, *, scheme: str = INPUTS_SCHEME, skills: str = "",
+                  **more: Any) -> str:
     """The digest of what one definition is made from; see the module.
-    ``files`` maps each source's path in the clone to its text. Another
-    generator of ``render`` gives a ``scheme`` of its own, and in ``more``
-    whatever else its text is made from."""
+    ``files`` maps each source's path in the clone to its text. ``skills``
+    is the skills directory the rows are written under; it counts for a
+    role that has rows, the only text it is in. Another generator of
+    ``render`` gives a ``scheme`` of its own, and in ``more`` whatever else
+    its text is made from."""
+    rows = list(rows)
     form = {
         "scheme": scheme,
         "provider": provider,
@@ -438,6 +526,7 @@ def inputs_digest(provider: str, definition: str, role: str, files: dict[str, st
         "role": role,
         "files": {name: _text_hash(text) for name, text in files.items()},
         "bindings": [[row.skill, row.stage, row.part, row.note] for row in rows],
+        "skills": skills if rows else None,
         "model": model,
         "effort": effort,
     }
@@ -450,12 +539,12 @@ def inputs_digest(provider: str, definition: str, role: str, files: dict[str, st
 # --- Building ------------------------------------------------------------------------
 
 def materials(where: Locations, providers: Iterable[str] = PROVIDERS, select: Any = None,
-              hard: bool = True) -> list[Material]:
+              hard: bool = True, homes_found: homes.Homes | None = None) -> list[Material]:
     """What each definition is made from: by provider in the order given,
     then by role, then a role's hard definition after its normal one
     (left out without ``hard``). ``select(role)`` names the providers that
-    want the role; it is ``providers_of`` where none is given. Nothing is
-    written. Every reason one cannot be made is reported together, as one
+    want the role; it is ``providers_of`` where none is given. ``homes_found``
+    is the homes of the run, for ``skills_place``. Nothing is written. Every reason one cannot be made is reported together, as one
     ``SetupError``: a source that cannot be read, a provider that has roles
     to get and no dictionary, a profile that does not resolve."""
     providers = list(providers)
@@ -523,6 +612,7 @@ def materials(where: Locations, providers: Iterable[str] = PROVIDERS, select: An
         if name not in known:
             continue  # said above
         actions_file = where.providers_dir / name / ACTIONS_FILE
+        skills = skills_place(where, name, homes_found)
         for role in wanted[name]:
             directory = role.file.parent
             includes = role.data.get("includes")
@@ -535,7 +625,8 @@ def materials(where: Locations, providers: Iterable[str] = PROVIDERS, select: An
             mine = rows.get(role.name, ())
             body = (read[relative(directory / roles.TEXT_FILE)],
                     *[read[relative(where.roles_dir / roles.SHARED_DIR / item)] for item in includes],
-                    bindings_section(mine), read[relative(actions_file)])
+                    bindings_section(mine, skills),
+                    select_actions(read[relative(actions_file)], role.data.get("actions")))  # type: ignore[arg-type]
             for definition in wanted_definitions(role):
                 profile = resolved.get((definition.id, name))
                 if profile is None:
@@ -543,19 +634,22 @@ def materials(where: Locations, providers: Iterable[str] = PROVIDERS, select: An
                 found.append(Material(
                     provider=name, definition=definition.id, role=role, body=body,  # type: ignore[arg-type]
                     files=read, rows=tuple(mine), model=profile.model, effort=profile.effort,  # type: ignore[arg-type]
+                    skills=skills,
                 ))
     if problems:
         raise SetupError(*problems)
     return found
 
 
-def build(where: Locations, providers: Iterable[str] = PROVIDERS) -> list[Generated]:
+def build(where: Locations, providers: Iterable[str] = PROVIDERS,
+          homes_found: homes.Homes | None = None) -> list[Generated]:
     """Every definition of ``providers``, by provider in the order given and
     then by definition. Nothing is written. Every reason one cannot be made
-    is reported together, as one ``SetupError``; see ``materials``."""
+    is reported together, as one ``SetupError``; see ``materials``, which
+    is given ``homes_found``, the homes of the run."""
     problems: list[str] = []
     built: list[Generated] = []
-    for found in materials(where, providers):
+    for found in materials(where, providers, homes_found=homes_found):
         role, name = found.role, found.provider
         fields = {
             "name": found.definition,
@@ -581,9 +675,10 @@ def build(where: Locations, providers: Iterable[str] = PROVIDERS) -> list[Genera
     return built
 
 
-def digests(where: Locations, providers: Iterable[str] = PROVIDERS) -> dict[tuple[str, str], str]:
+def digests(where: Locations, providers: Iterable[str] = PROVIDERS,
+            homes_found: homes.Homes | None = None) -> dict[tuple[str, str], str]:
     """The inputs digest of each definition, by provider and definition id,
     from the sources and settings as they are now. Nothing is written. A
     recorded ``inputs`` that differs from it is drift: the file was made
     from other sources or settings than today's."""
-    return {(found.provider, found.definition): found.inputs for found in build(where, providers)}
+    return {(found.provider, found.definition): found.inputs for found in build(where, providers, homes_found)}

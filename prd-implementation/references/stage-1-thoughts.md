@@ -1,6 +1,6 @@
 # Stage 1 — THOUGHTS (brainstorm)
 
-Read [conventions.md](conventions.md) first: the sprint number comes from the index, and the file name follows the naming pattern.
+Read [conventions.md](conventions.md) first: the sprint number comes from `SPRINT-INDEX.md` in the sprint docs directory, whose whole form is under "Sprint numbering" there, and the file name follows the naming pattern. Do not look for the index's form anywhere else.
 
 - THOUGHTS for a new sprint typically starts by plucking items from `BACKLOG.md` (Stage 0, [stage-0-backlog.md](stage-0-backlog.md)). The plucked items should be **deleted from the backlog** as part of the same change that creates this file, each with its item document if it has one; name each item's number (`B12`) where this file quotes or paraphrases it.
 - The user may create `SPRINTXX-THOUGHTS-<Description>.md` themselves or ask you to create it.

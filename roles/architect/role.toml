@@ -1,0 +1,20 @@
+name = "architect"
+title = "Architect"
+description = "Turns a final PRD into the sprint's PLAN and TASKS, with its parallel groups and step tags, and an epic's final charter into its roadmap; writes no code."
+includes = ["hand-back-writing.md", "gates-owning.md", "brief-writing.md", "questions.md"]
+actions = ["session", "dispatch", "in-dialogue", "commands", "files", "commit"]
+
+[profile]
+tier = "deep"
+effort = "high"
+high_stakes_tier = "frontier"
+
+[limits]
+edits = true
+commands = true
+dispatches = ["investigator"]
+
+[entry]
+dispatch = true
+load = true
+start = false

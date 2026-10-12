@@ -33,8 +33,20 @@ The project (``--project``)
     ``entry`` part adds, in the project: the definitions its settings
     change (``Run.file`` into ``.claude/agents`` and ``.codex/agents``), and
     with ``roles.manager_default`` the starting role as the project's
-    default (``Run.json_key``: ``agent`` in ``.claude/settings.json``;
-    ``Run.block``: a marked block at the head of ``.codex/config.toml``).
+    default (``Run.json_key``: ``agent`` in ``.claude/settings.json``, and
+    ``effortLevel`` beside it, the role's effort, which a Claude Code
+    session, as documented, does not take from the role's definition (see
+    ``entry``: not yet shown by a session); ``Run.block``: a
+    marked block at the head of ``.codex/config.toml``). ``effortLevel`` is
+    a key like ``agent`` and goes by every rule below. It is not set where
+    it cannot hold the role's effort (``max``, or a model that takes
+    none): a note says which, and what setup set earlier is taken out.
+    While the ``agent`` key has a value that is not setup's and is kept
+    (the user's own, or setup's changed by hand), the project's sessions do
+    not start as the role and its effort is not theirs to run at: the
+    effort is then not set for the first time, and one setup set earlier is
+    left as it is, neither changed nor taken out, until the ``agent`` key
+    is setup's again or is no longer wanted.
     They are recorded in the project's record, swept from it like a home's
     files, and the generated files are listed in the project's ignore
     block. The key and the block are not: they are setup's part of a file
@@ -921,6 +933,14 @@ def configure_roles(parser: Any) -> None:
     )
 
 
+def _locations(run: Run, project: Path | None) -> Locations:
+    """The locations of the run, with or without its project. ``real_home``
+    is the run's, so that whatever resolves the homes from them again reads
+    the providers' variables exactly where the run did. What a generated
+    text says of a home is taken from ``run.homes`` itself."""
+    return Locations(home=run.homes.home, project=project, clone=run.homes.clone, real_home=not run.homes.scratch)
+
+
 def fill_roles(run: Run) -> None:
     """The role definitions of each installed provider, into its agents
     place (R6.2). They are made from the user-level settings: a project's
@@ -932,9 +952,9 @@ def fill_roles(run: Run) -> None:
         provider for provider in run.homes.installed()
         if provider.name in definitions.PROVIDERS and _has_place(provider, homes.AGENTS)
     ]
-    where = Locations(home=run.homes.home, project=None, clone=run.homes.clone)
+    where = _locations(run, None)
     try:
-        built = definitions.build(where, [provider.name for provider in providers])
+        built = definitions.build(where, [provider.name for provider in providers], run.homes)
     except SetupError as exc:
         run.fail(*exc.lines)
         return
@@ -965,20 +985,24 @@ def fill_entry(run: Run) -> None:
     ``--no-roles`` asks for none of it, and what an earlier run made is then
     stale: the files go with the sweep, the key and the block here."""
     project = run.homes.project
-    home = Locations(home=run.homes.home, project=None, clone=run.homes.clone)
-    where = Locations(home=run.homes.home, project=project, clone=run.homes.clone)
+    home = _locations(run, None)
+    where = _locations(run, project)
     providers = _entry_providers(run)
     names = [provider.name for provider in providers]
-    wanted_key = wanted_block = False
+    wanted_key = wanted_effort = wanted_block = False
     if run.errors:
         return  # the roles part said why; the same sources would say it here again
     if not run.option("no_roles", False):
         try:
-            wanted_key, wanted_block = _fill_entry(run, home, where, providers, names)
+            wanted_key, wanted_effort, wanted_block = _fill_entry(run, home, where, providers, names)
         except SetupError as exc:
             run.fail(*exc.lines)
             return
     if project is not None and not run.errors:
+        # The effort first: it was set after the role, and the last member
+        # taken out first gives back the bytes that were there.
+        if not wanted_effort:
+            run.drop_json_key(project / entry.CLAUDE_SETTINGS, entry.EFFORT_KEY)
         if not wanted_key:
             run.drop_json_key(project / entry.CLAUDE_SETTINGS, entry.AGENT_KEY)
         if not wanted_block:
@@ -986,9 +1010,11 @@ def fill_entry(run: Run) -> None:
 
 
 def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[homes.Provider],
-                names: list[str]) -> tuple[bool, bool]:
+                names: list[str]) -> tuple[bool, bool, bool]:
+    """Returns whether the project's ``agent`` key, its ``effortLevel`` key
+    and its Codex block are wanted."""
     project = run.homes.project
-    made = [*entry.skills(home, names), *entry.profiles(home, names)]
+    made = [*entry.skills(home, names, run.homes), *entry.profiles(home, names, run.homes)]
     loaded = sorted({one.role for one in made if one.kind == entry.LOADED})
 
     # A loaded role is a skill of the role's name: it may not be a skill
@@ -1014,7 +1040,7 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
         # Only said, never generated: a fault here must not stop a run that
         # generates nothing from it.
         try:
-            run.project_facts["loaded_roles"] = _loaded_differences(made, entry.skills(where, names))
+            run.project_facts["loaded_roles"] = _loaded_differences(made, entry.skills(where, names, run.homes))
         except SetupError as exc:
             run.project_facts["loaded_roles"] = []
             run.notes.append(
@@ -1037,9 +1063,14 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
                         _point(run, name, "load", one.role, entry.INVOKE[name].format(role=one.role), item,
                                model=one.model, effort=one.effort, tokens=one.tokens, over_limit=one.over_limit)
         if name == definitions.CLAUDE_CODE and _has_place(provider, homes.AGENTS):
+            # As documented, a session does not take the effort of the
+            # definition it starts as, so the command names it (see ``entry``).
+            efforts = entry.session_efforts(home, run.homes) if starting else {}
             for role in starting:
-                _point(run, name, "start", role, entry.START[name].format(role=role),
-                       file=definitions.file_name(name, role))
+                session = efforts[role]
+                _point(run, name, "start", role, entry.start_command(name, role, session.effort),
+                       file=definitions.file_name(name, role), model=session.model, effort=session.effort,
+                       no_effort=None if session.effort is not None else session.why)
         if name == definitions.CODEX and _has_place(provider, homes.PROFILES):
             place = provider.place(homes.PROFILES)
             for one in made:
@@ -1047,15 +1078,15 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
                     item = run.file(provider, place, one.name, one.text, one.inputs, detail={
                         "entry": one.kind, "role": one.role, "model": one.model, "effort": one.effort,
                     })
-                    _point(run, name, "start", one.role, entry.START[name].format(role=one.role), item,
+                    _point(run, name, "start", one.role, entry.start_command(name, one.role), item,
                            model=one.model, effort=one.effort)
 
-    wanted_key = wanted_block = False
+    wanted_key = wanted_effort = wanted_block = False
     if project is None:
-        return wanted_key, wanted_block
+        return wanted_key, wanted_effort, wanted_block
 
     # The definitions the project's settings change, into the project.
-    changed = entry.project_definitions(where, names)
+    changed = entry.project_definitions(where, names, run.homes)
     for provider in providers:
         place = homes.Place(PROJECT, project / entry.PROJECT_AGENTS[provider.name], True)
         for found in changed:
@@ -1074,10 +1105,11 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
                 item = run.json_key(provider, project / entry.CLAUDE_SETTINGS, entry.AGENT_KEY, role)
                 _point(run, provider.name, "project-default", role,
                        f'"{entry.AGENT_KEY}": "{role}" in {entry.CLAUDE_SETTINGS}', status=item.status)
+                wanted_effort = _project_effort(run, provider, where, role, item)
             elif provider.name == definitions.CODEX:
                 wanted_block = True
                 path = project / entry.CODEX_CONFIG
-                _, content = entry.project_block(where)
+                _, content = entry.project_block(where, run.homes)
                 taken_keys = _keys_outside(path, content)
                 if taken_keys:
                     raise SetupError(*[
@@ -1095,7 +1127,63 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
                        "project only; it wins over a profile", status=item.status)
         if wanted_key or wanted_block:
             run.ignore_always()
-    return wanted_key, wanted_block
+    return wanted_key, wanted_effort, wanted_block
+
+
+def _project_effort(run: Run, provider: homes.Provider, where: Locations, role: str, agent: Item) -> bool:
+    """The effort of a Claude Code session in the project, beside the key
+    that makes it start as ``role``: ``effortLevel``, by the rules of that
+    key. Whether the key is wanted; where it is not, a note says why, and
+    what setup set earlier is taken out by the caller."""
+    session = entry.session_efforts(where, run.homes)[role]
+    facts = {"role": role, "model": session.model, "effort": session.effort, "setting": None, "why": None}
+    run.project_facts["session_effort"] = facts
+    start = f"`{entry.start_command(provider.name, role, session.effort)}`"
+    path = where.project / entry.CLAUDE_SETTINGS  # type: ignore[operator]
+    recorded = run._recorded(run.roots.key(path), "json", "keys", entry.EFFORT_KEY)
+    if agent.status in _BLOCKING:
+        # The file cannot be written (it is not JSON, say): the key that
+        # names the role says so, once. Nothing is written in this run, and
+        # what the record holds of the effort stays.
+        facts["why"] = f"the key {entry.AGENT_KEY} cannot be set"
+        return recorded is not None
+    if agent.status == EDITED:
+        # The key that names the role has a value that is not setup's
+        # (the user's own, or setup's changed by hand) and is kept, so the
+        # project's sessions do not start as the role, and its effort is
+        # not theirs to run at. None is set for the first time, and one
+        # setup set earlier is left exactly as it is: neither set to the
+        # role's effort of today nor taken out.
+        facts["why"] = (
+            f"the key {entry.AGENT_KEY} has a value that is not setup's and is kept, so the project's sessions "
+            f"do not start as {role}"
+        )
+        if recorded is None:
+            run.notes.append(
+                f"{entry.CLAUDE_SETTINGS}: {entry.EFFORT_KEY} is not set: {facts['why']}. It is set with the key "
+                f"{entry.AGENT_KEY}"
+            )
+            return False
+        run.notes.append(
+            f"{entry.CLAUDE_SETTINGS}: {entry.EFFORT_KEY} is left as it is: {facts['why']}. Setup set it earlier, "
+            f"and sets or removes it again with the key {entry.AGENT_KEY}"
+        )
+        return True
+    if session.setting is None:
+        facts["why"] = session.why
+        left = (
+            "a session in the project runs at the effort of the model's default or of your own settings"
+            if session.effort is None else
+            f"a session in the project starts as {role} at another effort than the role's unless it is started "
+            f"with {start}, or `/effort {session.effort}` is given in it"
+        )
+        run.notes.append(f"{entry.CLAUDE_SETTINGS}: {entry.EFFORT_KEY} is not set for {role}: {session.why}. So {left}")
+        return False
+    facts["setting"] = session.setting
+    item = run.json_key(provider, path, entry.EFFORT_KEY, session.setting)
+    _point(run, provider.name, "project-effort", role,
+           f'"{entry.EFFORT_KEY}": "{session.setting}" in {entry.CLAUDE_SETTINGS}', status=item.status)
+    return True
 
 
 def _loaded_differences(user: list[entry.Made], theirs: list[entry.Made]) -> list[dict[str, Any]]:
@@ -1251,6 +1339,7 @@ def _report(run: Run, result: fileops.Result | None, errors: list[str], dry_run:
             "path": str(found.project),
             "manager_default": run.project_facts.get("manager_default"),
             "starting_role": run.project_facts.get("starting_role"),
+            "session_effort": run.project_facts.get("session_effort"),
             "loaded_roles": list(run.project_facts.get("loaded_roles") or []),
             "items": [
                 {**item.as_json(), "provider": item.provider, "name": _project_name(found.project, item)}
@@ -1400,7 +1489,9 @@ def report_lines(report: dict[str, Any]) -> list[str]:
     if report["stale"]:
         lines.append("no longer installed:")
         for item in report["stale"]:
-            lines.append(f"  {item['key']}: {_shown(item)}")
+            # A settings file may hold two keys of setup's: said which.
+            part = f": key {item['name']}" if item.get("kind") == KEY else ""
+            lines.append(f"  {item['key']}{part}: {_shown(item)}")
     lines.extend(migrate.lines(report.get("migration")))
     lines.append("plan:")
     if report["errors"]:
@@ -1436,6 +1527,7 @@ def _point_line(point: dict[str, Any]) -> str:
         "load": "load {role} into a session: {how}",
         "start": "start a session as {role}: {how}",
         "project-default": "a session in the project starts as {role}: {how}",
+        "project-effort": "a session in the project runs at the effort of {role}: {how}",
     }[point["kind"]].format(**point)
     more = []
     if point.get("file"):
@@ -1447,10 +1539,15 @@ def _point_line(point: dict[str, Any]) -> str:
     if point.get("model"):
         more.append(_profile(point))
     line = f"{point['provider']}: {what}" + (f" ({'; '.join(more)})" if more else "")
+    if point.get("no_effort"):
+        line += f"; no --effort: {point['no_effort']}"
     if point.get("over_limit"):
-        line += (
-            f"; LONG: after a compaction Claude Code keeps the first {entry.COMPACTION_TOKENS:,} tokens of an "
+        line += "; LONG: " + (
+            f"after a compaction Claude Code keeps the first {entry.COMPACTION_TOKENS:,} tokens of an "
             "invoked skill, so the end of this one is likely to be cut"
+            if point["provider"] == definitions.CLAUDE_CODE else
+            f"over {entry.COMPACTION_TOKENS:,} tokens, this project's own rule for a loaded role on every "
+            "provider; Codex cuts nothing"
         )
     return line
 

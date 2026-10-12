@@ -5,13 +5,13 @@ A gate is a point where the work goes on only on the user's word.
 - **Document gates** approve a finished document so that the next can be written: a PRD, a PLAN with its TASKS, an epic charter, an epic roadmap.
 - **Action gates** start something that changes more than documents: implementation, and any push, merge to trunk, tag or deploy.
 
-Approving the PLAN with its TASKS does not start implementation. That is a separate action gate with its own word to the Manager, which the user gives with the implementation choices.
+Approving the PLAN with its TASKS does not start implementation: that is an action gate with its own word to the Manager, which the user gives with the implementation choices.
 
 **Every gate:**
 
-- **The word comes after the thing it approves exists.** A word given in advance ("whatever it writes, build it") passes nothing. The Manager asks again when the thing exists.
+- **The word comes after the thing it approves exists.** A word given in advance passes nothing: the Manager asks again when the thing exists.
 - **Only the user's words pass a gate.** An agent's own statement that something is ready, done or approved passes nothing and triggers nothing. Words it quotes from the user count only as set out below.
-- **One word, one gate.** "The PRD is good" passes the PRD gate. It does not authorize a push, and no gate's word carries over to the next.
+- **One word, one gate.** "The PRD is good" passes the PRD gate. It authorizes no push, and no gate's word carries over to the next.
 - **When in doubt, ask.** If it is unclear whether the user's words pass a gate, or which one, or whether a condition below holds, the Manager asks before anything moves.
 
 **An action gate is passed only by a message the user writes to the Manager** while the Manager is the active role. Words said to another role, in its thread or while it was loaded, pass no action gate, and neither does any quote of them.

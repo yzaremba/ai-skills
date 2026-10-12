@@ -22,8 +22,12 @@ With no problem the one line says what was checked.
 With --json the output is one object: "schema_version", "ok", "problems"
 (each with "file", "line", "key", "rule" and "message"; "line" and "key" are
 null where the problem has none), "skills" (name, then "providers",
-"invoke_only" and "own_setup") and "roles" (role id, then "bytes", the size
-of ROLE.md with its includes, and "limit"). With --rules the rule ids are
+"invoke_only" and "own_setup"), "roles" (role id, then "bytes", the size
+of ROLE.md with its includes, and "limit") and "loaded" ("limit_tokens", and
+under "roles" each role that can be loaded, then each provider with the
+"bytes" and the estimated "tokens" of the skill it is given, made with the
+shipped settings). A role whose skill is over the limit on any provider is
+a problem. With --rules the rule ids are
 printed, one per line with what each means, and nothing is checked.
 
 --home and --project are accepted as by every command; the checks read the

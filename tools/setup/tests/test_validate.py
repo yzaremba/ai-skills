@@ -18,7 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 import support
-from wfsetup import locations, roles, validate
+from wfsetup import definitions, entry, locations, roles, validate
 from wfsetup.errors import SetupError
 
 # Put together at run time, so this file holds no machine path.
@@ -51,6 +51,9 @@ BUILT_IN = {
     "process.questions": "one-at-a-time",
     "process.recommend": True,
     "memory.dir": "docs/memory",
+    "roles.manager_default": False,
+    "roles.high_stakes": False,
+    "roles.max_parallel_coders": 3,
 }
 '''
 
@@ -1166,6 +1169,186 @@ class RoleTests(TreeCase):
         self.assertEqual(roles.join_text(["a\n", "b\n\n", "c"]), "a\n\nb\n\nc\n")
         self.assertEqual(roles.join_text(["only\r\n"]), "only\n")
 
+    # --- `actions`: the sections of the action notes a role is given ---
+
+    NOTES = "## How it is done\n\nThe head.\n\n### Dispatch\n\n- Spawn.\n\n### In dialogue\n\n- Ask in the thread.\n"
+
+    def test_actions_is_optional_and_names_sections_of_every_providers_notes(self) -> None:
+        self.put("providers/acme/actions.md", self.NOTES)
+        self.assertClean()  # no `actions`: the whole file, as before
+        for value in ("[]", '["dispatch"]', '["in-dialogue", "dispatch"]'):
+            with self.subTest(value):
+                self.role("worker", hard=HARD)
+                self.edit('includes = ["brief.md"]', f'includes = ["brief.md"]\nactions = {value}')
+                self.assertClean()
+
+    def test_an_action_that_is_no_section_is_a_problem(self) -> None:
+        self.put("providers/acme/actions.md", self.NOTES)
+        self.put("providers/other/actions.md", "## Other\n\n### Dispatch\n\n- Spawn.\n")
+        self.put("providers/other/dictionary.toml", support.VALID_DICTIONARY)
+        for item, missing in (
+            ("commit", "providers/acme/actions.md, providers/other/actions.md"),
+            ("in-dialogue", "providers/other/actions.md"),
+            ("In dialogue", "providers/acme/actions.md, providers/other/actions.md"),
+        ):
+            with self.subTest(item):
+                self.role("worker", hard=HARD)
+                self.edit('includes = ["brief.md"]', f'includes = ["brief.md"]\nactions = ["dispatch", "{item}"]')
+                self.assertEqual(self.check().lines(), [
+                    f"roles/worker/role.toml: [role-actions] actions: {item!r} is not a section of {missing}; a section is "
+                    "named by its level-three heading, in lower case with hyphens"
+                ])
+
+    def test_the_type_of_actions_is_checked(self) -> None:
+        self.put("providers/acme/actions.md", self.NOTES)
+        for value in ('"dispatch"', "[1]", '["dispatch", "dispatch"]', '[""]'):
+            with self.subTest(value):
+                self.role("worker", hard=HARD)
+                self.edit('includes = ["brief.md"]', f'includes = ["brief.md"]\nactions = {value}')
+                problems = self.check().problems
+                self.assertEqual([(p.file, p.key, p.rule) for p in problems], [("roles/worker/role.toml", "actions", "role-toml")])
+
+    def test_the_sections_of_the_action_notes(self) -> None:
+        head, sections = definitions.action_sections(self.NOTES.replace("\n", "\r\n"))
+        self.assertEqual(head, "## How it is done\n\nThe head.\n\n")
+        self.assertEqual(sections, [
+            ("dispatch", "### Dispatch\n\n- Spawn.\n\n"), ("in-dialogue", "### In dialogue\n\n- Ask in the thread.\n"),
+        ])
+        self.assertEqual(definitions.action_sections("## No sections\n\n- One.\n"), ("## No sections\n\n- One.\n", []))
+        self.assertEqual(definitions.action_id("Commands and files"), "commands-and-files")
+        # No list: the whole file, byte for byte. A list: the head and the
+        # sections named, in the file's order whatever the list's.
+        self.assertEqual(definitions.select_actions(self.NOTES, None), self.NOTES)
+        self.assertEqual(definitions.select_actions(self.NOTES, []), "## How it is done\n\nThe head.\n")
+        self.assertEqual(
+            definitions.select_actions(self.NOTES, ["in-dialogue", "dispatch", "nothing"]), self.NOTES,
+        )
+        self.assertEqual(
+            definitions.select_actions(self.NOTES, ["in-dialogue"]),
+            "## How it is done\n\nThe head.\n\n### In dialogue\n\n- Ask in the thread.\n",
+        )
+
+
+class LoadedSkillSizeTests(TreeCase):
+    """A role that can be loaded gives a skill of at most
+    ``validate.LOADED_SKILL_TOKENS`` on every provider."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        import shutil
+
+        shutil.rmtree(self.clone / "providers" / "acme")
+        for provider, text in support.FIXTURE_DICTIONARIES.items():
+            self.put(f"providers/{provider}/dictionary.toml", text)
+            self.put(f"providers/{provider}/actions.md", f"## How actions are done on {provider}\n\n- Dispatch a role.\n")
+        self.load("lead")
+
+    def load(self, role: str) -> None:
+        file = self.clone / "roles" / role / "role.toml"
+        file.write_text(file.read_text(encoding="utf-8").replace("load = false", "load = true"), encoding="utf-8", newline="\n")
+
+    def skills(self) -> dict[tuple[str, str], entry.Made]:
+        where = locations.Locations(home=self.home, clone=self.clone)
+        return {(one.role, one.provider): one for one in entry.skills(where) if one.name.endswith(entry.SKILL_FILE)}
+
+    def fill(self, provider: str, tokens: int) -> None:
+        """Make the skill of lead on ``provider`` exactly ``tokens`` by setup's
+        estimate: that provider's notes are long, the other's short, and the
+        role's own text takes up the rest. Each stays under its own limit."""
+        for name in ("claude-code", "codex"):
+            filler = "x" * 6_000 if name == provider else ""
+            self.put(f"providers/{name}/actions.md", f"## How actions are done on {name}\n\n- Dispatch a role.{filler}\n")
+
+        def write(count: int) -> None:
+            self.role("lead", dispatches='["worker", "worker-hard"]', text="# Role\n\n" + "y" * count + "\n")
+            self.load("lead")
+
+        write(1)
+        write(1 + tokens * entry.BYTES_PER_TOKEN - self.skills()[("lead", provider)].size)
+        self.assertEqual(self.skills()[("lead", provider)].tokens, tokens)
+
+    def test_the_report_gives_each_loaded_roles_skill_on_each_provider(self) -> None:
+        report = self.check()
+        self.assertTrue(report.ok, report.lines())
+        made = self.skills()
+        self.assertEqual(set(made), {("lead", "claude-code"), ("lead", "codex")})
+        self.assertEqual(report.loaded_sizes, {"lead": {
+            provider: {"bytes": made[("lead", provider)].size, "tokens": made[("lead", provider)].tokens}
+            for provider in ("claude-code", "codex")
+        }})
+        self.assertEqual(report.as_json()["loaded"], {"limit_tokens": 5000, "roles": report.loaded_sizes})
+        self.assertEqual(validate.LOADED_SKILL_TOKENS, entry.COMPACTION_TOKENS)
+
+    def test_a_role_that_is_not_loaded_is_not_measured(self) -> None:
+        self.put("providers/codex/actions.md", "## Notes\n\n" + "x" * 11_000 + "\n")
+        self.put("providers/claude-code/actions.md", "## Notes\n\n" + "x" * 11_000 + "\n")
+        self.role("worker", hard=HARD, text="# Role\n\n" + "x" * 11_000 + "\n")
+        report = self.check()
+        self.assertTrue(report.ok, report.lines())
+        self.assertNotIn("worker", report.loaded_sizes)
+
+    def test_the_limit_is_the_last_size_allowed_on_either_provider(self) -> None:
+        for provider in ("claude-code", "codex"):
+            with self.subTest(provider):
+                self.fill(provider, validate.LOADED_SKILL_TOKENS)
+                self.assertClean()
+                self.fill(provider, validate.LOADED_SKILL_TOKENS + 1)
+                size = self.skills()[("lead", provider)].size
+                self.assertEqual(self.check().lines(), [
+                    f"roles/lead/ROLE.md: [loaded-skill-size] loaded as a skill on {provider} the role is about 5,001 "
+                    f"tokens ({size:,} bytes, at 3 bytes a token); at most 5,000, which is what Claude Code keeps of an "
+                    "invoked skill after a compaction. Cut the role's text, its includes or its actions"
+                ])
+                self.fill(provider, validate.LOADED_SKILL_TOKENS)
+
+    def test_what_the_role_is_given_counts_and_what_it_is_not_given_does_not(self) -> None:
+        # The role's own text, an include and the provider's notes all count.
+        self.role("lead", dispatches='["worker", "worker-hard"]', text="# Role\n\n" + "x" * 9_000 + "\n")
+        self.load("lead")
+        self.assertClean()
+        self.put("roles/_shared/brief.md", "## The brief\n\n" + "y" * 2_900 + "\n")
+        self.assertClean()
+        notes = "## Notes\n\n### Dispatch\n\n- Spawn.\n\n### Commit\n\n" + "z" * 4_000 + "\n"
+        for provider in ("claude-code", "codex"):
+            self.put(f"providers/{provider}/actions.md", notes)
+        self.assertEqual(self.found(), [("roles/lead/ROLE.md", "loaded-skill-size")] * 2)
+        # A section the role does not name is not in its skill.
+        file = self.clone / "roles" / "lead" / "role.toml"
+        file.write_text(file.read_text(encoding="utf-8").replace(
+            'includes = ["brief.md"]', 'includes = ["brief.md"]\nactions = ["dispatch"]'), encoding="utf-8", newline="\n")
+        self.assertClean()
+        self.assertNotIn("zzzz", self.skills()[("lead", "codex")].text)
+
+    def test_the_users_settings_do_not_decide_it(self) -> None:
+        """The skill is measured with the shipped settings: a source is valid
+        or not whatever home the command is run for."""
+        before = self.check().loaded_sizes
+        shipped = {key: one.text for key, one in self.skills().items()}
+        self.write(self.user_file, '[roles.lead]\ntier = "frontier"\neffort = "max"\n')
+        for key, one in self.skills().items():
+            self.assertNotEqual(one.text, shipped[key], key)  # the user's profile is in the installed skill
+        self.assertEqual(self.check().loaded_sizes, before)
+        self.write(self.user_file, "this is not TOML =\n")
+        self.assertEqual(self.check().loaded_sizes, before)
+        self.assertClean()
+
+    def test_the_rule_does_not_move_with_the_figure_render_flags_by(self) -> None:
+        with mock.patch.object(entry, "COMPACTION_TOKENS", 10):
+            self.assertClean()
+
+    def test_sources_no_skill_can_be_made_from_are_another_rules_to_report(self) -> None:
+        (self.clone / "providers" / "codex" / "dictionary.toml").write_bytes(b"schema_version = 1\n")
+        found = self.found()
+        self.assertTrue(found)
+        self.assertNotIn("loaded-skill-size", [rule for _, rule in found])
+
+    def test_a_reason_no_other_rule_gave_is_reported(self) -> None:
+        with mock.patch.object(entry, "skills", side_effect=SetupError("the role lead: no profile")):
+            self.assertEqual(self.check().lines(), [
+                "roles: [loaded-skill-size] a loaded role's skill cannot be made, so its size is not known: "
+                "the role lead: no profile"
+            ])
+
     def test_dispatches_name_real_definitions(self) -> None:
         self.role("lead", dispatches='["worker", "worker-hard", "lead"]')
         self.assertClean()
@@ -1228,10 +1411,13 @@ class BindingsTests(TreeCase):
     def test_the_file_must_be_there_and_parse(self) -> None:
         (self.clone / "roles" / "bindings.toml").unlink()
         self.assertEqual(self.found(), [("roles/bindings.toml", "bindings")])
-        self.put("roles/bindings.toml", "schema_version = 1\n")
-        self.assertClean()
         self.put("roles/bindings.toml", "[[binding]\n")
         self.assertEqual(self.found(), [("roles/bindings.toml", "bindings")])
+        # A table with no row is in the format, and good where no skill has a stage file.
+        self.put("roles/bindings.toml", "schema_version = 1\n")
+        self.assertEqual(self.found(), [("alpha/references/stage-1.md", "stage-unbound")])
+        (self.clone / "alpha" / "references" / "stage-1.md").unlink()
+        self.assertClean()
 
     def test_the_documented_keys(self) -> None:
         self.put("roles/bindings.toml", BINDINGS.replace("schema_version = 1\n", ""))
@@ -1246,8 +1432,8 @@ class BindingsTests(TreeCase):
         self.assertEqual(self.keys(), ["binding[3].owner"])
 
     def test_a_row_has_its_four_keys_as_strings(self) -> None:
-        self.put("roles/bindings.toml", 'schema_version = 1\n\n[[binding]]\nrole = "worker"\nstage = 3\npart = ""\n')
-        self.assertEqual(self.keys(), ["binding[1].part", "binding[1].skill", "binding[1].stage"])
+        self.put("roles/bindings.toml", BINDINGS + '\n[[binding]]\nrole = "worker"\nstage = 3\npart = ""\n')
+        self.assertEqual(self.keys(), ["binding[3].part", "binding[3].skill", "binding[3].stage"])
 
     def test_names_are_real(self) -> None:
         for change, key in (
@@ -1287,6 +1473,185 @@ class BindingsTests(TreeCase):
         problems = self.check().problems
         self.assertEqual([(p.key, p.rule) for p in problems], [("binding[3]", "bindings")])
         self.assertIn("row 1", problems[0].message)
+
+
+class BindingProvidersTests(TreeCase):
+    """A row's skill is installed for every provider the row's role is
+    made for: the role is told to read its stage file in that provider's
+    skills directory."""
+
+    ROW = '\n[[binding]]\nrole = "{role}"\nskill = "solo"\nstage = "stage-1.md"\npart = "owns"\n'
+
+    def setUp(self) -> None:
+        super().setUp()
+        for provider, text in support.FIXTURE_DICTIONARIES.items():
+            self.put(f"providers/{provider}/dictionary.toml", text)
+            self.put(f"providers/{provider}/actions.md", f"## How actions are done on {provider}\n\n- Dispatch.\n")
+        # solo is for Claude Code alone (the fixture).
+        self.put("solo/references/stage-1.md", "# Stage 1\n\nDo it.\n")
+
+    def entry(self, name: str, **flags: str) -> None:
+        file = self.clone / "roles" / name / "role.toml"
+        text = file.read_text(encoding="utf-8")
+        for key, value in flags.items():
+            before = text
+            text = text.replace(f"{key} = {'false' if value == 'true' else 'true'}", f"{key} = {value}")
+            self.assertTrue(text != before or f"{key} = {value}" in text, (key, text))
+        file.write_text(text, encoding="utf-8", newline="\n")
+
+    def bind(self, role: str) -> None:
+        self.put("roles/bindings.toml", BINDINGS + self.ROW.format(role=role))
+
+    def test_the_fixture_roles_are_made_for_both_providers(self) -> None:
+        self.bind("worker")
+        self.assertEqual(self.check().lines(), [
+            "roles/bindings.toml: [bindings] binding[3].skill: the role worker is made for codex, where the skill "
+            "'solo' is not installed: its compatibility line names claude-code. The role would be told to read its "
+            "stage file in a skills directory that does not hold the skill. Name codex in solo/SKILL.md, or bind a "
+            "role that is not made for codex"
+        ])
+
+    def test_a_role_no_provider_but_the_skills_gets_is_bound_freely(self) -> None:
+        # Started only: a definition on Claude Code, and on Codex a profile.
+        self.entry("worker", dispatch="false", start="true")
+        self.bind("worker")
+        self.assertEqual([(p.key, p.rule) for p in self.check().problems], [("binding[3].skill", "bindings")])
+        # With no entry point at all the role is made for nobody.
+        self.entry("worker", start="false")
+        self.assertClean()
+        # Loaded: a skill on both.
+        self.entry("worker", load="true")
+        problems = self.check().problems
+        self.assertEqual([(p.key, p.rule) for p in problems], [("binding[3].skill", "bindings")])
+        self.assertIn("is made for codex", problems[0].message)
+
+    def test_a_provider_without_a_dictionary_gets_no_file_and_is_not_counted(self) -> None:
+        (self.clone / "providers" / "codex" / "dictionary.toml").unlink()
+        self.bind("worker")
+        self.assertNotIn("bindings", [rule for _, rule in self.found()])
+
+    def test_a_skill_for_both_providers_is_bound_to_any_role(self) -> None:
+        (self.clone / "solo" / "references" / "stage-1.md").unlink()
+        self.put("roles/bindings.toml", BINDINGS + self.ROW.format(role="worker").replace('"solo"', '"alpha"')
+                 .replace('"worker"', '"plain-reader"'))
+        self.role("plain-reader")
+        self.assertClean()
+
+
+class StageRowsTests(TreeCase):
+    """Every stage file of a process skill has a row in the binding table
+    (``stage-unbound``). A process skill holds ``references/stage-*.md``; its
+    stage files are the ``.md`` files directly in ``references/`` but for
+    ``conventions.md`` and the two provider files."""
+
+    ROW = '\n[[binding]]\nrole = "{role}"\nskill = "{skill}"\nstage = "{stage}"\npart = "owns"\n'
+
+    def bind(self, *rows: tuple[str, str, str]) -> None:
+        self.put("roles/bindings.toml", BINDINGS + "".join(
+            self.ROW.format(role=role, skill=skill, stage=stage) for role, skill, stage in rows))
+
+    def test_what_counts_as_a_stage_file(self) -> None:
+        self.assertEqual(validate.NOT_A_STAGE, {"conventions.md", "claude-code.md", "codex.md"})
+        # The fixture: alpha is a process skill, with one stage file and the two provider files.
+        self.assertClean()
+        for name in ("conventions.md", "claude-code.md", "codex.md"):
+            self.put(f"alpha/references/{name}", "# Notes\n\nRead this first.\n")
+        self.put("alpha/references/notes/x.md", "# Below the directory\n")
+        self.put("alpha/references/table.csv", "a,b\n")
+        self.put("alpha/references/stage-1.txt", "not a stage file\n")
+        self.put("alpha/stage-9.md", "# Not in references\n")
+        self.assertClean()
+
+    def test_a_new_stage_file_without_a_row_fails(self) -> None:
+        self.put("alpha/references/stage-2.md", "# Stage 2\n")
+        self.assertEqual(self.check().lines(), [
+            "alpha/references/stage-2.md: [stage-unbound] no row of roles/bindings.toml names this stage file; "
+            "every stage file of a process skill has a row with the role that follows it"
+        ])
+        self.bind(("worker", "alpha", "stage-2.md"))
+        self.assertClean()
+
+    def test_a_stage_file_under_any_name_needs_a_row(self) -> None:
+        """A process skill's stage file is not always named ``stage-*``."""
+        for name in ("completion.md", "abandon.md", "Stage-3.md"):
+            with self.subTest(name):
+                file = self.put(f"alpha/references/{name}", "# A stage\n")
+                self.assertEqual(self.found(), [(f"alpha/references/{name}", "stage-unbound")])
+                self.bind(("lead", "alpha", name))
+                self.assertClean()
+                file.unlink()
+                self.put("roles/bindings.toml", BINDINGS)
+
+    def test_letter_case_does_not_hide_a_stage_file(self) -> None:
+        """A file system that folds case opens ``Stage-A.md`` for
+        ``stage-a.md``: the name makes a process skill, and a stage file,
+        in any case."""
+        self.put("beta/references/Stage-A.md", "# Stage A\n")
+        self.assertEqual(self.found(), [("beta/references/Stage-A.md", "stage-unbound")])
+        self.put("beta/references/Notes.MD", "# Notes\n")
+        self.put("beta/references/Conventions.MD", "# Conventions\n")
+        self.put("beta/references/CODEX.md", "# How it is done on one provider\n")
+        self.assertEqual(self.found(), [
+            ("beta/references/Notes.MD", "stage-unbound"), ("beta/references/Stage-A.md", "stage-unbound")
+        ])
+        # A row names the file as it is written.
+        self.bind(("worker", "beta", "Stage-A.md"), ("worker", "beta", "Notes.MD"))
+        self.assertClean()
+        (self.clone / "beta" / "references" / "Stage-A.md").unlink()
+        self.put("beta/references/STAGE-B.MD", "# Stage B\n")
+        self.bind(("worker", "beta", "STAGE-B.MD"), ("worker", "beta", "Notes.MD"))
+        self.assertClean()
+
+    def test_a_skill_with_no_stage_file_is_no_process_skill(self) -> None:
+        self.put("beta/references/notes.md", "# Notes\n")
+        self.put("beta/references/conventions.md", "# Conventions\n")
+        self.assertClean()
+        # Its first stage file makes it one, and then every file there counts.
+        self.put("beta/references/stage-a.md", "# Stage A\n")
+        self.assertEqual(self.found(), [
+            ("beta/references/notes.md", "stage-unbound"), ("beta/references/stage-a.md", "stage-unbound")
+        ])
+        self.bind(("worker", "beta", "stage-a.md"), ("worker", "beta", "notes.md"))
+        self.assertClean()
+
+    def test_a_row_of_another_skill_or_another_role_does_not_count_for_it(self) -> None:
+        self.put("beta/references/stage-1.md", "# Stage 1 of beta\n")
+        # alpha's stage-1.md has its rows; beta's file of the same name has none.
+        self.assertEqual(self.found(), [("beta/references/stage-1.md", "stage-unbound")])
+        # One row is enough, whichever role it names.
+        self.bind(("lead", "beta", "stage-1.md"))
+        self.assertClean()
+
+    def test_a_skill_with_its_own_setup_is_not_judged(self) -> None:
+        self.put("multiagent-collab/references/stage-1.md", "# Its own\n")
+        self.assertClean()
+
+    def test_a_faulty_table_reports_its_faults_and_the_stages_it_leaves_unbound(self) -> None:
+        self.put("roles/bindings.toml", 'schema_version = 1\n\n[[binding]]\nrole = "worker"\nskill = 3\nstage = ["x"]\npart = "owns"\n')
+        self.assertEqual(self.found(), [
+            ("alpha/references/stage-1.md", "stage-unbound"),
+            ("roles/bindings.toml", "bindings"), ("roles/bindings.toml", "bindings"),
+        ])
+        # A table that cannot be read at all is the one fault.
+        self.put("roles/bindings.toml", 'schema_version = 1\nbinding = "x"\n')
+        self.assertEqual(self.found(), [("roles/bindings.toml", "bindings")])
+
+    def test_the_repository_binds_every_stage_file(self) -> None:
+        where = locations.Locations(home=self.home, clone=support.REPOSITORY)
+        run = validate._Run(where)
+        validate._find_skills(run)
+        found = {name: sorted(file.name for file in validate.stage_files(run, source.directory))
+                 for name, source in run.skills.items()}
+        self.assertEqual({name: files for name, files in found.items() if files}, {
+            "prd-implementation": [
+                "abandon.md", "backlog-conversion.md", "completion.md", "deferred.md", "stage-0-backlog.md",
+                "stage-1-thoughts.md", "stage-2-prd.md", "stage-3-implementation.md", "stage-3-plan-tasks.md", "state.md",
+            ],
+            "epic-implementation": [
+                "completion.md", "stage-e0-backlog.md", "stage-e1-thoughts.md", "stage-e2-charter.md", "stage-e3-roadmap.md",
+            ],
+        })
+        self.assertEqual([p.text() for p in validate.check(where).problems if p.rule == "stage-unbound"], [])
 
 
 class SettingsTests(TreeCase):
@@ -1342,7 +1707,9 @@ class LauncherTests(TreeCase):
             ('"process.docs_dir": "docs"', '"process.docs_dir": "documents"', "process.docs_dir is 'documents' here and 'docs' there"),
             ('"process.recommend": True', '"process.recommend": 1', "process.recommend is 1 here and True there"),
             ('    "memory.dir": "docs/memory",\n', "", "memory.dir is missing"),
-            ('"memory.dir": "docs/memory"', '"memory.dir": "docs/memory", "roles.high_stakes": False', "roles.high_stakes is not in"),
+            ('"memory.dir": "docs/memory"', '"memory.dir": "docs/memory", "providers.x": False', "providers.x is not in"),
+            ('    "roles.max_parallel_coders": 3,\n', "", "roles.max_parallel_coders is missing"),
+            ('"roles.max_parallel_coders": 3', '"roles.max_parallel_coders": 4', "roles.max_parallel_coders is 4 here and 3 there"),
         ):
             with self.subTest(new):
                 for name in ("alpha", "beta"):

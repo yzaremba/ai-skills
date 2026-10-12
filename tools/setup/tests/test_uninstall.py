@@ -936,6 +936,28 @@ class ProjectKeptCase(UninstallCase):
         self.assertEqual(out_of_the_way["kept"], [])
         self.assertNoState()
 
+    def test_both_keys_of_the_starting_role_are_taken_out(self) -> None:
+        data = json.loads(self.settings.read_bytes())
+        self.assertEqual((data["agent"], data["effortLevel"]), ("lead", "medium"))
+        report = self.uninstall(project=True)
+        self.assertEqual((report["kept"], report["left"]), ([], []))
+        self.assertEqual(self.settings.read_bytes(), USER_JSON)
+        self.assertEqual(picture(self.project), self.before["project"])
+
+    def test_an_effort_the_user_changed_is_theirs_and_is_left(self) -> None:
+        data = self.settings.read_bytes()
+        self.assertIn(b'"effortLevel": "medium"', data)
+        self.settings.write_bytes(data.replace(b'"effortLevel": "medium"', b'"effortLevel": "low"'))
+        report = self.uninstall(project=True)
+        self.assertEqual(report["kept"], [])
+        self.assertEqual([item["key"] for item in report["left"]], ["project:.claude/settings.json"])
+        self.assertIn("the key effortLevel was changed since setup set it; it is the user's now",
+                      report["left"][0]["why"])
+        left = json.loads(self.settings.read_bytes())
+        self.assertEqual(left["effortLevel"], "low")
+        self.assertNotIn("agent", left)
+        self.assertNothingAt(self.project_record)
+
     def test_a_key_the_user_removed_needs_nothing(self) -> None:
         self.settings.write_bytes(USER_JSON)
         self.take_back()

@@ -25,6 +25,15 @@ File names below are written without a directory. Each is in the sprint docs dir
 - This is a **recurring drift**: sessions keep appending a line about the sprint they just opened. If you find accumulated history here, **delete it in the same change** as whatever else you are doing to the file — do not preserve it "for context" and do not migrate it elsewhere; it is already recorded.
 - If the index is missing, outdated, or contradicts filenames, **reconcile**: set **Latest assigned sprint `NN`** to the maximum `NN` appearing in any `SPRINTNN-*` file in the sprint docs directory and its `DONE/`, then use `NN + 1` (two digits) for a **brand-new** sprint. After creating the first file of a new sprint, update the index.
 - If the index is absent, create it when starting or tidying sprint docs.
+- **The whole file is this**, with the number in place of `07`. An index that holds the same one fact in another layout, such as a table, is left in its layout: only the number is overwritten.
+
+```markdown
+# Sprint index
+
+Latest assigned sprint `NN`: `07`
+
+> **A pointer, not a log.** This file carries one fact, the latest assigned `NN`. Assigning a number overwrites the value above and appends nothing: no per-sprint descriptions, slugs or history.
+```
 
 ## File naming
 
@@ -114,7 +123,7 @@ These limits are exact, so that they can be checked mechanically.
 
 Whenever this process puts open questions to the user — at a gate, with the material findings of a critical pass, when a stage needs a decision, when stopping on trouble — two settings say how. They come from the same run of `scripts/settings.py` as the sprint docs directory.
 
-- **`process.questions`** — `one-at-a-time` (the default): put one question, wait for the answer, then put the next; a later question may be dropped or changed by an earlier answer. `all-together`: put every open question in one message, numbered, so the user can answer them in one reply.
+- **`process.questions`** — `one-at-a-time` (the default): put one question, wait for the answer, then put the next; a later question may be dropped or changed by an earlier answer. That holds for open questions in every form: the same message does not list the others, as bullets or in prose, and does not give your leaning on each. At most it says how many remain. The one exception is a list the user asked for. `all-together`: put every open question in one message, numbered, so the user can answer them in one reply.
 - **`process.recommend`** — `true` (the default): give your recommendation with each question, and its reason in a line. `false`: give the options without one.
 - **The implementation choices are one question, not several.** [stage-3-implementation.md](stage-3-implementation.md) asks for a single consolidated prompt that holds every choice the user has not yet stated. That stays so under either value of `process.questions`: do not split it into one prompt per choice. `process.recommend` applies to it: when `false`, leave out the *(recommended)* marks.
 - How a question physically reaches the user differs by provider: [claude-code.md](claude-code.md) or [codex.md](codex.md).

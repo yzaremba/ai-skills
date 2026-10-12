@@ -1161,12 +1161,35 @@ def check_interrupted_run(context: Context) -> list[Finding]:
     return findings
 
 
+def loaded_skill_warning(one: entry.Made) -> str:
+    """What is said of a loaded role's skill that is over the limit. The
+    limit is one figure on both providers and means two things."""
+    size = f"{one.provider}: the loaded role {one.role} is about {one.tokens:,} tokens ({one.size:,} bytes)"
+    if one.provider == definitions.CLAUDE_CODE:
+        why = (
+            f"after a compaction Claude Code keeps the first {entry.COMPACTION_TOKENS:,} tokens of an invoked "
+            "skill, so its end is likely to be cut: the role's binding rows and the action notes"
+        )
+    else:
+        why = (
+            f"over {entry.COMPACTION_TOKENS:,}, which is this project's own rule for a loaded role on every "
+            "provider and no limit of Codex's: nothing is cut there"
+        )
+    return (
+        f"{size}; {why}. The shipped roles are within it with the shipped settings, so a setting of yours "
+        "made this one longer (a longer model name, or a provider home moved by a variable); shorten the "
+        "role's text if you changed it"
+    )
+
+
 def check_loaded_skill_size(context: Context) -> list[Finding]:
-    """A loaded role whose skill is likely to be cut by a compaction."""
+    """A loaded role whose skill, made with the user's settings, is over
+    the limit ``validate`` holds the shipped roles to, on either provider."""
     if not context.sources.ok:
         return [info(NOT_PLANNED)]
     names = [provider.name for provider in context.installed() if provider.name in definitions.PROVIDERS]
-    made = [one for one in entry.skills(context.user_level, names) if one.name.endswith(entry.SKILL_FILE)]
+    made = [one for one in entry.skills(context.user_level, names, context.homes)
+            if one.name.endswith(entry.SKILL_FILE)]
     if not made:
         return [info("no role is loaded as a skill")]
     if context.rendered():
@@ -1181,14 +1204,7 @@ def check_loaded_skill_size(context: Context) -> list[Finding]:
         made = [one for one in made if one.provider in places and fsio.is_file(places[one.provider] / one.name)]
         if not made:
             return [info("no role is installed as a skill in this home (rendered with --no-roles); nothing to measure")]
-    findings = [
-        warning(
-            f"{one.provider}: the loaded role {one.role} is about {one.tokens:,} tokens ({one.size:,} bytes); "
-            f"after a compaction Claude Code keeps the first {entry.COMPACTION_TOKENS:,} tokens of an invoked "
-            "skill, so its end is likely to be cut. Shorten the role's text", one.role,
-        )
-        for one in made if one.over_limit
-    ]
+    findings = [warning(loaded_skill_warning(one), one.role) for one in made if one.over_limit]
     return findings or [fine(f"{len(made)} loaded-role skills, none estimated over {entry.COMPACTION_TOKENS:,} tokens")]
 
 

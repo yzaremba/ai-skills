@@ -364,12 +364,28 @@ class DriftCase(DoctorCase):
         found = self.drifted(*self.project_arg)
         self.assertIn("project:.claude/settings.json: key agent", found)
         self.assertIn("project:.codex/config.toml: block starting-role", found)
+        # That role's model takes no effort setting: render would take the key out.
+        self.assertIn("project:.claude/settings.json: key effortLevel", found)
+
+    def test_a_changed_effort_of_the_starting_role_is_another_value_of_its_key(self) -> None:
+        self.rendered(project=True)
+        self.write(self.project_file, DEFAULT_ON + OVERRIDE + '[roles.lead]\neffort = "high"\n')
+        found = self.drifted(*self.project_arg)
+        self.assertIn("project:.claude/settings.json: key effortLevel", found)
+        self.assertNotIn("project:.claude/settings.json: key agent", found)
+        # An effort the setting cannot hold: render would take the key out.
+        self.write(self.project_file, DEFAULT_ON + OVERRIDE + '[roles.lead]\neffort = "max"\n')
+        code, findings = self.only("drift", *self.project_arg)
+        self.assertEqual(code, 0)
+        self.assertFinding(findings, doctor.WARNING, "project:.claude/settings.json: key effortLevel",
+                           "no longer set by setup", "run render")
 
     def test_a_default_turned_off_is_what_render_would_remove(self) -> None:
         self.rendered(project=True)
         self.write(self.project_file, OVERRIDE)
         found = self.drifted(*self.project_arg)
         self.assertIn("project:.claude/settings.json: key agent", found)
+        self.assertIn("project:.claude/settings.json: key effortLevel", found)
         self.assertIn("project:.codex/config.toml: block starting-role", found)
 
 
@@ -397,14 +413,16 @@ class HandEditCase(DoctorCase):
         config = self.project / ".codex" / "config.toml"
         config.write_bytes(config.read_bytes().replace(b'model = "', b'model = "mine-'))
         settings = self.project / ".claude" / "settings.json"
-        settings.write_bytes(settings.read_bytes().replace(b'"lead"', b'"quick"'))
+        settings.write_bytes(settings.read_bytes().replace(b'"lead"', b'"quick"').replace(b'"medium"', b'"high"'))
         code, findings = self.only("hand-edits", *self.project_arg)
         self.assertEqual(code, 0)
         self.assertFinding(findings, doctor.WARNING, "project:.codex/config.toml: block starting-role",
                            "changed by hand", "--overwrite-edited")
         self.assertFinding(findings, doctor.WARNING, "project:.claude/settings.json: key agent",
                            'setup set it to "lead"', "--overwrite-edited")
-        self.assertEqual(len(self.details(findings, doctor.WARNING)), 2)
+        self.assertFinding(findings, doctor.WARNING, "project:.claude/settings.json: key effortLevel",
+                           'setup set it to "medium"', "--overwrite-edited")
+        self.assertEqual(len(self.details(findings, doctor.WARNING)), 3)
 
     def test_a_user_settings_file_is_not_a_generated_file(self) -> None:
         self.rendered()
@@ -438,6 +456,18 @@ class MissingCase(DoctorCase):
         self.assertEqual(code, 1)
         self.assertFinding(findings, doctor.ERROR, "project:.codex/config.toml: block starting-role", "gone")
         self.assertFinding(findings, doctor.ERROR, "project:.claude/settings.json: key agent", "no longer in the file")
+        self.assertFinding(findings, doctor.ERROR, "project:.claude/settings.json: key effortLevel",
+                           'the key setup set ("medium") is no longer in the file', "run render")
+
+    def test_an_effort_of_the_users_where_setup_would_set_one_is_a_warning(self) -> None:
+        self.write(self.project_file, DEFAULT_ON + OVERRIDE)
+        (self.project / ".claude").mkdir()
+        (self.project / ".claude" / "settings.json").write_bytes(b'{"effortLevel": "high"}\n')
+        self.render(*self.project_arg)
+        code, findings = self.only("missing", *self.project_arg)
+        self.assertEqual(code, 0)
+        self.assertFinding(findings, doctor.WARNING, "project:.claude/settings.json: key effortLevel",
+                           'is "high", which setup did not set, and kept')
 
     def test_what_the_clone_gained_since_the_last_render_is_a_warning(self) -> None:
         self.rendered()
@@ -467,7 +497,7 @@ class MissingCase(DoctorCase):
         self.assertEqual(code, 0)
         self.assertQuiet(findings)
         self.assertFinding(findings, doctor.INFO, "not rendered in the project yet",
-                           "project:.claude/settings.json: key agent")
+                           "project:.claude/settings.json: key agent", "project:.claude/settings.json: key effortLevel")
 
     def test_something_in_the_way_is_an_error(self) -> None:
         self.keep(self.claude_skills / "alpha" / "SKILL.md")
@@ -977,10 +1007,35 @@ class LoadedSizeCase(DoctorCase):
         with mock.patch.object(entry, "COMPACTION_TOKENS", 100):
             code, findings = self.only("loaded-skill-size")
         self.assertEqual(code, 0)
-        # Claude Code is the provider that cuts; each of its two loaded roles.
-        self.assertEqual(len(self.details(findings, doctor.WARNING)), 2)
+        # Each loaded role on each provider: validate holds both to the figure.
+        details = self.details(findings, doctor.WARNING)
+        self.assertEqual(len(details), 2 * len([one for one in details if one.startswith("claude-code: ")]))
+        self.assertGreaterEqual(len(details), 2)
         self.assertFinding(findings, doctor.WARNING, "claude-code: the loaded role lead", "first 100 tokens",
-                           "likely to be cut")
+                           "likely to be cut: the role's binding rows and the action notes",
+                           "a setting of yours made this one longer")
+        # On Codex the same figure, said as what it is there.
+        self.assertFinding(findings, doctor.WARNING, "codex: the loaded role lead", "over 100, which is this "
+                           "project's own rule for a loaded role on every provider and no limit of Codex's: "
+                           "nothing is cut there")
+        codex = [one for one in details if one.startswith("codex: ")]
+        self.assertTrue(codex)
+        self.assertFalse([one for one in codex if "compaction" in one])
+
+    def test_the_users_settings_alone_can_push_a_skill_over_on_codex(self) -> None:
+        """What validate cannot see: it measures with the shipped settings."""
+        made = {(one.provider, one.role): one for one in entry.skills(self.where())
+                if one.name.endswith(entry.SKILL_FILE)}
+        limit = max(one.tokens for one in made.values())
+        with mock.patch.object(entry, "COMPACTION_TOKENS", limit):
+            code, findings = self.only("loaded-skill-size")
+            self.assertEqual((code, self.details(findings, doctor.WARNING)), (0, []))
+            # A model name 300 bytes longer, in the user's settings, for Codex alone.
+            self.write(self.user_file, '[providers.codex.tiers]\nstandard = "gpt-' + "x" * 300 + '"\n')
+            code, findings = self.only("loaded-skill-size")
+        self.assertEqual(code, 0)
+        (detail,) = self.details(findings, doctor.WARNING)
+        self.assertTrue(detail.startswith("codex: the loaded role lead is about "), detail)
 
 
 class CollaborationCase(DoctorCase):

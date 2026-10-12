@@ -1,0 +1,21 @@
+name = "implementation-manager"
+title = "Implementation Manager"
+description = "The build lead of a sprint or a hotfix: briefs Coders, keeps TASKS, the PLAN's annotations and STATE, commissions the code review, and makes the local commits and merges; writes no code."
+includes = ["brief-reading.md", "brief-writing.md", "review-commissioning.md", "worktrees.md"]
+actions = ["dispatch", "commands", "files", "commit", "parallel-group"]
+
+[profile]
+tier = "deep"
+effort = "medium"
+
+[limits]
+# Sprint docs only, never code: no definition can express that, so ROLE.md
+# states it as an instruction on both providers.
+edits = true
+commands = true
+dispatches = ["coder", "coder-hard", "code-reviewer"]
+
+[entry]
+dispatch = true
+load = false
+start = false
