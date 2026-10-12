@@ -32,7 +32,7 @@ How they combine:
 - **`> Depends on:` stays the only ordering relation**, and it holds whatever else a step carries. No step of a group depends on another step of the same group, directly or through other steps. A group starts when every dependency of every one of its steps is `[x]`, and a step that depends on a step of a group waits until the whole group has joined.
 - **A step carries at most one `Tag`**: `light` or `hard`, never both.
 - **A step may carry `Parallel` and a `Tag`.** `Parallel` with `hard`: that step of the group gets the stronger implementer. `Parallel` with `light`: each step of a running group has an implementer of its own, so `light` takes effect only when the group runs serially.
-- The marks are in the PLAN only. A TASKS line carries none.
+- The marks are in the PLAN. A TASKS line repeats one of them, `hard` ("TASKS file structure" below), and no other. The PLAN is the source: whoever adds or removes a step's `> Tag: hard` changes that step's TASKS line in the same change.
 
 Example, headings and marks only: P2.2 and P2.3 are group A, P2.4 waits for the group, and P2.5 and P2.6 may share one implementer.
 
@@ -66,6 +66,7 @@ Example, headings and marks only: P2.2 and P2.3 are group A, P2.4 waits for the 
 - **Header**: title, links to PLAN, PRD, THOUGHTS, last-updated date
 - **Grouped by phase**, matching PLAN
 - Each line: `- [ ] **P1.1** — short description` (bold ID matches PLAN), at most 150 characters
+- A step that carries `> Tag: hard` shows it directly after the ID: `- [ ] **P1.1** **[hard]** — short description`. The tag counts toward the 150 characters. Every other step's line has no tag: `light` and `Parallel` are not shown.
 
 The task lifecycle, TASKS-line discipline, the format limits and "Last updated" hygiene are in [conventions.md](conventions.md). They apply from the first line written here: a new TASKS line is short, and it stays that way.
 
@@ -80,14 +81,20 @@ PLAN:
 
 In `trading_assistant_api/lib/src/repositories/mariadb_repositories.dart`:
 - New method returning trades for a given accountId + symbol, ordered by trade_date ASC
+
+### P2.4 — Add the `position_id` column to `trades` and its migration
+
+> Depends on: P2.1
+> Tag: hard
 ```
 
 TASKS:
 
 ```markdown
 - [ ] **P2.3** — Add `getTradesByPosition()` to `MariaDbTradeRepositoryApi`
+- [ ] **P2.4** **[hard]** — Add the `position_id` column to `trades` and its migration
 ```
 
-After done: `- [x] **P2.3** — …`
+After done: `- [x] **P2.3** — …` and `- [x] **P2.4** **[hard]** — …`
 
 Next: [stage-3-implementation.md](stage-3-implementation.md), when the user asks to implement.

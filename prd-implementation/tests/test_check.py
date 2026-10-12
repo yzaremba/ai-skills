@@ -486,6 +486,157 @@ class PlanAndTasks(Case):
         self.write(TASKS, LONG + "\n")
         self.assertEqual(self.rules(), [])
 
+    # --- The hard tag on a TASKS line ---
+
+    TAGGED_PLAN = (
+        "## Phase 1\n\n"
+        "### P1.1 — Hard\n\n> Tag: hard\n\n"                       # heading 3, mark 5
+        "### P1.2 — Light\n\n> Parallel: A\n> Tag: light\n\n"      # heading 7
+        "### P1.3 — Plain\n\nBody.\n\n"                            # heading 12
+        "### P1.4 — Hard in a group\n\n> Depends on: P1.1\n> Parallel: B\n> Tag: hard\n"  # heading 16, mark 20
+    )
+
+    def tasks(self, body: str, plan: str | None = TAGGED_PLAN) -> list[tuple]:
+        if plan is not None:
+            self.write(PLAN, plan)
+        self.write(TASKS, body)
+        return [(line, rule) for name, line, rule in self.rules() if name == TASKS]
+
+    def test_the_example_of_the_stage_file_is_clean(self):
+        self.write(PLAN, example("stage-3-plan-tasks.md", "PLAN:"))
+        tasks = example("stage-3-plan-tasks.md", "TASKS:")
+        self.assertIn("- [ ] **P2.4** **[hard]** — ", tasks)
+        self.write(TASKS, tasks)
+        self.assertEqual(self.rules(), [])
+        self.write(TASKS, tasks.replace(" **[hard]**", ""))
+        self.assertEqual(self.rules(), [(TASKS, 2, "tasks-tag-mismatch")])
+
+    def test_tags_that_agree_with_the_plan(self):
+        body = ("## Phase 1\n\n- [ ] **P1.1** **[hard]** — Hard\n- [~] **P1.2** — Light\n- [x] **P1.3** — Plain\n"
+                "- [x] ~~**P1.4** **[hard]** — Hard in a group~~ (skipped: deferred as D1)\n")
+        self.assertEqual(self.tasks(body), [])
+        for box in ("[ ]", "[~]", "[x]"):
+            with self.subTest(box):
+                self.assertEqual(self.tasks(f"- {box} **P1.1** **[hard]** — Hard\n"), [])
+
+    def test_a_sprint_with_no_hard_step_and_no_tag_is_clean(self):
+        plan = "### P1.1 — A\n\n> Tag: light\n\n### P1.2 — B\n\n> Parallel: A\n"
+        self.assertEqual(self.tasks("- [ ] **P1.1** — A\n- [ ] **P1.2** — B\n", plan), [])
+
+    def test_a_missing_and_an_extra_tag(self):
+        body = ("## Phase 1\n\n- [ ] **P1.1** — Hard\n- [ ] **P1.2** **[hard]** — Light\n"
+                "- [ ] **P1.3** **[hard]** — Plain\n- [x] ~~**P1.4** — Hard in a group~~ (skipped: x)\n")
+        self.assertEqual(self.tasks(body), [(3, "tasks-tag-mismatch"), (4, "tasks-tag-mismatch"),
+                                            (5, "tasks-tag-mismatch"), (6, "tasks-tag-mismatch")])
+        _, report = self.run_check()
+        messages = [v["message"] for v in report["violations"]]
+        self.assertEqual(messages[0], "P1.1 carries `> Tag: hard` in the PLAN (line 5); this line has no **[hard]**")
+        self.assertEqual(messages[1], "this line has **[hard]**; P1.2 carries no `> Tag: hard` in the PLAN (line 7)")
+        self.assertEqual(report["exit_code"], 1)
+
+    def test_a_tasks_file_written_before_the_tag_is_reported_per_line(self):
+        body = "- [ ] **P1.1** — Hard\n- [ ] **P1.2** — Light\n- [ ] **P1.3** — Plain\n- [ ] **P1.4** — Hard in a group\n"
+        self.assertEqual(self.tasks(body), [(1, "tasks-tag-mismatch"), (4, "tasks-tag-mismatch")])
+
+    def test_a_malformed_tag(self):
+        cases = {
+            "light is not shown": "- [ ] **P1.2** **[light]** — Light\n",
+            "light on a hard step": "- [ ] **P1.1** **[light]** — Hard\n",
+            "an unknown word": "- [ ] **P1.3** **[easy]** — Plain\n",
+            "the wrong case": "- [ ] **P1.1** **[HARD]** — Hard\n",
+            "capitalised": "- [ ] **P1.1** **[Hard]** — Hard\n",
+            "a group letter beside it": "- [ ] **P1.4** **[hard, B]** — Hard in a group\n",
+            "a second bracket": "- [ ] **P1.4** **[hard]** **[B]** — Hard in a group\n",
+            "twice": "- [ ] **P1.1** **[hard]** **[hard]** — Hard\n",
+            "before the ID": "- [ ] **[hard]** **P1.1** — Hard\n",
+            "after the dash": "- [ ] **P1.1** — **[hard]** Hard\n",
+            "at the end": "- [ ] **P1.1** — Hard **[hard]**\n",
+            "two spaces before it": "- [ ] **P1.1**  **[hard]** — Hard\n",
+            "no space after it": "- [ ] **P1.1** **[hard]**— Hard\n",
+            "empty": "- [ ] **P1.1** **[]** — Hard\n",
+            "on a line with no ID": "- [ ] **[hard]** something\n",
+        }
+        for name, body in cases.items():
+            with self.subTest(name):
+                # One report for the line: a malformed tag is not compared as well.
+                self.assertEqual(self.tasks(body), [(1, "tasks-tag-form")])
+                self.assertEqual(self.tasks(body, plan=""), [(1, "tasks-tag-form")])
+
+    def test_what_is_no_tag(self):
+        for body in ("- [ ] **P1.3** — See [hard] cases and **bold** text\n", "- [ ] **P1.3** — An array `a[0]`\n",
+                     "Text with **[hard]** that is no TASKS line\n", "  - [ ] **P1.1** — An indented line\n"):
+            with self.subTest(body):
+                self.assertEqual(self.tasks(body), [])
+
+    def test_a_tag_in_a_fence_is_ignored_in_both_files(self):
+        tasks = "- [ ] **P1.1** — A\n\n```markdown\n- [ ] **P1.1** **[light]** — A\n- [ ] **P1.2** **[hard]** — B\n```\n"
+        plan = "### P1.1 — A\n\n```markdown\n> Tag: hard\n### P1.2 — B\n> Tag: hard\n```\n\n### P1.2 — B\n"
+        self.assertEqual(self.tasks(tasks, plan), [])
+
+    def test_which_plan_line_makes_a_step_hard(self):
+        line = "- [ ] **P1.1** — A\n"
+        hard = {
+            "under the heading": "### P1.1 — A\n> Tag: hard\n",
+            "after other marks": "### P1.1 — A\n\n> Depends on: P1.0\n> Parallel: A\n> Tag: hard\n\nBody.\n",
+            "white space after it": "### P1.1 — A\n\n> Tag: hard  \n",
+            "any level of heading": "## P1.1: A\n\n> Tag: hard\n",
+            "the first of two steps with one ID": "### P1.1 — A\n> Tag: hard\n### P1.1 — Again\n",
+        }
+        for name, plan in hard.items():
+            with self.subTest(name):
+                self.assertEqual(self.tasks(line, plan), [(1, "tasks-tag-mismatch")])
+                self.assertEqual(self.tasks(line.replace("** —", "** **[hard]** —"), plan), [])
+        other = {
+            "light": "### P1.1 — A\n\n> Tag: light\n",
+            "another step's": "### P1.1 — A\n\n### P1.2 — B\n\n> Tag: hard\n",
+            "after the next heading": "### P1.1 — A\n\n#### Notes\n\n> Tag: hard\n",
+            "outside any step": "> Tag: hard\n\n### P1.1 — A\n",
+            "another word": "### P1.1 — A\n\n> Tag: harder\n",
+            "not a line of its own": "### P1.1 — A\n\nSee `> Tag: hard`.\n",
+        }
+        for name, plan in other.items():
+            with self.subTest(name):
+                self.assertEqual(self.tasks(line, plan), [])
+                self.assertEqual(self.tasks(line.replace("** —", "** **[hard]** —"), plan), [(1, "tasks-tag-mismatch")])
+
+    def test_a_step_the_plan_does_not_hold_is_not_compared(self):
+        self.assertEqual(self.tasks("- [ ] **P9.9** **[hard]** — Elsewhere\n- [ ] **P9.8** — Elsewhere\n"), [])
+        self.assertEqual(self.tasks("- [ ] P1.1 **[hard]** — No bold ID\n"), [(1, "tasks-tag-form")])
+
+    def test_the_plan_is_the_one_of_the_same_sprint_and_slug(self):
+        hard = "### P1.1 — A\n\n> Tag: hard\n"
+        line = "- [ ] **P1.1** — A\n"
+        self.write("SPRINT01-PLAN-a.md", hard)
+        self.write("SPRINT02-PLAN-b.md", hard)
+        self.write("SPRINT02-TASKS-a.md", line)
+        self.write("SPRINT01-TASKS-b.md", line)
+        self.write("SPRINT03-TASKS-c.md", line.replace("** —", "** **[hard]** —"))
+        self.assertEqual(self.rules(), [])
+        self.write("SPRINT01-TASKS-a.md", line)
+        self.assertEqual(self.rules(), [("SPRINT01-TASKS-a.md", 1, "tasks-tag-mismatch")])
+
+    def test_a_plan_that_was_not_read_is_not_compared_with(self):
+        self.write(PLAN, "### P1.1 — A\n\n> Tag: hard\rx\n")
+        self.write(TASKS, "- [ ] **P1.1** — A\n- [ ] **P1.2** **[light]** — B\n")
+        self.assertEqual(self.rules(), [(PLAN, None, "line-endings"), (TASKS, 2, "tasks-tag-form")])
+
+    def test_the_archive_is_not_compared(self):
+        self.write("DONE/SPRINT00-PLAN-a.md", "### P1.1 — A\n\n> Tag: hard\n")
+        self.write("DONE/SPRINT00-TASKS-a.md", "- [x] **P1.1** — A\n- [x] **P1.2** **[light]** — B\n")
+        self.assertEqual(self.rules(), [])
+
+    def test_the_150_characters_include_the_tag(self):
+        plan = "### P1.1 — A\n\n> Tag: hard\n"
+        for start in ("- [ ] **P1.1** **[hard]** — ", "- [x] ~~**P1.1** **[hard]** — "):
+            with self.subTest(start):
+                self.assertEqual(self.tasks(padded(start, 150) + "\n", plan), [])
+                self.assertEqual(self.tasks(padded(start, 151) + "\n", plan), [(1, "tasks-line-too-long")])
+        untagged = padded("- [ ] **P1.1** — ", 150)
+        self.assertEqual(self.tasks(untagged.replace("** —", "** **[hard]** —") + "\n", plan),
+                         [(1, "tasks-line-too-long")])
+        self.assertEqual(self.tasks(padded("- [ ] **P1.1** — ", 151) + "\n", plan),
+                         [(1, "tasks-line-too-long"), (1, "tasks-tag-mismatch")])
+
 
 # --- DEFERRED.md --------------------------------------------------------------
 

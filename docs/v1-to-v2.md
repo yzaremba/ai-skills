@@ -48,7 +48,7 @@ How to read the tables:
 | Stage 2: external contracts, user review, gate (L61-63) | [stage-2-prd.md][p-s2]; [SKILL.md][p-skill], "Gates" | carried |
 | Stage 3: explore, create PLAN and TASKS, cross-link (L65-69) | [stage-3-plan-tasks.md][p-s3p], opening | changed by R3.9: both are written in the sprint's worktree or branch |
 | PLAN file structure (L71-78) | [stage-3-plan-tasks.md][p-s3p], "PLAN file structure" | carried |
-| TASKS file structure (L80-84) | [stage-3-plan-tasks.md][p-s3p], "TASKS file structure" | changed by R3.12: a line is at most 150 characters |
+| TASKS file structure (L80-84) | [stage-3-plan-tasks.md][p-s3p], "TASKS file structure" | changed by R3.12: a line is at most 150 characters; a step tagged `hard` shows `**[hard]**` after its ID |
 | Task lifecycle (L86-93) | [conventions.md][p-conv], "Task lifecycle" | carried |
 | TASKS-line discipline: lines stay short (L95-97) | [conventions.md][p-conv], "TASKS-line discipline" | carried |
 | TASKS-line discipline: the `> Landed` annotation (L98) | [conventions.md][p-conv], "TASKS-line discipline", "Format limits" | changed by R3.12: one line of at most 300 characters, where v1 allowed two lines; a new one replaces the earlier one of its kind |

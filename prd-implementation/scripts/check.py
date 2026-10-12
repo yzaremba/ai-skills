@@ -38,6 +38,13 @@ without one carriage return before it; every limit is inclusive. A file in
 which a carriage return stands anywhere but directly before a newline is
 reported (line-endings) and not checked further.
 
+A TASKS line shows one mark of its PLAN step: **[hard]**, directly after
+the step ID, when the step carries `> Tag: hard`. Any other bold bracketed
+tag on a TASKS line is reported (tasks-tag-form). Where the PLAN of the same
+sprint number and slug is beside the TASKS file, a line that disagrees with
+its step is reported (tasks-tag-mismatch); a line whose step ID the PLAN
+does not hold is not compared.
+
 A file is read only if, with every link in its path followed, it is still
 inside the directory it was looked for in: the sprint docs directory, or
 the project root for AGENTS.md. A link that leads outside is reported and
@@ -148,6 +155,11 @@ STEP_ID = re.compile(r"^P[0-9]+\.[0-9]+(?![0-9A-Za-z])")
 ANNOTATIONS = (("> Landed ", "Landed"), ("> Bug fix ", "Bug fix"), ("> Audit ", "Audit"))
 MARKS = ("> Depends on:", "> Parallel:", "> Tag:")
 TASKS_STARTS = ("- [ ]", "- [~]", "- [x]")
+HARD_MARK = "> Tag: hard"
+# A TASKS line up to the end of its bold step ID; a skipped line has `~~` first.
+TASKS_ID = re.compile(r"^- \[[ ~x]\] (?:~~)?\*\*(P[0-9]+\.[0-9]+)\*\*")
+TASKS_HARD = re.compile(r" \*\*\[hard\]\*\*(?= |$)")
+TASKS_PAIR = re.compile(r"^(SPRINT[0-9]{2,})-TASKS-(.+\.md)$")
 
 B_POINTER = re.compile(r"^Latest assigned: B([1-9][0-9]*)$")
 B_ITEM = re.compile(r"^- \*\*B([1-9][0-9]*)\*\* (?:\*\*\[(?:HIGH|MED|LOW)\]\*\* )?(\S.*)$")
@@ -506,10 +518,51 @@ def check_plan(lines: list[str], add) -> None:
             before = None
 
 
-def check_tasks(lines: list[str], add) -> None:
+def plan_steps(lines: list[str]) -> dict[str, tuple[int, int | None]]:
+    """Each step of a PLAN by its ID: the line of its heading, and the line
+    of its `> Tag: hard`, or None when it carries none. A step runs from its
+    heading to the next heading; of two steps with one ID the first counts."""
+    steps: dict[str, tuple[int, int | None]] = {}
+    current = None
     for number, line in _outside_fences(lines):
-        if line is not None and line.startswith(TASKS_STARTS) and len(line) > TASKS_LIMIT:
+        if line is None:
+            continue
+        heading = HEADING.match(line)
+        if heading:
+            step = STEP_ID.match((heading.group(1) or "").strip())
+            current = step.group(0) if step and step.group(0) not in steps else None
+            if current is not None:
+                steps[current] = (number, None)
+        elif current is not None and line.rstrip() == HARD_MARK and steps[current][1] is None:
+            steps[current] = (steps[current][0], number)
+    return steps
+
+
+def check_tasks(lines: list[str], add, plan: dict[str, tuple[int, int | None]] | None = None) -> None:
+    """Check a TASKS file. ``plan`` is what ``plan_steps`` gave for the PLAN
+    of the same sprint, or None when that PLAN is absent or was not read: a
+    line's tag is then checked for its form only. A line whose ID the PLAN
+    lacks is not compared either."""
+    for number, line in _outside_fences(lines):
+        if line is None or not line.startswith(TASKS_STARTS):
+            continue
+        if len(line) > TASKS_LIMIT:
             add(number, "tasks-line-too-long", f"{len(line)} characters; the limit is {TASKS_LIMIT}")
+        head = TASKS_ID.match(line)
+        tag = TASKS_HARD.match(line, head.end()) if head else None
+        if B_TAG.search(line, tag.end() if tag else 0):
+            add(number, "tasks-tag-form", "the only tag of a TASKS line is **[hard]**, once, directly after the step ID")
+            continue
+        if head is None or plan is None or head.group(1) not in plan:
+            continue
+        step = head.group(1)
+        hard = plan[step][1]
+        if hard is not None and tag is None:
+            add(number, "tasks-tag-mismatch",
+                f"{step} carries `> Tag: hard` in the PLAN (line {hard}); this line has no **[hard]**")
+        elif hard is None and tag is not None:
+            add(number, "tasks-tag-mismatch",
+                f"this line has **[hard]**; {step} carries no `> Tag: hard` in the PLAN (line {plan[step][0]})")
 
 
 # --- BACKLOG.md ---------------------------------------------------------------
@@ -834,11 +887,18 @@ def build_report(project: Path, docs: Path, docs_from: str, settings: dict, toda
     for name in names:
         if DOCUMENT_NAME.match(name) and name not in pointed:
             adder(name)(None, "backlog-document-orphan", "no item of BACKLOG.md points to this document")
+    # A PLAN's name sorts before the name of the TASKS of the same sprint.
+    plans: dict[str, dict] = {}
     for name in names:
-        if PLAN_NAME.match(name) or TASKS_NAME.match(name):
+        if PLAN_NAME.match(name):
             lines = lines_of(name, docs)
             if lines is not None:
-                (check_plan if PLAN_NAME.match(name) else check_tasks)(lines, adder(name))
+                check_plan(lines, adder(name))
+                plans[name] = plan_steps(lines)
+        elif TASKS_NAME.match(name):
+            lines = lines_of(name, docs)
+            if lines is not None:
+                check_tasks(lines, adder(name), plans.get(TASKS_PAIR.sub(r"\1-PLAN-\2", name)))
     if _present(project / AGENTS_FILE):
         lines = lines_of(AGENTS_FILE, project)
         if lines is not None:
