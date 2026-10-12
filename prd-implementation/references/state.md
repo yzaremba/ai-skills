@@ -13,6 +13,7 @@
 - **What counts as a match.** `HEAD` matches when it is the recorded commit, or when the recorded commit is its parent and the later commit changed only sprint docs: STATE cannot name the commit that holds it, so a pickup from a fresh clone or after the Ready commit finds it one commit back. A workspace path that differs only because the machine, or the side of one machine, names it differently is not a mismatch when the branch and `HEAD` agree. A STATE whose "Written" line reads `closing` is in the Ready commit itself: it matches when that commit is `HEAD` of the sprint's branch or, after the merge, is on the default branch. Anything else is a mismatch.
 - **Sprint docs in a separate repository.** STATE is then in the docs repository, on its default branch, and writing it never touches the code's worktree. It is written through the close as at any other time, and what it is compared with on pickup is the code's workspace.
 - **While a parallel group is open, it records the group**: the base commit, and each member's worktree, branch and step, from the moment the worktrees are made until the last one is removed ([stage-3-implementation.md](stage-3-implementation.md), "Parallel groups"). On pickup, compare that with `git worktree list` too. A member worktree that stays because it could not be removed without force stays listed, with its reason.
+- **It carries the lesson candidates to the close.** When it writes STATE, the build lead records under "Lesson candidates" each candidate an implementer's report named, one line with its step, and its own; a report's `none` adds nothing. This one section is kept from write to write, not overwritten. At the close the lessons are proposed from it ([completion.md](completion.md), "Lessons"). A STATE written after the user has answered holds there only the approved lessons not yet written, one line each, `approved, to write: <lesson>`; the rejected ones are dropped. A session that picks up a stopped close then loses no approval and proposes nothing again.
 - **The recorded choices stand across runs.** When the recorded target is exhausted, for instance after a run of one task, only the target is asked again; the other recorded choices stand unless the user changes them.
 - A sprint in implementation with no STATE is itself a mismatch: ask the user before continuing, then create it.
 - **It is deleted when the sprint closes**, completed ([completion.md](completion.md)) or abandoned ([abandon.md](abandon.md)), and not before every worktree it lists has been dealt with or, for an abandoned sprint, taken into the report to the user. It is never moved to the archive.
@@ -59,4 +60,8 @@
 ## Half-done work
 
 <none | what is started and not finished: a step at `[~]` and what remains of it, review findings not yet fixed, a question waiting for the user's answer>
+
+## Lesson candidates
+
+<none | one line per candidate, with the step it came from: "P2.3: the suite needs the system Python" | after the user's answer at the close, one line per approved lesson not yet written: "approved, to write: <lesson>">
 ```

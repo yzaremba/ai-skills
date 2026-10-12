@@ -97,9 +97,11 @@ The checks, in the order they run:
                          is a warning), sandbox_mode (while it is set Codex
                          uses it and ignores default_permissions: info) and
                          default_permissions. No other key is read out of
-                         the file and no other value is printed. A file that
-                         cannot be read is a warning that says where the
-                         fault is, not what the line holds. Then, as info:
+                         the file (but project_doc_max_bytes, for the check
+                         instruction-files) and no other value is printed.
+                         A file that cannot be read is a warning that says
+                         where the fault is, not what the line holds. Then,
+                         as info:
                          whether the blocks `render --apply-codex-settings`
                          writes are in the file and as setup wrote them, by
                          the install record; and what that command would do
@@ -133,6 +135,44 @@ The checks, in the order they run:
     loaded-skill-size    a loaded role whose skill is estimated over what
                          Claude Code keeps of a skill after a compaction: a
                          warning.
+    instruction-files    with --project DIR, whether both providers load
+                         DIR/AGENTS.md, where the lesson index of the
+                         project-memory skill is; without it, info.
+                         Claude Code reads AGENTS.md directly only while no
+                         CLAUDE.md, .claude/CLAUDE.md or CLAUDE.local.md is
+                         in DIR or in a directory above it. The user's own
+                         CLAUDE.md, the one that lies in the Claude Code
+                         home, is not one of them; a file elsewhere that is
+                         a link to it is. One of the three with no remedy
+                         is an error. The remedies: a line `@AGENTS.md` in
+                         one of those files, the path relative to the file
+                         (only an import written in the file itself is
+                         seen, and not one in a code block, a code span or
+                         an HTML comment; where that cannot be told, none
+                         is found), or
+                         pluginConfigs."agents-md@builtin".options.instructionFiles
+                         set to "claude-md-and-agents-md" in the user's
+                         settings.json; that one key is read from the file
+                         and nothing else, and Claude Code ignores it in a
+                         project's settings files. Under the id
+                         "cc-plugin-agents-md@builtin" alone the setting is
+                         a warning: Claude Code before 2.1.285 ignores that
+                         id. Two ids with different values are a warning
+                         and no remedy. A file over the 4 MiB above which
+                         Claude Code skips an instruction file is said to
+                         be skipped and is not opened: a warning for a
+                         CLAUDE.md, whose import is then no remedy, an
+                         error for DIR/AGENTS.md. A file over three
+                         quarters of that is a warning. An
+                         AGENTS.override.md in DIR that is not empty is a
+                         warning: Codex takes one file from a directory,
+                         the first that is not empty, and it replaces
+                         AGENTS.md there; an empty one is info. The
+                         instruction files Codex loads (its home's, and
+                         DIR's) over three quarters of its limit together
+                         are a warning: 32 KiB, or project_doc_max_bytes in
+                         the user's config.toml when set. DIR is taken by
+                         its real path.
     discovery            whether each provider itself lists every skill,
                          loaded role, role definition and starting role that
                          is installed. Only a provider's own output counts,

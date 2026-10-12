@@ -40,6 +40,7 @@ max_parallel_coders = 3
 #   effort = "high"      # low | medium | high | max
 
 [memory]
-# Where the project memory lives: relative to the project unless absolute,
-# and taken as given, like process.docs_dir.
+# Where the project memory lives: a path relative to the project and inside
+# it. Setup takes the value as given; the memory skill stops on an absolute
+# path or one that leads outside the project.
 dir = "docs/memory"

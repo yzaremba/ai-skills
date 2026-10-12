@@ -1,4 +1,5 @@
-"""The settings launcher inside the process skills: scripts/settings.py.
+"""The settings launcher inside the process skills and the memory skill:
+scripts/settings.py.
 
 Every run is a child process started with ``sys.executable`` from a scratch
 working directory, with a scratch home, as a skill would start it.
@@ -18,7 +19,7 @@ from pathlib import Path
 import support
 
 CLONE = support.SETUP.parents[1]
-SKILLS = ("prd-implementation", "epic-implementation")
+SKILLS = ("prd-implementation", "epic-implementation", "project-memory")
 LAUNCHERS = [CLONE / skill / "scripts" / "settings.py" for skill in SKILLS]
 LAUNCHER = LAUNCHERS[0]
 # What is printed without a key. ``roles`` is served only when asked for.
@@ -63,10 +64,17 @@ class LauncherCase(support.ScratchCase):
         return target / "scripts" / "settings.py"
 
 
-class TheTwoCopies(unittest.TestCase):
-    def test_the_two_launchers_are_byte_identical(self) -> None:
-        first, second = (file.read_bytes() for file in LAUNCHERS)
-        self.assertEqual(first, second)
+class TheCopies(unittest.TestCase):
+    def test_the_launchers_are_byte_identical(self) -> None:
+        self.assertEqual(len(LAUNCHERS), 3)
+        first = LAUNCHER.read_bytes()
+        for file in LAUNCHERS[1:]:
+            with self.subTest(skill=file.parent.parent.name):
+                self.assertEqual(file.read_bytes(), first)
+
+    def test_no_other_skill_of_the_repository_carries_one(self) -> None:
+        found = sorted(file.parent.parent.name for file in CLONE.glob("*/scripts/settings.py"))
+        self.assertEqual(found, sorted(SKILLS))
 
     def test_the_file_is_utf8_with_line_feeds_and_names_no_machine_path(self) -> None:
         raw = LAUNCHER.read_bytes()
@@ -123,6 +131,9 @@ class InTheClone(LauncherCase):
             "value": "planning/docs", "layer": "project", "file": str(self.project_file),
         })
         self.assertEqual(found["memory.dir"]["value"], "lessons")
+        # The memory skill reads its one setting as its text says.
+        memory = self.launcher("memory", "--project", str(self.project), script=LAUNCHERS[2])
+        self.assertEqual((memory.returncode, memory.stdout), (0, b'memory.dir = "lessons"  (project)\n'))
         self.assertEqual(found["process.questions"]["layer"], "shipped")
         self.assertEqual(found, {
             **self.settings(self.tool("process", "--json", "--project", str(self.project))),
@@ -366,6 +377,11 @@ class CopiedOnItsOwn(LauncherCase):
         self.assertEqual(list(group["settings"]), ["memory.dir"])
         key = self.launcher("process.questions", script=script)
         self.assertEqual(key.stdout, b'process.questions = "one-at-a-time"  (built-in)\n')
+
+    def test_the_memory_skill_on_its_own_gives_the_memory_directory(self) -> None:
+        script = self.lone_copy("project-memory")
+        done = self.launcher("memory", "--project", str(self.project), script=script)
+        self.assertEqual((done.returncode, done.stdout), (0, b'memory.dir = "docs/memory"  (built-in)\n'))
 
     def test_no_settings_file_is_read_and_the_note_says_so(self) -> None:
         self.write(self.project_file, '[process]\ndocs_dir = "planning"\n')

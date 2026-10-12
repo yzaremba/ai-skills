@@ -85,9 +85,10 @@ PROVIDER = Table({
 })
 
 # ``process.docs_dir`` and ``memory.dir`` are directories, taken as given:
-# relative to the project unless absolute, and free to point outside the
-# project, because sprint docs can live in a separate repository. The only
-# check is that the value is not blank. Nothing here looks at the path, and
+# relative to the project unless absolute. ``process.docs_dir`` is free to
+# point outside the project, because sprint docs can live in a separate
+# repository; the memory skill stops on a ``memory.dir`` that does. The only
+# check here is that the value is not blank. Nothing here looks at the path, and
 # whoever reads the setting resolves it against the project.
 #
 # ``roles.high_stakes`` is the general switch and ``[roles.<id>]`` the

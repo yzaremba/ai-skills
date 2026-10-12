@@ -9,6 +9,7 @@ both Claude Code and Codex. There is no `CLAUDE.md`: both providers read this fi
 AGENTS.md  README.md  LICENSE.txt  .gitattributes  .gitignore
 csv-tools/  json-tools/  self-reflection/   shared skills
 prd-implementation/  epic-implementation/   shared skills: the sprint and epic process
+project-memory/                             shared skill: the lessons a project keeps
 usage-cost/                                 skill, Claude Code only
 multiagent-collab/                          skill with its own setup; see below
 roles/      README.md  SPECIALISTS.md  bindings.toml  _shared/  <role>/ROLE.md  <role>/role.toml

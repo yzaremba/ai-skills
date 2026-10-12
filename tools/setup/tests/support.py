@@ -40,6 +40,14 @@ from wfsetup.locations import Locations  # noqa: E402
 # such base, and changes nothing outside a run's bounds.
 fsio._BASE = fsio.bounds([tempfile.gettempdir()])
 
+# ``doctor --project`` looks for a ``CLAUDE.md`` in every directory above the
+# project. For a scratch project it stops below the temporary directory: a
+# file of this machine's own above it (the user's ``.claude/CLAUDE.md``,
+# where the temporary directory is inside the home) is no part of a test.
+from wfsetup import instructions  # noqa: E402
+
+instructions._CEILING = Path(tempfile.gettempdir()).resolve()
+
 FIXTURES = TESTS / "fixtures"
 
 # --- The fake clone ----------------------------------------------------------

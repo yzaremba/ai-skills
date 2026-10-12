@@ -4,7 +4,8 @@
 # names".
 #
 # The format is stated in README.md, under "bindings.toml". Every stage file
-# of both skills has a row here; validation fails one that has none.
+# of both skills has a row here; validation fails one that has none. The
+# last rows bind the roles that write lessons to the `project-memory` skill.
 
 schema_version = 1
 
@@ -187,3 +188,28 @@ skill = "prd-implementation"
 stage = "abandon.md"
 part = "close-commands"
 note = "As at a close."
+
+# Lessons for the project memory: who proposes one and who writes an approved
+# one. The Manager has no row: it puts each proposal to the user, sends the
+# answer back, and writes no file.
+
+[[binding]]
+role = "implementation-manager"
+skill = "project-memory"
+stage = "lifecycle.md"
+part = "lessons"
+note = "Propose lessons, if any, from STATE's candidates and your own only in the report of the brief that writes or deletes the last STATE; a hotfix, none. Write those the user approved, quoted in a brief."
+
+[[binding]]
+role = "product-manager"
+skill = "project-memory"
+stage = "lifecycle.md"
+part = "lessons"
+note = "Propose it when your work is ready: in a `ready for the gate` or `stopped` hand-back or, loaded, to the user. Write it only on the user's approval of it: quoted by the Manager or, loaded, said to you."
+
+[[binding]]
+role = "architect"
+skill = "project-memory"
+stage = "lifecycle.md"
+part = "lessons"
+note = "Propose it when your work is ready: in a `ready for the gate` or `stopped` hand-back or, loaded, to the user. Write it only on the user's approval of it: quoted by the Manager or, loaded, said to you."

@@ -2,7 +2,7 @@
 
 Read [conventions.md](conventions.md) first. A sprint that closes with tasks still open follows "Sprint closure with residuals" there before anything below; open steps that only wait follow "Closing as code-complete". A sprint that will not finish is not closed here: [abandon.md](abandon.md).
 
-A sprint closes in this order: its last open steps are settled, its work is **integrated**, its docs are **archived**, and **lessons** are proposed. The build lead does it, or whoever closes the sprint.
+A sprint closes in this order: its last open steps are settled, its work is **integrated**, **lessons** are proposed, and its docs are **archived**, the approved lessons with them. The build lead closes it.
 
 ## Closing as code-complete
 
@@ -33,21 +33,22 @@ Not every sprint has a branch to merge:
 
 When **all TASKS checkboxes** are resolved (no `- [ ]` or `- [~]`) and the sprint is integrated:
 
-1. **Offer** to move the sprint set to `DONE/` in the sprint docs directory: THOUGHTS, PRD, PLAN, TASKS (same filenames).
-2. After the user agrees, make **the archive change**, as one change **on the default branch**: move those files; update `DONE/README.md` with one row for the feature; ensure **`SPRINT-INDEX.md`** still reflects the highest `NN` in use (it should match the archived sprint unless newer sprints exist in the sprint docs directory); **delete the STATE file**, which is never archived ([state.md](state.md)); and for a sprint of an epic set its roadmap row, Status as above and the Docs link pointing into `DONE/`.
+1. **Offer** to move the sprint set to `DONE/` in the sprint docs directory: THOUGHTS, PRD, PLAN, TASKS (same filenames). With the offer, **propose the lessons** ("Lessons" below).
+2. After the user agrees, make **the archive change**, as one change **on the default branch**: move those files; update `DONE/README.md` with one row for the feature; ensure **`SPRINT-INDEX.md`** still reflects the highest `NN` in use (it should match the archived sprint unless newer sprints exist in the sprint docs directory); **delete the STATE file**, which is never archived ([state.md](state.md)); for a sprint of an epic set its roadmap row, Status as above and the Docs link pointing into `DONE/`; and write each lesson the user approved (with sprint docs in a separate repository the lessons are a change of their own: "Lessons" below).
 3. **Ask for the commit** of that change. It is a separate decision of the user, and so is a push of the default branch afterwards.
 
-If the user declines the move, the set stays where it is and the rest of the change is still made: STATE is deleted and the roadmap row is set.
+If the user declines the move, the set stays where it is and the rest of the change is still made: STATE is deleted, the roadmap row is set and the approved lessons are written.
 
 `DONE/README.md`, the sprint index, the roadmap and `DEFERRED.md` are shared between sprints, so they change on the default branch (see "Where each doc is written" in [conventions.md](conventions.md)). The sprint's own docs are there too by now: the merge brought them, and that is why the move is made after it and not in the sprint's worktree.
 
 ## Lessons
 
-When a sprint closes, whether finished, code-complete or abandoned, whoever closes it looks back once and **proposes** what is worth keeping. This is the last step of the close.
+When a sprint closes, whether finished, code-complete or abandoned, the build lead looks back once and **proposes** what is worth keeping: the lesson candidates the implementers' reports named, which STATE holds ([state.md](state.md)), and what the build lead saw itself. They are put to the user with the offer to archive, before the archive change, so that the approved ones are written in that change and committed with it. A build lead that cannot ask the user names them earlier, in the report of the change that writes the last STATE (step 1 of "Integration"); for an abandoned sprint, of the change that deletes it.
 
-- **A lesson about the project** (a trap in the code, a check that would have caught a bug, a fact about a provider) is proposed for the project memory. The `project-memory` skill says where and how such a lesson is written; follow it, and do not pick a place of your own. Where that skill is not installed, give the lesson in the closing message and write nothing.
+- **A lesson about the project** (a trap in the code, a check that would have caught a bug, a fact about a provider) is proposed for the project memory. The `project-memory` skill says what is worth recording and where and how such a lesson is written; follow it, and do not pick a place of your own. Where that skill is not installed, give the lesson in the closing message and write nothing.
 - **A lesson about the process itself** (a rule that was missing, unclear or in the way) is proposed as a change to the process skills. It is the user's to accept: do not edit a skill on your own.
 - **Nothing is written without the user's approval**, lesson by lesson. Put each to the user as one or two lines: what happened, and what to do differently.
+- **The build lead writes each approved lesson**, its file and its index line, in the archive change. The project memory is shared between sprints and is in the project's repository: with sprint docs in a separate repository, the lessons are a change of their own on the project's default branch, and its commit is a separate decision of the user.
 - **"No lessons" is a fine outcome.** Say so in a line. Do not manufacture one to have something to propose, and do not restate what a PLAN annotation or `git log` already holds.
 
 ## `DONE/README.md` format

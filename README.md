@@ -13,6 +13,7 @@ the tag `v1.0`; [Moving from v1](#moving-from-v1) says how to get from there to 
 | Path | Holds |
 |------|-------|
 | `prd-implementation/`, `epic-implementation/` | The sprint and epic process as two skills: a short entry file and, in `references/`, the files it points to: one or two for each stage, the conventions and completion; for the sprint also the state file, deferred items, backlog conversion, abandoning a sprint, and one file for each provider. |
+| `project-memory/` | The lessons a project keeps, as a skill: the entry file and, in `references/`, the format of the index and of a lesson file, a lesson's lifecycle, and how a project gets both providers to load its `AGENTS.md`. |
 | `csv-tools/`, `json-tools/`, `self-reflection/`, `usage-cost/` | Skills. A skill is a directory at the root that holds `SKILL.md`. |
 | `multiagent-collab/` | A skill with its own setup, protocol file, hooks and tests. |
 | `roles/` | The sources of the nine roles: `<role>/ROLE.md` and `<role>/role.toml`, the sections roles share in `_shared/`, and `bindings.toml`, which says which role follows which stage of the process. Format: [`roles/README.md`](roles/README.md). A project's own specialist: [`roles/SPECIALISTS.md`](roles/SPECIALISTS.md). |
@@ -28,6 +29,7 @@ the tag `v1.0`; [Moving from v1](#moving-from-v1) says how to get from there to 
 |-------|-----|-----------|
 | [`prd-implementation`](prd-implementation/SKILL.md) | A sprint in stages with explicit gates: backlog, THOUGHTS, PRD, PLAN and TASKS, implementation, archiving. | Claude Code, Codex |
 | [`epic-implementation`](epic-implementation/SKILL.md) | An effort of several sprints: EPIC THOUGHTS, the charter, the roadmap, its sprints, archiving. | Claude Code, Codex |
+| [`project-memory`](project-memory/SKILL.md) | Lessons kept in the project: an index of one line per lesson in the project's `AGENTS.md`, one file per lesson, a git-ignored local folder; proposed, and written only on the user's approval. | Claude Code, Codex |
 | [`json-tools`](json-tools/SKILL.md) | Inspect, query and transform JSON files with local scripts (Python or Node, no dependencies). | Claude Code, Codex |
 | [`csv-tools`](csv-tools/SKILL.md) | The same for CSV files. | Claude Code, Codex |
 | [`self-reflection`](self-reflection/SKILL.md) | A review of the finished conversation that reports only what would change future work. Runs only when asked for. | Claude Code, Codex |
@@ -38,7 +40,7 @@ the tag `v1.0`; [Moving from v1](#moving-from-v1) says how to get from there to 
 
 There are two installers. The collaboration skill, `multiagent-collab`, has its own,
 described first; the setup tool leaves that skill alone, whatever is at its path.
-Everything else (the other six skills, the rule and the roles) is installed by the setup
+Everything else (the other seven skills, the rule and the roles) is installed by the setup
 tool, under [Skills](#skills) below. The two may use one clone or two: `doctor` reports
 a collaboration skill linked from another clone as information, not as a fault.
 
@@ -278,8 +280,7 @@ installs it alone.
 **Roles.** A role is an agent with its own instructions, a pinned model tier and effort,
 and limits. Nine are shipped. A specialist (operations, data research, a release) is a
 project's own agent and none is shipped: [`roles/SPECIALISTS.md`](roles/SPECIALISTS.md)
-says how a project defines one. There is no project-memory skill yet, though the
-`memory.dir` setting is already there.
+says how a project defines one.
 
 | Role | What it does | Claude Code | Codex |
 |------|--------------|-------------|-------|
@@ -308,6 +309,13 @@ is given beside the role: at launch with `--effort` (`render` prints the command
 level the settings resolve, under "entry points"), and as a project default with
 `effortLevel`, below. No session has shown yet that the effort given this way is the one
 the session runs at.
+
+**Project memory.** The `project-memory` skill keeps a project's lessons: one line each
+in a marked block of the project's `AGENTS.md`, one file each under `memory.dir`
+(`docs/memory` by default). A lesson is proposed, at a sprint's close or when it is
+learned, and written only on the user's approval. The index reaches a session only where
+the provider loads that `AGENTS.md`; `doctor --project DIR` checks it, see
+"Checking a project" below.
 
 **A project.** Nothing is written in a project unless it is named. To make every session
 in a project start as the Manager:
@@ -340,6 +348,48 @@ writes a role definition for each role the project's
 settings change, and lists what it generated in `DIR/.gitignore`. Setup's backups,
 install record and lock for the project are in `DIR/.agents/workflow-setup/`, a
 directory it creates in DIR and lists in the same ignore block.
+
+**Checking a project.** `doctor --project DIR` runs every check of `doctor` with the
+project's settings and what `render --project DIR` wrote there, and one check that needs
+a project, `instruction-files`: whether both providers load `DIR/AGENTS.md`, the file
+that holds the project's lesson index. It writes nothing.
+
+```bash
+python tools/setup/workflow_setup.py doctor --project DIR
+python tools/setup/workflow_setup.py doctor --project DIR --only instruction-files
+```
+
+| Finding | When |
+|---------|------|
+| Error | A `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` is in DIR or in a directory above it, and neither remedy is in place. Claude Code (2.1.277 or later; every kind of session from 2.1.281) reads `AGENTS.md` directly only while none of the three is there. The user's own `CLAUDE.md`, the one that lies in the Claude Code home, does not count; a file elsewhere that is a link to it does. |
+| Error | `DIR/AGENTS.md` is over the 4 MiB above which Claude Code skips an instruction file: it is not loaded, whatever imports it. |
+| Warning | A `CLAUDE.md` of the three, or the user's own, is over 4 MiB: Claude Code skips it, `doctor` does not open it, and an import in it is no remedy. |
+| Warning | A file Claude Code loads here is over three quarters of those 4 MiB. |
+| Warning | The setting is `"claude-md-and-agents-md"` under the id `cc-plugin-agents-md@builtin` alone. It is counted as the remedy, and Claude Code before 2.1.285 ignores that id. |
+| Warning | The setting has different values under its two ids. It is not counted as a remedy; the line names both values. |
+| Warning | The setting is `"managed-only"`: Claude Code loads the organization's instructions alone, and `AGENTS.md` is not loaded, import or not. |
+| Warning | The setting is `"claude-md"` and none of the three files imports `AGENTS.md`: Claude Code reads `CLAUDE.md` files only. |
+| Warning | The user's `settings.json` cannot be read, or is not a JSON object. The setting is taken as unset. |
+| Warning | DIR holds an `AGENTS.override.md` that is not empty. Codex takes one instruction file from a directory, the first that is not empty, and that one replaces the `AGENTS.md` beside it. |
+| Info | DIR holds an empty `AGENTS.override.md`: it replaces nothing until it holds something. |
+| Warning | The instruction files Codex loads, the one in its home and DIR's, are together over three quarters of its limit: 32 KiB, or `project_doc_max_bytes` in `~/.codex/config.toml` when that is set. |
+| Warning | The same files are together at or over the limit. Codex stops adding files there, so the end of them is not loaded. |
+| Warning | `project_doc_max_bytes` is 0: no instruction file is loaded on Codex. |
+| Warning | `project_doc_max_bytes` is not a number of bytes. The sizes are measured against the default. |
+| Info | DIR has no `AGENTS.md`, or a provider is not installed: nothing to check. |
+
+The two remedies for the error: a line `@AGENTS.md` in one of the three files, its path
+relative to the file that holds it (`@../AGENTS.md` in `.claude/CLAUDE.md`); or, in the
+user's own `~/.claude/settings.json`,
+`pluginConfigs."agents-md@builtin".options.instructionFiles` set to
+`"claude-md-and-agents-md"`. Claude Code ignores that setting in a project's settings
+files, and the error says so when it finds it there. `doctor` reads that one key of the
+settings file and `project_doc_max_bytes` of the Codex config, and prints no other value
+of either. It sees an import written in one of the three files, not one reached through
+a second imported file, and not one in a code block, a code span or an HTML comment;
+where it cannot tell whether a line is code, it finds no import. It takes DIR by its real
+path. More in
+[`project-memory/references/loading.md`](project-memory/references/loading.md).
 
 **Settings.** Four layers, later wins: the shipped defaults, `~/.agents/workflow.toml`,
 `DIR/.agents/workflow.toml` and `DIR/.agents/workflow.local.toml`.

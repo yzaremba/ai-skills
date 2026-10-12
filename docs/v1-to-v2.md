@@ -131,7 +131,7 @@ The agent's duties are now "The implementer's part" of
 | Checklist: Last updated, verification, scope (L67-69) | "Checklist before reporting done" | carried |
 | Checklist: no commits at all (L70) | "Checklist before reporting done" | changed by R3.7: a group member makes one commit and changes no sprint doc |
 | Checklist: report leads with the ID (L71) | "Checklist before reporting done" | carried, reworded: "build lead" for "orchestrator" (R3.2) |
-| Persistent Agent Memory (L73-85) | [completion.md][p-done], "Lessons"; the `project-memory` skill | changed by R3.6: one agent's private memory, written as it went, becomes lessons for the project memory, proposed at close and written only on the user's approval (R7.1). v1's lists of what to record and what not are not in the process text |
+| Persistent Agent Memory (L73-85) | [completion.md][p-done], "Lessons"; the `project-memory` skill | changed by R3.6: one agent's private memory, written as it went, becomes lessons for the project memory, proposed at close and written only on the user's approval (R7.1). v1's lists of what to record and what not are in `references/lifecycle.md` of the `project-memory` skill, and the implementer's report names lesson candidates ([stage-3-implementation.md][p-s3i], step 7) |
 | Closing line (L87-89) | "Scope", last sentence | carried, reworded: said of the implementer |
 
 ## New in v2, with no v1 counterpart

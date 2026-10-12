@@ -92,7 +92,8 @@ setup's own, and an entry whose name starts with a dot is not looked at.
 Credentials files are never opened. From the user's Codex ``config.toml``
 only the keys of ``CODEX_KEYS`` are looked at, and only their values are
 printed; a file that does not parse is reported by where the fault is, not
-by what the line holds.
+by what the line holds. From a Claude Code ``settings.json`` only the one
+key of ``instructions`` is looked at.
 """
 from __future__ import annotations
 
@@ -109,6 +110,7 @@ from . import blocks, definitions, dictionary, entry, fileops, fsio, homes, json
 from . import profiles, render, settings, validate
 from . import discovery
 from . import codexsettings
+from . import instructions
 from . import migrate
 from .errors import SetupError
 from .locations import Locations
@@ -135,7 +137,10 @@ COLLAB_AGENTS = {homes.CLAUDE_CODE: "claude", homes.CODEX: "codex"}
 THREADS_KEY = "agents.max_concurrent_threads_per_session"
 SANDBOX_KEY = "sandbox_mode"
 PERMISSIONS_KEY = "default_permissions"
-CODEX_KEYS = (THREADS_KEY, SANDBOX_KEY, PERMISSIONS_KEY)
+# The size at which Codex stops adding instruction files (R7.4); the check
+# ``instruction-files`` reads it.
+DOC_BYTES_KEY = "project_doc_max_bytes"
+CODEX_KEYS = (THREADS_KEY, SANDBOX_KEY, PERMISSIONS_KEY, DOC_BYTES_KEY)
 # The Manager's session is the primary thread, which the limit does not
 # count; below it run an Implementation Manager, three Coders and a
 # reviewer, with room for a second reviewer and a specialist.
@@ -995,7 +1000,8 @@ _TOML_PLACE = re.compile(r"\(at (line \d+, column \d+|end of document)\)")
 
 
 def codex_settings(context: Context) -> CodexSettings | None:
-    """Read the keys of ``CODEX_KEYS`` and nothing else; None when Codex is
+    """Read the keys of ``CODEX_KEYS`` (the three of R6.7 and the size
+    limit of the check ``instruction-files``) and nothing else; None when Codex is
     not installed. No other key is kept, and a fault names only its place."""
     provider = context.homes.provider(homes.CODEX)
     if not provider.installed:
@@ -1299,6 +1305,7 @@ CHECKS: tuple[Check, ...] = (
     Check("profiles", check_profiles, "every profile resolves"),
     Check("interrupted-run", check_interrupted_run, "no run of setup was interrupted"),
     Check("loaded-skill-size", check_loaded_skill_size, "no loaded role is over the compaction limit"),
+    Check(instructions.NAME, instructions.check, "both providers load the project's AGENTS.md"),
     Check("discovery", discovery.check_discovery, "each provider lists what setup installed", configure=discovery.configure),
     Check("collaboration-skill", check_collaboration_skill, "the collaboration skill's doctor reports no problem",
           switch="no_collab",

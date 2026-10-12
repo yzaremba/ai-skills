@@ -58,15 +58,15 @@ A limit is enforced by the provider's definition wherever that provider can enfo
 
 ## `bindings.toml`
 
-The process is two skills, `prd-implementation` and `epic-implementation`. Each is split into stage files under its `references/` directory, and neither names a role. `bindings.toml` is the binding table: the one file that says which role follows which stage file, with a row for every stage file of both skills. No other file names both a stage and a role.
+The process is two skills, `prd-implementation` and `epic-implementation`. Each is split into stage files under its `references/` directory, and neither names a role. `bindings.toml` is the binding table: the one file that says which role follows which stage file, with a row for every stage file of both skills. No other file names both a stage and a role. It also binds the roles that write lessons to `lifecycle.md` of the `project-memory` skill, which is no process skill: a file of it needs no row.
 
 The file holds `schema_version = 1` and one `[[binding]]` table per row:
 
 | Key | Type | Meaning |
 |---|---|---|
 | `role` | string | A role's id: a directory under `roles/`. A row of `coder` holds for both of its definitions. |
-| `skill` | string | A process skill's name: a directory at the repository root that holds `SKILL.md`. Never a path. |
-| `stage` | string | The file name of a stage file in that skill's `references/` directory, such as `stage-2-prd.md`. A file name only, with no directory. |
+| `skill` | string | The name of a process skill, or of `project-memory`: a directory at the repository root that holds `SKILL.md`. Never a path. |
+| `stage` | string | The file name of a file in that skill's `references/` directory: a stage file, such as `stage-2-prd.md`, or `lifecycle.md`. A file name only, with no directory. |
 | `part` | string | What the role does in that stage: `owns`, or the id of a part of it, in lower-case letters and hyphens. |
 | `note` | string, optional | One line of at most 200 characters that says what the part covers. It is given to the role with the row. |
 
@@ -95,6 +95,7 @@ note = "<optional: what the part covers>"
   | `writes` | Of the deferred items: writes the outcome the user decided for an item. |
   | `close-commands` | Of completion, and of abandoning a sprint: puts the decisions of the close to the user and runs its commands. Writes nothing. |
   | `close-writer` | Of completion, and of abandoning a sprint: what the close writes and commits. |
+  | `lessons` | Of the project memory's lifecycle: proposes lessons, and writes each one the user approved. The Manager has no row: it puts a proposal to the user, sends the answer to the role that made it, and writes no file. A lesson the user asks it to record goes, outside a build, to the Product Manager. |
 
 - **A row is unique** by `role`, `skill` and `stage`. A stage file may have several rows, one for each role with a part in it.
 - **Every stage file has a row**, and `validate` fails one that has none (`stage-unbound`). A process skill is a skill that holds a file `references/stage-*.md`. Its stage files are the `.md` files directly in its `references/` directory, whatever their names, with three exceptions: `conventions.md`, which holds in every stage and is read through each stage file, and the two provider files, `claude-code.md` and `codex.md`, which say how an action is done and not who does it. A file in a directory below `references/` is not a stage file.
