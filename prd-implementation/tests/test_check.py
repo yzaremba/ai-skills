@@ -1662,5 +1662,597 @@ class Settings(Case):
                 self.assertIsNone(re.search(pattern, raw.decode("utf-8")), (file.name, pattern))
 
 
+# --- Sprint workspaces --------------------------------------------------------
+
+HASH = "0123456789abcdef0123456789abcdef01234567"
+HARD_PLAN = "### P1.1 — A step\n\n> Tag: hard\n"
+UNTAGGED_TASKS = "## Phase 1\n\n- [ ] **P1.1** — A step\n"
+ENTRY_KEYS = {"branch", "where", "path", "busy", "locked", "docs", "docs_state", "found"}
+snapshot = tree  # the helper above, by a name a worktree's path does not shadow
+
+
+def foreign_path(*parts: str) -> str:
+    """An absolute path of the other system: a drive's on POSIX, a POSIX one on
+    Windows. The drive is put together, so no source line holds one."""
+    return "/".join(["/srv" if os.name == "nt" else "D" + ":", *parts])
+
+
+def sprint_docs(number: str, slug: str, *kinds: str) -> dict[str, str]:
+    return {f"SPRINT{number}-{kind}-{slug}.md": f"# {kind}\n" for kind in kinds}
+
+
+class SprintWorkspaces(Case):
+    """Fake git directories, as git lays them out; git itself is not needed."""
+
+    def setUp(self):
+        super().setUp()
+        self.git = self.project / ".git"
+        self.write("HEAD", "ref: refs/heads/main\n", self.git)
+        self.write("main", HASH + "\n", self.git / "refs" / "heads")
+
+    def branch(self, name: str, git: Path | None = None) -> None:
+        """A loose ref of the branch ``sprint/<name>``."""
+        self.write(name, HASH + "\n", (git or self.git) / "refs" / "heads" / "sprint")
+
+    def worktree(self, name: str, head: str, docs: dict[str, str] | None = None, git: Path | None = None,
+                 gitdir: str | None = None) -> Path:
+        """A worktree as `git worktree add` leaves it; ``head`` is a branch or a commit."""
+        tree = self.root / f"project-{name}"
+        admin = (git or self.git) / "worktrees" / name
+        self.write("gitdir", (gitdir or str(tree / ".git")) + "\n", admin)
+        self.write("HEAD", (head if head == HASH else f"ref: refs/heads/{head}") + "\n", admin)
+        self.write("commondir", "../..\n", admin)
+        self.write(".git", f"gitdir: {admin}\n", tree)
+        for file, text in (docs or {}).items():
+            self.write(file, text, tree / "docs")
+        return tree
+
+    def report(self, *extra: str) -> tuple[int, dict, str]:
+        code, report = self.run_check(*extra)
+        text = check.run(self.arguments(*extra))[1]
+        self.assertEqual(check.render_text(report), text)
+        return code, report, text
+
+    def entry(self, branch: str, where: str, path, docs=None, state: str = "not-read", found=(), busy=None,
+              locked=None) -> dict:
+        return {"branch": branch, "where": where, "path": None if path is None else str(path), "busy": busy,
+                "locked": locked, "docs": None if docs is None else str(docs), "docs_state": state,
+                "found": list(found)}
+
+    def test_a_worktree_with_its_docs(self):
+        own = sprint_docs("01", "output-formats", "THOUGHTS", "PRD", "PLAN", "TASKS")
+        other = {"SPRINT02-PLAN-other.md": LONG + "\n", "SPRINT01-PLAN-output-format.md": LONG + "\n"}
+        tree = self.worktree("project-sprint-01", "sprint/01-output-formats", {**own, **other})
+        self.branch("01-output-formats")
+        self.write("SPRINT01-THOUGHTS-output-formats.md", "# THOUGHTS\n")
+        code, report, text = self.report()
+        self.assertEqual(code, 0)
+        self.assertEqual(report["violations"], [])
+        self.assertEqual(report["notes"], [])
+        self.assertEqual(Path(report["git"]), self.git)
+        self.assertEqual(report["sprint_workspaces"], [self.entry(
+            "sprint/01-output-formats", "worktree", tree, tree / "docs", "read", ["THOUGHTS", "PRD", "PLAN", "TASKS"])])
+        self.assertIn(f"\nSprint workspaces: 1\nsprint/01-output-formats: worktree {tree}; "
+                      "docs there: THOUGHTS, PRD, PLAN, TASKS\n\nViolations: 0\n", text)
+        # And as a child process under the audit hook: still nothing is started or written.
+        before = snapshot(self.root)
+        child_code, out, err = self.child(*self.arguments(), runner=True)
+        self.assertEqual((child_code, out), (0, text), err)
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_a_worktree_with_no_docs_of_its_sprint(self):
+        tree = self.worktree("wt", "sprint/01-a", {"SPRINT02-PRD-b.md": "# PRD\n"})
+        bare = self.worktree("bare", "sprint/03-c")
+        _, report, text = self.report()
+        self.assertEqual(report["sprint_workspaces"], [
+            self.entry("sprint/01-a", "worktree", tree, tree / "docs", "read"),
+            self.entry("sprint/03-c", "worktree", bare, bare / "docs", "no-directory"),
+        ])
+        self.assertIn(f"sprint/01-a: worktree {tree}; docs there: none\n", text)
+        self.assertIn(f"sprint/03-c: worktree {bare}; no docs directory there\n", text)
+
+    def test_in_place(self):
+        self.write("HEAD", "ref: refs/heads/sprint/02-mobile-layout\n", self.git)
+        self.branch("02-mobile-layout")
+        self.write("SPRINT02-PLAN-mobile-layout.md", LONG + "\n")
+        self.write("SPRINT02-THOUGHTS-mobile-layout.md", "# THOUGHTS\n")
+        code, report, text = self.report()
+        self.assertEqual(code, 1)
+        # Checked once, as the docs directory's own file.
+        self.assertEqual([(v["file"], v["rule"]) for v in report["violations"]],
+                         [("SPRINT02-PLAN-mobile-layout.md", "annotation-too-long")])
+        self.assertEqual(report["sprint_workspaces"], [self.entry(
+            "sprint/02-mobile-layout", "in-place", self.project, self.docs, "read", ["THOUGHTS", "PLAN"])])
+        self.assertIn("\nsprint/02-mobile-layout: in place; docs there: THOUGHTS, PLAN\n", text)
+        # The shared files were read from the sprint branch's copies: one note says so.
+        self.assertEqual([(n["file"], n["rule"]) for n in report["notes"]],
+                         [(str(self.docs), "shared-files-on-sprint-branch")])
+        self.assertIn("the project root has sprint/02-mobile-layout checked out: ", text)
+        self.assertIn("they are current on the default branch\n", text)
+
+    def test_a_branch_only_loose_and_packed(self):
+        self.branch("03-loose")
+        self.branch("03-loose.lock")
+        self.write("packed-refs", "# pack-refs with: peeled fully-peeled sorted \n"
+                   f"{HASH} refs/heads/sprint/04-packed\n^{HASH}\n{HASH} refs/heads/feature/x\n"
+                   f"{HASH} refs/heads/group/05-c/member\n{HASH} refs/tags/sprint/06-tag\n"
+                   f"{HASH} refs/heads/sprint/7-short\n{HASH} refs/heads/sprint/08-a/b\n"
+                   f"{HASH} refs/remotes/origin/sprint/09-remote\nnot a line of git's\n", self.git)
+        self.write("x", HASH + "\n", self.git / "refs" / "heads" / "group" / "05-c")
+        code, report, text = self.report()
+        self.assertEqual((code, report["notes"]), (0, []))
+        self.assertEqual(report["sprint_workspaces"], [self.entry("sprint/03-loose", "nowhere", None),
+                                                       self.entry("sprint/04-packed", "nowhere", None)])
+        self.assertIn("\nSprint workspaces: 2\nsprint/03-loose: checked out nowhere, a branch only; its docs were not "
+                      "read\nsprint/04-packed: checked out nowhere, a branch only; its docs were not read\n", text)
+
+    def test_a_branch_both_loose_and_packed_is_one_entry(self):
+        self.branch("01-a")
+        self.write("packed-refs", f"{HASH} refs/heads/sprint/01-a\n", self.git)
+        tree = self.worktree("wt", "sprint/01-a")
+        self.assertEqual([entry["where"] for entry in self.report()[1]["sprint_workspaces"]], ["worktree"])
+        self.assertTrue(tree.is_dir())
+
+    def test_a_prunable_worktree(self):
+        tree = self.worktree("gone", "sprint/05-gone", sprint_docs("05", "gone", "PLAN"))
+        shutil.rmtree(tree)
+        # A directory whose .git is gone: git prunes it too, so its docs are not read.
+        bare = self.worktree("no-dotgit", "sprint/06-no-dotgit", {"SPRINT06-PLAN-no-dotgit.md": LONG + "\n"})
+        (bare / ".git").unlink()
+        code, report, text = self.report()
+        self.assertEqual((code, report["violations"], report["notes"]), (0, [], []))
+        self.assertEqual(report["sprint_workspaces"], [self.entry("sprint/05-gone", "prunable", tree),
+                                                       self.entry("sprint/06-no-dotgit", "prunable", bare)])
+        self.assertIn(f"sprint/05-gone: worktree {tree} is missing (git calls it prunable); its docs were not read\n",
+                      text)
+        self.assertIn(f"sprint/06-no-dotgit: worktree {bare} is missing (git calls it prunable)", text)
+
+    def test_a_locked_worktree_that_is_gone_is_not_prunable(self):
+        reason = self.worktree("usb", "sprint/01-usb")
+        self.write("locked", "on the usb drive\n", self.git / "worktrees" / "usb")
+        silent = self.worktree("silent", "sprint/02-silent")
+        self.write("locked", "", self.git / "worktrees" / "silent")
+        live = self.worktree("live", "sprint/03-live", sprint_docs("03", "live", "PRD"))
+        self.write("locked", "kept\n", self.git / "worktrees" / "live")
+        shutil.rmtree(reason)
+        shutil.rmtree(silent)
+        code, report, text = self.report()
+        self.assertEqual((code, report["notes"]), (0, []))
+        self.assertEqual(report["sprint_workspaces"], [
+            self.entry("sprint/01-usb", "locked", reason, locked="on the usb drive"),
+            self.entry("sprint/02-silent", "locked", silent, locked=""),
+            self.entry("sprint/03-live", "worktree", live, live / "docs", "read", ["PRD"], locked="kept"),
+        ])
+        self.assertIn(f"sprint/01-usb: worktree {reason} is missing (locked: on the usb drive); its docs were not "
+                      "read\n", text)
+        self.assertIn(f"sprint/02-silent: worktree {silent} is missing (locked); its docs were not read\n", text)
+        self.assertIn(f"sprint/03-live: worktree {live}; docs there: PRD\n", text)
+
+    def test_a_worktree_written_by_git_on_the_other_system(self):
+        for name, ends in (("slash", "/.git"), ("backslash", "\\.git")):
+            with self.subTest(name):
+                shutil.rmtree(self.git / "worktrees", ignore_errors=True)
+                written = foreign_path("workspace", "project-sprint-06-other")
+                if name == "backslash" and os.name != "nt":
+                    written = written.split("/")[0] + "\\" + "\\".join(written.split("/")[1:])
+                self.worktree("other", "sprint/06-other", gitdir=written + ends)
+                code, report, text = self.report()
+                self.assertEqual((code, report["violations"], report["notes"]), (0, [], []))
+                # Shown exactly as git wrote it, less its /.git: not converted, not looked at.
+                self.assertEqual(report["sprint_workspaces"], [self.entry("sprint/06-other", "foreign", written)])
+                self.assertIn(f"sprint/06-other: worktree {written} was written by git on another system; "
+                              "not looked at\n", text)
+
+    def test_a_detached_head_in_a_rebase_or_a_bisect_keeps_its_branch(self):
+        names = sprint_docs("01", "merge", "PLAN", "TASKS")
+        plan, tasks = list(names)
+        merge = self.worktree("merge", HASH, {plan: HARD_PLAN, tasks: UNTAGGED_TASKS})
+        self.write("head-name", "refs/heads/sprint/01-merge\n", self.git / "worktrees" / "merge" / "rebase-merge")
+        apply = self.worktree("apply", HASH, sprint_docs("02", "apply", "PRD"))
+        self.write("head-name", "refs/heads/sprint/02-apply\n", self.git / "worktrees" / "apply" / "rebase-apply")
+        bisect = self.worktree("bisect", HASH, sprint_docs("03", "bisect", "THOUGHTS"))
+        self.write("BISECT_START", "sprint/03-bisect\n", self.git / "worktrees" / "bisect")
+        # Detached for no such reason, or a rebase or bisect that began detached: no branch.
+        self.worktree("plain", HASH)
+        self.worktree("from-detached", HASH)
+        self.write("head-name", "detached HEAD\n", self.git / "worktrees" / "from-detached" / "rebase-merge")
+        self.write("BISECT_START", HASH + "\n", self.git / "worktrees" / "from-detached")
+        # And the project root itself, in a rebase of a sprint branch.
+        self.write("HEAD", HASH + "\n", self.git)
+        self.write("head-name", "refs/heads/sprint/04-here\n", self.git / "rebase-merge")
+        code, report, text = self.report()
+        self.assertEqual(code, 1)
+        self.assertEqual(report["sprint_workspaces"], [
+            self.entry("sprint/01-merge", "worktree", merge, merge / "docs", "read", ["PLAN", "TASKS"], busy="rebase"),
+            self.entry("sprint/02-apply", "worktree", apply, apply / "docs", "read", ["PRD"], busy="rebase"),
+            self.entry("sprint/03-bisect", "worktree", bisect, bisect / "docs", "read", ["THOUGHTS"], busy="bisect"),
+            self.entry("sprint/04-here", "in-place", self.project, self.docs, "read", busy="rebase"),
+        ])
+        # Its docs are read and checked as any worktree's.
+        self.assertEqual([(v["file"], v["rule"]) for v in report["violations"]],
+                         [(str(merge / "docs" / tasks), "tasks-tag-mismatch")])
+        self.assertIn(f"sprint/01-merge: worktree {merge} (mid-rebase); docs there: PLAN, TASKS\n", text)
+        self.assertIn(f"sprint/03-bisect: worktree {bisect} (mid-bisect); docs there: THOUGHTS\n", text)
+        self.assertIn("sprint/04-here: in place (mid-rebase); docs there: none\n", text)
+
+    def test_refs_in_the_reftable_format_are_a_note_and_no_count(self):
+        self.worktree("wt", "sprint/01-a")
+        self.branch("01-a")
+        for name in ("a reftable directory", "a HEAD that names refs/heads/.invalid"):
+            with self.subTest(name):
+                if name.startswith("a reftable"):
+                    (self.git / "reftable").mkdir()
+                else:
+                    shutil.rmtree(self.git / "reftable")
+                    self.write("HEAD", "ref: refs/heads/.invalid\n", self.git)
+                code, report, text = self.report()
+                self.assertEqual((code, report["violations"]), (0, []))
+                self.assertEqual(Path(report["git"]), self.git)
+                self.assertIsNone(report["sprint_workspaces"])  # not looked for, which is not "none"
+                self.assertEqual([(n["file"], n["rule"]) for n in report["notes"]], [(str(self.git), "git-reftable")])
+                self.assertIn("\nSprint workspaces: not looked for (see Notes)\n\nViolations: 0\n", text)
+                self.assertNotIn("Sprint workspaces: 0", text)
+
+    def test_only_a_regular_file_of_a_bounded_size_is_read_of_git(self):
+        self.branch("01-loose")
+        self.write("packed-refs", f"{HASH} refs/heads/sprint/02-packed\n" * 3, self.git)
+        with mock.patch.object(check, "PACKED_REFS_LIMIT", 10):
+            report = self.report()[1]
+        self.assertEqual([e["branch"] for e in report["sprint_workspaces"]], ["sprint/01-loose"])
+        self.assertEqual([(Path(n["file"]).name, n["rule"]) for n in report["notes"]], [("packed-refs", "git-unreadable")])
+        self.assertIn("is larger than 10 bytes", report["notes"][0]["message"])
+        self.worktree("big", "sprint/03-big")
+        self.write("HEAD", "ref: refs/heads/sprint/03-big\n" + "x" * check.LINE_FILE_LIMIT, self.git / "worktrees" / "big")
+        report = self.report()[1]
+        self.assertNotIn("sprint/03-big", [e["branch"] for e in report["sprint_workspaces"]])
+        self.assertIn(("HEAD", "git-file-malformed"), [(Path(n["file"]).name, n["rule"]) for n in report["notes"]])
+
+    @unittest.skipUnless(os.name == "posix", "a device and a pipe as git's files: POSIX")
+    def test_a_device_or_a_pipe_among_git_files_is_a_note(self):
+        self.branch("01-a")
+        self.worktree("fifo", "sprint/02-fifo")
+        (self.git / "worktrees" / "fifo" / "HEAD").unlink()
+        os.mkfifo(self.git / "worktrees" / "fifo" / "HEAD")  # read, it would block the command
+        if Path("/dev/zero").exists():
+            (self.git / "packed-refs").symlink_to("/dev/zero")
+        code, out, err = self.child(*self.arguments("--json"), runner=True)
+        self.assertEqual(code, 0, err)
+        report = json.loads(out)
+        self.assertEqual([e["branch"] for e in report["sprint_workspaces"]], ["sprint/01-a"])
+        notes = {Path(n["file"]).name: n["message"] for n in report["notes"]}
+        self.assertTrue(notes["HEAD"].startswith("is not a regular file"))
+        if Path("/dev/zero").exists():
+            self.assertTrue(notes["packed-refs"].startswith("is not a regular file"))
+        # The project's .git file as a device: a note, no section.
+        shutil.rmtree(self.git)
+        if Path("/dev/zero").exists():
+            self.git.symlink_to("/dev/zero")
+            code, report, text = self.report()
+            self.assertEqual((code, report["git"]), (0, None))
+            self.assertEqual([n["rule"] for n in report["notes"]], ["git-file-malformed"])
+
+    @unittest.skipUnless(os.name == "posix", "a link loop: POSIX")
+    def test_a_git_link_that_loops_or_leads_nowhere_is_a_note(self):
+        shutil.rmtree(self.git)
+        for target in (self.git, self.root / "gone"):
+            with self.subTest(str(target)):
+                if self.git.is_symlink():
+                    self.git.unlink()
+                self.git.symlink_to(target)
+                code, report, text = self.report()
+                self.assertEqual((code, report["git"], report["sprint_workspaces"]), (0, None, []))
+                self.assertEqual([(n["file"], n["rule"]) for n in report["notes"]],
+                                 [(str(self.git), "git-unreadable")])
+                self.assertNotIn("Sprint workspaces", text)
+
+    def test_a_directory_with_no_head_is_not_a_git_directory(self):
+        empty = self.root / "empty"
+        empty.mkdir()
+        shutil.rmtree(self.git)
+        for content in (f"gitdir: {empty}\n", f"gitdir: {Path(empty.anchor)}\n"):
+            with self.subTest(content):
+                self.write(".git", content, self.project)
+                report = self.report()[1]
+                self.assertEqual(report["git"], None)
+                self.assertEqual([n["rule"] for n in report["notes"]], ["git-dir-missing"])
+                self.assertIn("is not a git directory: it holds no HEAD", report["notes"][0]["message"])
+        (self.project / ".git").unlink()
+        (self.project / ".git").mkdir()
+        self.assertIn("is not a git directory", self.report()[1]["notes"][0]["message"])
+
+    def test_docs_named_in_a_detached_worktree_inside_the_root(self):
+        inner = self.worktree("inner", HASH)
+        shutil.move(str(inner), str(self.project / "inner"))
+        self.write("gitdir", str(self.project / "inner" / ".git") + "\n", self.git / "worktrees" / "inner")
+        (self.project / "inner" / "docs").mkdir()
+        tree = self.worktree("wt", "sprint/01-k", sprint_docs("01", "k", "PRD"))
+        report = self.report("--docs", str(self.project / "inner" / "docs"))[1]
+        # Mapped as docs/ in the inner worktree, the deepest: so docs/ in the sprint's.
+        self.assertEqual(report["sprint_workspaces"], [
+            self.entry("sprint/01-k", "worktree", tree, tree / "docs", "read", ["PRD"])])
+
+    def test_docs_in_a_repository_of_their_own_inside_the_root(self):
+        self.write("HEAD", "ref: refs/heads/main\n", self.docs / ".git")
+        tree = self.worktree("wt", "sprint/01-a", {"SPRINT01-PLAN-a.md": LONG + "\n"})
+        code, report, text = self.report()
+        self.assertEqual((code, report["violations"]), (0, []))
+        self.assertEqual(report["sprint_workspaces"], [self.entry("sprint/01-a", "worktree", tree, None, "outside")])
+        self.assertIn("the docs directory is outside the repository, one for every worktree\n", text)
+
+    def test_sprint_branches_are_in_the_order_of_their_numbers(self):
+        for name in ("100-big", "10-ten", "07-b", "07-a", "09-nine"):
+            self.branch(name)
+        self.assertEqual([e["branch"] for e in self.report()[1]["sprint_workspaces"]],
+                         ["sprint/07-a", "sprint/07-b", "sprint/09-nine", "sprint/10-ten", "sprint/100-big"])
+
+    def test_a_relative_gitdir_of_a_worktree(self):
+        tree = self.worktree("rel", "sprint/01-rel", sprint_docs("01", "rel", "PRD"),
+                             gitdir="/".join([".."] * 4 + ["project-rel", ".git"]))
+        entries = self.report()[1]["sprint_workspaces"]
+        self.assertEqual(entries, [self.entry("sprint/01-rel", "worktree", tree, tree / "docs", "read", ["PRD"])])
+
+    def test_a_git_file_with_gitdir(self):
+        shutil.rmtree(self.git)
+        real = self.root / "real-git"
+        self.write("HEAD", "ref: refs/heads/main\n", real)
+        self.write(".git", "gitdir: ../real-git\n", self.project)
+        tree = self.worktree("wt", "sprint/01-a", sprint_docs("01", "a", "THOUGHTS"), git=real)
+        self.branch("02-b", git=real)
+        _, report, _ = self.report()
+        self.assertEqual(Path(report["git"]), real)
+        self.assertEqual(report["sprint_workspaces"], [
+            self.entry("sprint/01-a", "worktree", tree, tree / "docs", "read", ["THOUGHTS"]),
+            self.entry("sprint/02-b", "nowhere", None),
+        ])
+
+    def test_a_project_root_that_is_a_linked_worktree(self):
+        # Not where the process runs the command, but read right: the main tree is a worktree here.
+        main = self.root / "main"
+        common = main / ".git"
+        self.write("HEAD", "ref: refs/heads/sprint/01-main\n", common)
+        self.write("SPRINT01-PLAN-main.md", LONG + "\n", main / "docs")
+        shutil.rmtree(self.git)
+        admin = common / "worktrees" / "project"
+        self.write("gitdir", str(self.project / ".git") + "\n", admin)
+        self.write("HEAD", "ref: refs/heads/sprint/02-here\n", admin)
+        self.write("commondir", "../..\n", admin)
+        self.write(".git", f"gitdir: {admin}\n", self.project)
+        code, report, _ = self.report()
+        self.assertEqual(Path(report["git"]), common)
+        self.assertEqual(report["sprint_workspaces"], [
+            self.entry("sprint/01-main", "worktree", main, main / "docs", "read", ["PLAN"]),
+            self.entry("sprint/02-here", "in-place", self.project, self.docs, "read"),
+        ])
+        self.assertEqual([(v["file"], v["rule"]) for v in report["violations"]],
+                         [(str(main / "docs" / "SPRINT01-PLAN-main.md"), "annotation-too-long")])
+        self.assertEqual(code, 1)
+
+    def test_docs_outside_the_repository(self):
+        shared = self.root / "docs-repository"
+        self.write("SPRINT01-PLAN-a.md", "### P1.1 — A\n", shared)
+        tree = self.worktree("wt", "sprint/01-a", {"SPRINT01-PLAN-a.md": LONG + "\n"})
+        code, report, text = self.report("--docs", str(shared))
+        self.assertEqual((code, report["violations"]), (0, []))
+        self.assertEqual(report["sprint_workspaces"], [self.entry("sprint/01-a", "worktree", tree, None, "outside")])
+        self.assertIn(f"sprint/01-a: worktree {tree}; the docs directory is outside the repository, one for every "
+                      "worktree\n", text)
+
+    def test_docs_named_in_a_worktree_are_checked_once(self):
+        tree = self.worktree("wt", "sprint/01-a", {"SPRINT01-PLAN-a.md": LONG + "\n"})
+        self.write("SPRINT01-PLAN-a.md", LONG + "\n")  # the project root's copy is not the one named
+        _, report, text = self.report("--docs", str(tree / "docs"))
+        self.assertEqual([(v["file"], v["rule"]) for v in report["violations"]],
+                         [("SPRINT01-PLAN-a.md", "annotation-too-long")])
+        self.assertEqual(report["sprint_workspaces"], [
+            self.entry("sprint/01-a", "worktree", tree, tree / "docs", "read", ["PLAN"])])
+
+    def test_a_violation_in_a_worktree_tasks(self):
+        names = sprint_docs("01", "a", "PLAN", "TASKS")
+        plan, tasks = list(names)
+        tree = self.worktree("wt", "sprint/01-a", {plan: HARD_PLAN, tasks: UNTAGGED_TASKS})
+        self.write(plan, HARD_PLAN)
+        self.write(tasks, "## Phase 1\n\n- [ ] **P1.1** **[hard]** — A step\n")
+        code, report, text = self.report()
+        self.assertEqual(code, 1)
+        place = tree / "docs" / tasks
+        self.assertEqual([(v["file"], v["line"], v["rule"]) for v in report["violations"]],
+                         [(str(place), 3, "tasks-tag-mismatch")])
+        self.assertEqual(report["summary"]["violations"], 1)
+        self.assertIn(f"\nViolations: 1\n{place}:3: tasks-tag-mismatch: P1.1 carries `> Tag: hard` in the PLAN "
+                      "(line 3); this line has no **[hard]**\n", text)
+        self.assertTrue(text.endswith("\nResult: action needed\n"))
+        # The worktree's TASKS is compared with the worktree's PLAN, not the project root's.
+        self.write(plan, "### P1.1 — A step\n", tree / "docs")
+        self.assertEqual(self.report()[1]["violations"], [])
+
+    def test_a_worktree_file_that_cannot_be_read_is_a_violation_with_its_path(self):
+        tree = self.worktree("wt", "sprint/01-a")
+        (tree / "docs").mkdir()
+        (tree / "docs" / "SPRINT01-TASKS-a.md").write_bytes(b"caf\xe9\n")
+        report = self.report()[1]
+        self.assertEqual([(v["file"], v["rule"]) for v in report["violations"]],
+                         [(str(tree / "docs" / "SPRINT01-TASKS-a.md"), "not-utf8")])
+
+    def test_shared_files_in_a_worktree_are_not_checked(self):
+        stale = {
+            "DEFERRED.md": deferred(item(1, review="2000-01-01"), "A stray line\n"),
+            "BACKLOG.md": "Latest assigned: B1\n\n- **B1** One\n  more\n- **B9** Nine\n",
+            "BACKLOG-B7-orphan.md": "# An orphan\n",
+            "SPRINT-INDEX.md": "anything\n",
+            "SPRINT02-TASKS-other.md": LONG_TASK + "\n",
+            "SPRINT01-STATE-a.md": LONG_TASK + "\n",
+            "DONE/SPRINT01-TASKS-a.md": LONG_TASK + "\n",
+            "DONE/README.md": LONG_TASK + "\n",
+        }
+        tree = self.worktree("wt", "sprint/01-a", stale)
+        code, report, _ = self.report()
+        self.assertEqual((code, report["deferred"], report["violations"], report["notes"]), (0, [], [], []))
+        self.assertEqual(report["sprint_workspaces"][0]["found"], ["STATE"])
+        self.assertTrue((tree / "docs" / "DONE").is_dir())
+
+    def test_a_malformed_worktree_entry_is_a_note(self):
+        good = self.worktree("good", "sprint/01-good")
+        no_gitdir = self.git / "worktrees" / "no-gitdir"
+        self.write("HEAD", "ref: refs/heads/sprint/02-x\n", no_gitdir)
+        self.worktree("odd-head", "sprint/03-x")
+        self.write("HEAD", "not a head\n", self.git / "worktrees" / "odd-head")
+        self.worktree("empty", "sprint/04-x")
+        self.write("gitdir", "", self.git / "worktrees" / "empty")
+        self.worktree("latin", "sprint/05-x")
+        (self.git / "worktrees" / "latin" / "gitdir").write_bytes(b"caf\xe9\n")
+        self.worktree("no-head", "sprint/06-x")
+        (self.git / "worktrees" / "no-head" / "HEAD").unlink()
+        self.write("stray-file", "", self.git / "worktrees")
+        (self.git / "packed-refs").write_bytes(b"\xff\n")
+        code, report, text = self.report()
+        self.assertEqual((code, report["violations"]), (0, []))
+        self.assertEqual([entry["branch"] for entry in report["sprint_workspaces"]], ["sprint/01-good"])
+        self.assertEqual(report["sprint_workspaces"][0]["path"], str(good))
+        found = sorted((Path(n["file"]).relative_to(self.git).as_posix(), n["rule"]) for n in report["notes"])
+        self.assertEqual(found, sorted([
+            ("worktrees/no-gitdir/gitdir", "git-file-malformed"), ("worktrees/odd-head/HEAD", "git-file-malformed"),
+            ("worktrees/empty/gitdir", "git-file-malformed"), ("worktrees/latin/gitdir", "git-file-malformed"),
+            ("worktrees/no-head/HEAD", "git-file-malformed"), ("packed-refs", "git-unreadable"),
+        ]))
+        self.assertEqual(report["summary"]["notes"], 6)
+        self.assertIn("Notes: 6\n", text)
+        self.assertTrue(text.endswith("\nResult: nothing needs action\n"))
+
+    def test_a_git_file_that_cannot_be_followed_is_a_note(self):
+        shutil.rmtree(self.git)
+        for content, rule in (("not a pointer\n", "git-file-malformed"), ("", "git-file-malformed"),
+                              ("gitdir: ../nowhere\n", "git-dir-missing"),
+                              (f"gitdir: {foreign_path('elsewhere', '.git')}\n", "git-dir-missing")):
+            with self.subTest(content):
+                self.write(".git", content, self.project)
+                code, report, text = self.report()
+                self.assertEqual((code, report["git"], report["sprint_workspaces"]), (0, None, []))
+                self.assertEqual([(n["file"], n["rule"]) for n in report["notes"]],
+                                 [(str(self.project / ".git"), rule)])
+                self.assertNotIn("Sprint workspaces", text)
+
+    def test_a_commondir_that_cannot_be_followed_is_a_note(self):
+        self.write("commondir", "../gone\n", self.git)
+        code, report, _ = self.report()
+        self.assertEqual((code, report["git"]), (0, None))
+        self.assertEqual([n["rule"] for n in report["notes"]], ["git-dir-missing"])
+
+    def test_detached_heads_and_other_branches_are_left_out(self):
+        self.worktree("detached", HASH)
+        self.worktree("feature", "feature/x")
+        self.worktree("member", "group/01-a/member")
+        self.worktree("short", "sprint/1-a")
+        code, report, text = self.report()
+        self.assertEqual((code, report["sprint_workspaces"], report["notes"]), (0, [], []))
+        self.assertIn("\nDeferred items: 0 open, 0 state unknown, 0 past its date\n\nSprint workspaces: 0\n\n"
+                      "Violations: 0\n", text)
+
+    def test_no_git_directory_changes_nothing(self):
+        shutil.rmtree(self.git)
+        self.write(TASKS, LONG_TASK + "\n")
+        code, report, text = self.report()
+        self.assertEqual((code, report["git"], report["sprint_workspaces"], report["notes"]), (1, None, [], []))
+        self.assertNotIn("Sprint workspaces", text)
+        self.assertIn("\nDeferred items: 0 open, 0 state unknown, 0 past its date\n\nViolations: 1\n", text)
+        self.write(".git", "", self.project / "not-a-dir")  # nothing named .git in the root itself
+        self.assertEqual(self.report()[2], text)
+
+    def test_json_shape(self):
+        self.worktree("wt", "sprint/01-a", sprint_docs("01", "a", "PRD"))
+        self.branch("02-b")
+        code, as_json = check.run(self.arguments("--json"))
+        report = json.loads(as_json)
+        self.assertEqual(list(report)[:9], ["schema_version", "today", "project", "docs", "docs_from", "settings",
+                                            "deferred", "git", "sprint_workspaces"])
+        for entry in report["sprint_workspaces"]:
+            self.assertEqual(set(entry), ENTRY_KEYS)
+            self.assertIn(entry["where"], ("in-place", "worktree", "prunable", "nowhere"))
+            self.assertIn(entry["docs_state"], ("read", "no-directory", "unreadable", "outside", "not-read"))
+        self.assertNotIn("committed", as_json)
+        child_code, child_json, _ = self.child(*self.arguments("--json"))
+        self.assertEqual((child_code, child_json), (code, as_json))
+
+    def test_names_from_disk_are_escaped(self):
+        self.worktree("odd", "sprint/01-a\x1b[31m")
+        text = self.report()[2]
+        self.assertIn("sprint/01-a\\u001b[31m: worktree ", text)
+        self.assertNotIn("\x1b", text)
+
+    @unittest.skipIf(shutil.which("git") is None, "git is not installed")
+    def test_with_real_git(self):
+        shutil.rmtree(self.git)
+        git = shutil.which("git")
+        env = dict(os.environ, HOME=str(self.home), GIT_CONFIG_NOSYSTEM="1",
+                   GIT_CONFIG_GLOBAL=str(self.home / "no-gitconfig"))
+
+        def run(*arguments: str, cwd: Path = self.project) -> None:
+            subprocess.run([git, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c",
+                            "init.defaultBranch=main", "-c", "commit.gpgsign=false", *arguments],
+                           cwd=str(cwd), env=env, check=True, capture_output=True)
+
+        self.write("SPRINT01-THOUGHTS-x.md", "# THOUGHTS\n")
+        run("init", "-q")
+        run("add", ".")
+        run("commit", "-q", "-m", "Start sprint 01")
+        tree = self.root / "project-sprint-01-x"
+        run("worktree", "add", "-q", str(tree), "-b", "sprint/01-x")
+        names = sprint_docs("01", "x", "PRD", "PLAN", "TASKS")
+        plan, tasks = list(names)[1:]
+        for name, text in {**names, plan: HARD_PLAN, tasks: UNTAGGED_TASKS}.items():
+            self.write(name, text, tree / "docs")  # not committed: the report does not need it
+        run("branch", "sprint/02-y")
+        run("pack-refs", "--all")
+        code, report, text = self.report()
+        self.assertEqual(code, 1)
+        self.assertEqual(report["notes"], [])
+        entries = report["sprint_workspaces"]
+        self.assertEqual([(e["branch"], e["where"], e["found"]) for e in entries],
+                         [("sprint/01-x", "worktree", ["THOUGHTS", "PRD", "PLAN", "TASKS"]),
+                          ("sprint/02-y", "nowhere", [])])
+        self.assertEqual(Path(entries[0]["path"]).resolve(), tree.resolve())
+        self.assertEqual([(Path(v["file"]).name, v["rule"]) for v in report["violations"]],
+                         [(tasks, "tasks-tag-mismatch")])
+        self.assertIn(f"sprint/01-x: worktree {entries[0]['path']}; docs there: THOUGHTS, PRD, PLAN, TASKS\n", text)
+
+    @unittest.skipIf(shutil.which("git") is None, "git is not installed")
+    def test_with_real_git_a_rebase_and_a_lock(self):
+        shutil.rmtree(self.git)
+        git = shutil.which("git")
+        env = dict(os.environ, HOME=str(self.home), GIT_CONFIG_NOSYSTEM="1",
+                   GIT_CONFIG_GLOBAL=str(self.home / "no-gitconfig"))
+
+        def run(*arguments: str, cwd: Path = self.project, check: bool = True) -> None:
+            subprocess.run([git, "-c", "user.name=Test", "-c", "user.email=test@example.com", "-c",
+                            "init.defaultBranch=main", "-c", "commit.gpgsign=false", *arguments],
+                           cwd=str(cwd), env=env, check=check, capture_output=True)
+
+        self.write("f.txt", "a\n", self.project)
+        self.write("README.md", "# Docs\n")
+        run("init", "-q")
+        run("add", ".")
+        run("commit", "-q", "-m", "Start")
+        tree = self.root / "project-sprint-01-rb"
+        run("worktree", "add", "-q", str(tree), "-b", "sprint/01-rb")
+        self.write("SPRINT01-PRD-rb.md", "# PRD\n", tree / "docs")
+        self.write("f.txt", "b\n", tree)
+        run("add", ".", cwd=tree)
+        run("commit", "-q", "-m", "Sprint", cwd=tree)
+        self.write("f.txt", "c\n", self.project)
+        run("commit", "-q", "-a", "-m", "Main")
+        run("rebase", "main", cwd=tree, check=False)  # stops at the conflict, HEAD detached
+        locked = self.root / "project-sprint-02-lock"
+        run("worktree", "add", "-q", str(locked), "-b", "sprint/02-lock")
+        run("worktree", "lock", "--reason", "usb drive", str(locked))
+        shutil.rmtree(locked)
+        code, report, text = self.report()
+        self.assertEqual((code, report["notes"]), (0, []))
+        self.assertEqual([(e["branch"], e["where"], e["busy"], e["locked"], e["found"])
+                          for e in report["sprint_workspaces"]],
+                         [("sprint/01-rb", "worktree", "rebase", None, ["PRD"]),
+                          ("sprint/02-lock", "locked", None, "usb drive", [])])
+        self.assertIn(" (mid-rebase); docs there: PRD\n", text)
+        self.assertIn(" is missing (locked: usb drive); its docs were not read\n", text)
+
+
 if __name__ == "__main__":
     unittest.main()

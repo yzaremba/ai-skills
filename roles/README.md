@@ -92,7 +92,7 @@ note = "<optional: what the part covers>"
   | `reviews` | Reads what the stage's documents must hold, to check a document against it. Writes nothing. |
   | `decomposes` | Of the roadmap stage: writes the roadmap, all but the seam. |
   | `seam` | Of the roadmap stage: the seam, when a sprint the roadmap plans is started. |
-  | `checks` | Of the deferred items: runs the check command when a session starts, makes the full check with its named checks when the user asks, and puts what needs a decision to the user. Writes nothing. |
+  | `checks` | Of the deferred items: runs the check command when a session starts, which also reports each sprint branch, where it is checked out and its docs there; makes the full check with its named checks when the user asks, and puts what needs a decision to the user. Writes nothing. |
   | `writes` | Of the deferred items: writes the outcome the user decided for an item. |
   | `close-commands` | Of completion, and of abandoning a sprint: puts the decisions of the close to the user and runs its commands. Writes nothing. |
   | `close-writer` | Of completion, and of abandoning a sprint: what the close writes and commits. |

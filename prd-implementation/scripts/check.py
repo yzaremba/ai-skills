@@ -30,6 +30,32 @@ What it reads, all as UTF-8:
     AGENTS.md in the project root, for the lesson index: the block between
     the lines <!-- project-memory:index:start --> and
     <!-- project-memory:index:end -->
+    git's own files under the project root's .git, never git itself: the
+    .git file and commondir, the HEAD files, rebase-merge/head-name,
+    rebase-apply/head-name and BISECT_START beside a detached HEAD,
+    worktrees/<name>/gitdir and locked, the names under refs/heads/sprint/
+    and packed-refs; and, in each worktree on a sprint branch, the names in
+    its sprint docs directory and that sprint's own PLAN and TASKS
+
+Sprint workspaces. Each branch sprint/NN-slug is reported with where it is
+checked out: in place (in the project root); in a worktree; in a worktree
+that is gone, which git calls prunable, or locked; in a worktree whose path
+git wrote on the other system, shown as written and not looked at; or
+nowhere. A detached HEAD in a rebase or a bisect of the branch still has it,
+as git counts it, and is marked so. With it go which of the sprint's own
+SPRINTNN-<KIND>-slug.md (THOUGHTS, PRD, PLAN, TASKS, STATE) are in the
+sprint docs directory there: the docs directory's path inside the working
+tree it is in, the deepest, mapped into the other one. A docs directory
+outside every working tree, or in a repository of its own inside one, is
+one for all of them, and nothing is mapped. A worktree's PLAN and TASKS of
+that sprint are checked as those of the docs directory are, and a violation
+there names the file by its full path; its shared files are stale copies
+and are never read. In place, a note says the shared files were read from
+the sprint branch's copies. Nothing of git's index or objects is read, so
+nothing is said of what is committed. A project root with no .git has no
+sprint section; a git file that cannot be used is a note. Of git's files
+only a regular file of a bounded size is read: never a device or a pipe.
+Refs in the reftable format are not read: a note, and no count of sprints.
 
 The forms it checks are defined in this skill's references: deferred.md,
 stage-0-backlog.md, and "Format limits" in conventions.md. Length is the
@@ -46,13 +72,15 @@ its step is reported (tasks-tag-mismatch); a line whose step ID the PLAN
 does not hold is not compared.
 
 A file is read only if, with every link in its path followed, it is still
-inside the directory it was looked for in: the sprint docs directory, or
-the project root for AGENTS.md. A link that leads outside is reported and
+inside the directory it was looked for in: the sprint docs directory, a
+worktree's for its PLAN and TASKS, or the project root for AGENTS.md. A
+git file is read where it is. A link that leads outside is reported and
 not read. The docs directory itself is taken as named, link or not.
 
-The report has three parts. The deferred items: every item that is open,
+The report has four parts. The deferred items: every item that is open,
 and every item whose state cannot be told (its "Status:" is missing or
-malformed), which is marked so. The violations. And the notes: facts that
+malformed), which is marked so. The sprint workspaces, when the project
+root holds a .git. The violations. And the notes: facts that
 need no action, such as a BACKLOG.md still in the old form. A note is not
 a violation and has no effect on the exit code.
 
@@ -167,6 +195,30 @@ B_NUMBERED = re.compile(r"^- \*\*B[0-9]+\*\*")
 B_TAG = re.compile(r"\*\*\[[^\]]*\]\*\*")
 B_LINK = re.compile(r"\]\(([^)]*)\)")
 B_DOCUMENT = re.compile(r"^BACKLOG-B([1-9][0-9]*)-[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
+
+SPRINT_BRANCH = re.compile(r"^sprint/([0-9]{2,})-([^/]+)$")
+SPRINT_KINDS = ("THOUGHTS", "PRD", "PLAN", "TASKS", "STATE")
+HEAD_REF = re.compile(r"^ref: *(refs/\S+)$")
+HEAD_HASH = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
+PACKED_REF = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})? (refs/\S+)$")
+BRANCH_REF = "refs/heads/"
+# A path git wrote on Windows, as it is read on another system: a drive, or a share.
+WINDOWS_ABSOLUTE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
+# What reftable leaves in a HEAD file, for an older git to stop at.
+REFTABLE_HEAD = "ref: refs/heads/.invalid"
+# Only a regular file is read of git's, and no more than this: a one-line
+# file (HEAD, gitdir, commondir, a .git file) and packed-refs.
+LINE_FILE_LIMIT = 64 * 1024
+PACKED_REFS_LIMIT = 32 * 1024 * 1024
+# What keeps a detached HEAD on its branch, as git counts it: a rebase or a bisect.
+BUSY_FILES = ((("rebase-merge", "head-name"), "rebase"), (("rebase-apply", "head-name"), "rebase"),
+              (("BISECT_START",), "bisect"))
+IN_PLACE = "in-place"
+WORKTREE = "worktree"
+PRUNABLE = "prunable"
+LOCKED = "locked"
+FOREIGN = "foreign"
+NOWHERE = "nowhere"
 
 D_TITLE = "# Deferred items"
 D_POINTER = re.compile(r"^Latest assigned: D([1-9][0-9]*)$")
@@ -849,6 +901,367 @@ def check_index(lines: list[str], add) -> None:
             add(start + 1 + offset, "index-line-too-long", f"{len(line)} characters; the limit is {INDEX_LINE_LIMIT}")
 
 
+# --- Sprint workspaces --------------------------------------------------------
+#
+# Read from git's own files, never by running git: what this needs is the
+# list of worktrees with the branch each has checked out, and the names of
+# the branches. Nothing of the index or of the objects is read, so nothing
+# is known of what is committed.
+
+def _read_small(path: Path, limit: int) -> tuple[bytes | None, str | None]:
+    """The bytes of a file of git's, or why they were not read; (None, None)
+    when nothing is at ``path``. Only a regular file of at most ``limit``
+    bytes is read: never a device or a pipe, which can be endless or block."""
+    try:
+        found = path.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return None, ("is a link that leads nowhere" if _is_link(path) else None)
+    except (OSError, ValueError) as exc:
+        return None, f"cannot be read: {_reason(exc)}"
+    if not stat.S_ISREG(found.st_mode):
+        return None, "is not a regular file"
+    if found.st_size > limit:
+        return None, f"is larger than {limit} bytes; it was not read"
+    try:
+        return path.read_bytes(), None
+    except (FileNotFoundError, NotADirectoryError):
+        return None, None
+    except (OSError, ValueError) as exc:
+        return None, f"cannot be read: {_reason(exc)}"
+
+
+def _is_link(path: Path) -> bool:
+    try:
+        return path.is_symlink()
+    except (OSError, ValueError):
+        return False
+
+
+def _git_line(path: Path) -> tuple[str | None, str | None]:
+    """The first line of a one-line file of git's, stripped, or why it was
+    not read; (None, None) when nothing is at ``path``."""
+    raw, fault = _read_small(path, LINE_FILE_LIMIT)
+    if raw is None:
+        return None, fault
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        return None, f"is not UTF-8 text (byte {exc.start})"
+    lines = split_lines(text)
+    first = lines[0].strip() if lines else ""
+    if not first:
+        return None, "is empty"
+    return first, None
+
+
+def _foreign(value: str) -> bool:
+    """Whether ``value`` is an absolute path of the other system: one git
+    wrote on Windows read here, or one it wrote elsewhere read on Windows."""
+    if sys.platform == "win32":
+        return value.startswith("/") and not value.startswith("//")
+    return bool(WINDOWS_ABSOLUTE.match(value))
+
+
+def _git_path(value: str, base: Path) -> Path | None:
+    """A path a file of git's holds: a relative one is taken from ``base``.
+    None for a path of the other system, which cannot be looked at here."""
+    if _foreign(value):
+        return None
+    try:
+        path = Path(value)
+        return path if path.is_absolute() else (base / path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _is_dir(path: Path | None) -> bool:
+    try:
+        return path is not None and path.is_dir()
+    except (OSError, ValueError):
+        return False
+
+
+def _same(one: Path, other: Path) -> bool:
+    try:
+        return one.resolve() == other.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _without_dotgit(value: str) -> str:
+    """A worktree's path from the path of its .git, as git wrote it."""
+    for end in ("/.git", "\\.git"):
+        if value.endswith(end):
+            return value[:-len(end)]
+    return value
+
+
+def find_git(project: Path, note) -> tuple[Path, Path] | None:
+    """The project root's git directory and the common directory, where the
+    worktrees and the branches are. None when the project root holds no
+    ``.git``, or what it holds cannot be followed (a note says why)."""
+    dotgit = project / ".git"
+    skipped = "; sprint workspaces were not looked for"
+    try:
+        found = dotgit.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        if _is_link(dotgit):
+            note(str(dotgit), "git-unreadable", "a link that leads nowhere" + skipped)
+        return None
+    except (OSError, ValueError) as exc:
+        note(str(dotgit), "git-unreadable", f"cannot be read: {_reason(exc)}{skipped}")
+        return None
+    if stat.S_ISDIR(found.st_mode):
+        gitdir, named = dotgit, str(dotgit)
+    else:
+        text, fault = _git_line(dotgit)
+        if text is None or not text.startswith("gitdir:"):
+            note(str(dotgit), "git-file-malformed", (fault or "not of the form `gitdir: <path>`") + skipped)
+            return None
+        named = text[len("gitdir:"):].strip()
+        gitdir = _git_path(named, project)
+        if not _is_dir(gitdir):
+            note(str(dotgit), "git-dir-missing", f"it points to {named}, which is not a directory here{skipped}")
+            return None
+    if not _present(gitdir / "HEAD"):
+        note(str(dotgit), "git-dir-missing", f"{named} is not a git directory: it holds no HEAD{skipped}")
+        return None
+    common = gitdir
+    text, fault = _git_line(gitdir / "commondir")
+    if fault is not None:
+        note(str(gitdir / "commondir"), "git-file-malformed", fault + skipped)
+        return None
+    if text is not None:
+        common = _git_path(text, gitdir)
+        if not _is_dir(common):
+            note(str(gitdir / "commondir"), "git-dir-missing",
+                 f"it points to {text}, which is not a directory here{skipped}")
+            return None
+    return gitdir, common
+
+
+def _branches(common: Path, note) -> set[str]:
+    """The sprint branches: the loose refs under refs/heads/sprint/, and the
+    lines of packed-refs."""
+    found: set[str] = set()
+    loose = common / "refs" / "heads" / "sprint"
+    try:
+        entries = sorted(loose.iterdir()) if loose.is_dir() else []
+    except (OSError, ValueError) as exc:
+        note(str(loose), "git-unreadable", f"cannot be read: {_reason(exc)}")
+        entries = []
+    for entry in entries:
+        name = f"sprint/{entry.name}"
+        try:
+            if entry.is_file() and not entry.name.endswith(".lock") and SPRINT_BRANCH.match(name):
+                found.add(name)
+        except (OSError, ValueError):
+            continue
+    packed = common / "packed-refs"
+    raw, fault = _read_small(packed, PACKED_REFS_LIMIT)
+    if raw is None:
+        if fault is not None:
+            note(str(packed), "git-unreadable", f"{fault}; the branches only it names are left out")
+        return found
+    try:
+        lines = split_lines(raw.decode("utf-8-sig"))
+    except UnicodeDecodeError as exc:
+        note(str(packed), "git-unreadable", f"is not UTF-8 text (byte {exc.start}); the branches only it names "
+             "are left out")
+        return found
+    for line in lines:
+        match = PACKED_REF.match(line.strip())
+        if match and match.group(1).startswith(BRANCH_REF):
+            name = match.group(1)[len(BRANCH_REF):]
+            if SPRINT_BRANCH.match(name):
+                found.add(name)
+    return found
+
+
+def _branch_of(directory: Path, note, what: str) -> tuple[str | None, str | None] | None:
+    """The branch a working tree has checked out, read from its git
+    directory, and what holds it there when its HEAD is detached: "rebase"
+    or "bisect", as git counts a branch in either as checked out. None when
+    the HEAD file cannot be used, which a note says."""
+    file = directory / "HEAD"
+    text, fault = _git_line(file)
+    if text is None:
+        note(str(file), "git-file-malformed", f"{fault or 'is missing'}; {what} was left out")
+        return None
+    match = HEAD_REF.match(text)
+    if match:
+        ref = match.group(1)
+        return (ref[len(BRANCH_REF):] if ref.startswith(BRANCH_REF) else None), None
+    if not HEAD_HASH.match(text):
+        note(str(file), "git-file-malformed", f"neither `ref: <ref>` nor a commit; {what} was left out")
+        return None
+    for parts, busy in BUSY_FILES:
+        held, _ = _git_line(directory.joinpath(*parts))
+        if held is None:
+            continue
+        if held.startswith(BRANCH_REF):
+            return held[len(BRANCH_REF):], busy
+        if busy == "bisect" and not HEAD_HASH.match(held):
+            return held, busy  # BISECT_START holds a branch by its short name
+    return None, None
+
+
+def _places(project: Path, gitdir: Path, common: Path, note) -> list[dict]:
+    """Every working tree of the repository: its branch (None when it has
+    none checked out), what holds a detached HEAD on it, its kind (in place,
+    a worktree, one that is gone, locked or written on the other system),
+    the path as shown, and the path to look in, None when there is none."""
+    places: list[dict] = []
+
+    def add(got, where: str, path: str, tree: Path | None, locked: str | None = None) -> None:
+        places.append({"branch": got[0], "busy": got[1], "where": where, "path": path, "tree": tree,
+                       "locked": locked})
+
+    got = _branch_of(gitdir, note, "the project root")
+    if got is not None:
+        add(got, IN_PLACE, str(project), project)
+    linked = not _same(gitdir, common)
+    if linked and common.name == ".git":
+        # The project root is itself a linked worktree; the main one is common's parent.
+        got = _branch_of(common, note, "the main working tree")
+        if got is not None:
+            add(got, WORKTREE, str(common.parent), common.parent)
+    admin_root = common / "worktrees"
+    try:
+        admins = sorted(admin_root.iterdir()) if admin_root.is_dir() else []
+    except (OSError, ValueError) as exc:
+        note(str(admin_root), "git-unreadable", f"cannot be read: {_reason(exc)}")
+        admins = []
+    for admin in admins:
+        if not _is_dir(admin) or (linked and _same(admin, gitdir)):
+            continue
+        value, fault = _git_line(admin / "gitdir")
+        if value is None:
+            note(str(admin / "gitdir"), "git-file-malformed", f"{fault or 'is missing'}; this worktree was left out")
+            continue
+        got = _branch_of(admin, note, "this worktree")
+        if got is None:
+            continue
+        locked = (_git_line(admin / "locked")[0] or "") if _present(admin / "locked") else None
+        if _foreign(value):
+            # Written by git on the other system: shown as written, never looked at.
+            add(got, FOREIGN, _without_dotgit(value), None, locked)
+            continue
+        dotgit = _git_path(value, admin)
+        if dotgit is None:
+            add(got, LOCKED if locked is not None else PRUNABLE, _without_dotgit(value), None, locked)
+        elif _same(dotgit.parent, project):
+            add(got, IN_PLACE, str(project), project, locked)
+        elif _present(dotgit) and _is_dir(dotgit.parent):
+            add(got, WORKTREE, str(dotgit.parent), dotgit.parent, locked)
+        else:
+            # Git prunes a worktree whose .git is gone, unless it is locked.
+            add(got, LOCKED if locked is not None else PRUNABLE, str(dotgit.parent), None, locked)
+    return places
+
+
+def _map_docs(docs: Path, trees: list[Path]) -> Path | None:
+    """The docs directory's path inside the working tree it is in, the
+    deepest one (a worktree may sit inside the project root). None when it
+    is in none, or in a repository of its own inside one: then it is one
+    directory for every worktree, mapped into none."""
+    best = None
+    try:
+        docs_real = docs.resolve()
+        for tree in trees:
+            tree_real = tree.resolve()
+            if docs_real.is_relative_to(tree_real):
+                relative = docs_real.relative_to(tree_real)
+                if best is None or len(relative.parts) < len(best[1].parts):
+                    best = (tree_real, relative)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if best is None:
+        return None
+    tree_real, relative = best
+    for depth in range(len(relative.parts), 0, -1):
+        if _present(tree_real.joinpath(*relative.parts[:depth]) / ".git"):
+            return None
+    return relative
+
+
+def _branch_order(branch: str) -> tuple[int, str]:
+    number, slug = SPRINT_BRANCH.match(branch).groups()
+    return int(number), slug
+
+
+def sprint_workspaces(project: Path, docs: Path, adder, note) -> tuple[str | None, list[dict] | None]:
+    """The common git directory, or None when there is none to read, and an
+    entry for each sprint branch: where it is checked out, which of the
+    sprint's own docs are there, and, for a worktree, the check of its PLAN
+    and TASKS. The shared files of a worktree are stale copies: never read.
+    The entries are None when the refs are in a form this does not read."""
+    found = find_git(project, note)
+    if found is None:
+        return None, []
+    gitdir, common = found
+    if _is_dir(common / "reftable") or _git_line(gitdir / "HEAD")[0] == REFTABLE_HEAD:
+        note(str(common), "git-reftable", "the refs are in the reftable format, which this command does not read; "
+             "sprint workspaces were not looked for")
+        return str(common), None
+    places = _places(project, gitdir, common, note)
+    mapped = _map_docs(docs, [project] + [place["tree"] for place in places if place["tree"] is not None])
+    ours = [place for place in places if place["branch"] is not None and SPRINT_BRANCH.match(place["branch"])]
+    branches = _branches(common, note) | {place["branch"] for place in ours}
+    entries: list[dict] = []
+    for branch in sorted(branches, key=_branch_order):
+        number, slug = SPRINT_BRANCH.match(branch).groups()
+        own = {f"SPRINT{number}-{kind}-{slug}.md": kind for kind in SPRINT_KINDS}
+        for place in [place for place in ours if place["branch"] == branch] or [None]:
+            entry = {"branch": branch, "where": NOWHERE, "path": None, "busy": None, "locked": None, "docs": None,
+                     "docs_state": "not-read", "found": []}
+            entries.append(entry)
+            if place is None:
+                continue
+            entry.update(where=place["where"], path=place["path"], busy=place["busy"], locked=place["locked"])
+            tree = place["tree"]
+            if tree is None:
+                continue
+            if mapped is None:
+                entry["docs_state"] = "outside"
+                continue
+            there = tree / mapped
+            entry["docs"] = str(there)
+            if not _is_dir(there):
+                entry["docs_state"] = "no-directory"
+                continue
+            try:
+                listed = {item.name for item in there.iterdir()}
+            except (OSError, ValueError) as exc:
+                note(str(there), "git-unreadable", f"cannot be read: {_reason(exc)}")
+                entry["docs_state"] = "unreadable"
+                continue
+            entry["docs_state"] = "read"
+            entry["found"] = [kind for name, kind in own.items() if name in listed]
+            if _same(there, docs):
+                # The docs directory itself, checked above: in place, or named with --docs.
+                if place["where"] == IN_PLACE:
+                    note(str(docs), "shared-files-on-sprint-branch",
+                         f"the project root has {branch} checked out: the backlog, the deferred items and the "
+                         "index were read from that branch's copies, which may be stale; they are current on the "
+                         "default branch")
+                continue
+            plan = None
+            for name, kind in own.items():
+                if name not in listed or kind not in ("PLAN", "TASKS"):
+                    continue
+                file = str(there / name)
+                lines, fault = read_lines(there / name, there)
+                if fault is not None:
+                    adder(file)(None, *fault)
+                elif kind == "PLAN":
+                    check_plan(lines, adder(file))
+                    plan = plan_steps(lines)
+                else:
+                    check_tasks(lines, adder(file), plan)
+    return str(common), entries
+
+
 # --- The report ---------------------------------------------------------------
 
 def build_report(project: Path, docs: Path, docs_from: str, settings: dict, today: datetime.date) -> dict:
@@ -904,6 +1317,10 @@ def build_report(project: Path, docs: Path, docs_from: str, settings: dict, toda
         if lines is not None:
             check_index(lines, adder(AGENTS_FILE))
 
+    def note(file: str, rule: str, message: str) -> None:
+        notes.append({"file": file, "line": None, "rule": rule, "message": message})
+    git, workspaces = sprint_workspaces(project, docs, adder, note)
+
     # In the order the files were checked, and by line within a file.
     files = list(dict.fromkeys(violation["file"] for violation in violations))
     violations.sort(key=lambda violation: (files.index(violation["file"]), violation["line"] or 0))
@@ -919,6 +1336,8 @@ def build_report(project: Path, docs: Path, docs_from: str, settings: dict, toda
         "docs_from": docs_from,
         "settings": settings,
         "deferred": deferred,
+        "git": git,
+        "sprint_workspaces": workspaces,
         "violations": violations,
         "notes": notes,
         "summary": {
@@ -953,6 +1372,32 @@ def _json_escape(char: str) -> str:
     return f"\\u{0xD800 + (code >> 10):04x}\\u{0xDC00 + (code & 0x3FF):04x}"
 
 
+def _workspace_line(entry: dict) -> str:
+    """One sprint branch, on one line: where it is, and its docs there."""
+    branch = shown(entry["branch"])
+    if entry["where"] == NOWHERE:
+        return f"{branch}: checked out nowhere, a branch only; its docs were not read"
+    path = shown(entry["path"])
+    if entry["where"] == PRUNABLE:
+        return f"{branch}: worktree {path} is missing (git calls it prunable); its docs were not read"
+    if entry["where"] == LOCKED:
+        why = f"locked: {shown(entry['locked'])}" if entry["locked"] else "locked"
+        return f"{branch}: worktree {path} is missing ({why}); its docs were not read"
+    if entry["where"] == FOREIGN:
+        return f"{branch}: worktree {path} was written by git on another system; not looked at"
+    place = "in place" if entry["where"] == IN_PLACE else f"worktree {path}"
+    if entry["busy"] is not None:
+        place += f" (mid-{entry['busy']})"
+    state = entry["docs_state"]
+    if state == "outside":
+        return f"{branch}: {place}; the docs directory is outside the repository, one for every worktree"
+    if state == "no-directory":
+        return f"{branch}: {place}; no docs directory there"
+    if state == "unreadable":
+        return f"{branch}: {place}; its docs directory cannot be read"
+    return f"{branch}: {place}; docs there: {', '.join(entry['found']) or 'none'}"
+
+
 def render_text(report: dict) -> str:
     """The text report. It is made from the JSON report's content alone."""
     settings = report["settings"]
@@ -979,6 +1424,13 @@ def render_text(report: dict) -> str:
             out.append(f"  {label}: " + ("(missing)" if item[key] is None else shown(item[key])))
         out.append("  no check named" if item["check"] is None else f"  check: {shown(item['check'])}")
         out.append(f"  at: {shown(item['file'])}:{item['line']}")
+    if report["git"] is not None and report["sprint_workspaces"] is None:
+        out.append("")
+        out.append("Sprint workspaces: not looked for (see Notes)")
+    elif report["git"] is not None:
+        out.append("")
+        out.append(f"Sprint workspaces: {len(report['sprint_workspaces'])}")
+        out.extend(_workspace_line(entry) for entry in report["sprint_workspaces"])
     for title, key in (("Violations", "violations"), ("Notes", "notes")):
         out.append("")
         out.append(f"{title}: {summary[key]}")
@@ -1004,7 +1456,8 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     parser = _Parser(
         prog="check.py",
         allow_abbrev=False,
-        description="List the open deferred items and report format violations. It executes nothing.",
+        description="List the open deferred items and the sprint workspaces, and report format violations. "
+                    "It executes nothing.",
     )
     parser.add_argument("--project", metavar="DIR", help="the project root; without it, the working directory")
     parser.add_argument(
