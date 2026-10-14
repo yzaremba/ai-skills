@@ -1387,8 +1387,9 @@ class RepositoryCase(RenderCase):
             self.assertNotIn(str(support.REPOSITORY).encode("utf-8"), data)
             self.assertNotIn(str(self.root).encode("utf-8"), data)
 
-    # The roles that wait between their turns, on the user or on Coders.
-    CACHED = ("architect", "implementation-manager", "product-manager")
+    # The roles that wait between their turns, on the user or on Coders, and
+    # the two reviewers, whose long thinking outlasts five minutes.
+    CACHED = ("architect", "idea-reviewer", "implementation-manager", "plan-reviewer", "product-manager")
 
     def test_the_roles_that_wait_keep_their_context_cached_on_claude_code(self) -> None:
         where = Locations(home=self.home, clone=support.REPOSITORY)
@@ -1409,9 +1410,9 @@ class RepositoryCase(RenderCase):
                     self.assertNotIn("cacheTtl", found.text)
                     self.assertNotIn("experimental:", found.text)
 
-    def test_an_installed_home_gets_the_cache_key_in_three_files_and_no_other_change(self) -> None:
+    def test_an_installed_home_gets_the_cache_key_in_those_files_and_no_other_change(self) -> None:
         """The upgrade: a home rendered from the sources as they were before
-        three roles named a cache, then rendered from today's. The roles and
+        any role named a cache, then rendered from today's. The roles and
         entry parts, so the loaded roles' skills and the Codex profile are
         in the home too."""
         # Only what the sources are: every directory that holds a skill, the
@@ -1458,7 +1459,7 @@ class RepositoryCase(RenderCase):
         self.assertEqual(set(after), set(before))
         changed = {name for name in after if after[name] != before[name]}
         self.assertEqual(changed, {f".claude/agents/{name}.md" for name in self.CACHED})
-        self.assertEqual(report["counts"]["file_write"], 3)
+        self.assertEqual(report["counts"]["file_write"], len(self.CACHED))
         for name in changed:
             old, new = before[name].decode("utf-8"), after[name].decode("utf-8")
             self.assertEqual(new, old.replace("\n---\n", "\n" + CACHE_LINES + "---\n", 1))

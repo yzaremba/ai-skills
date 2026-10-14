@@ -403,10 +403,12 @@ python tools/setup/workflow_setup.py show roles --project DIR
 `show` prints each effective setting and the layer it came from; `show roles` adds the
 model and effort each role definition runs with on each provider.
 
-On Claude Code the definitions of the Product Manager, the Architect and the
-Implementation Manager also name the one-hour prompt cache (`cache = "long"` in their
-`role.toml`, written as `experimental.cacheTtl: 1h`): they wait between turns, on the
-user or on Coders, and a dispatched role is otherwise on the five-minute cache. A
+On Claude Code the definitions of the Product Manager, the Architect, the
+Implementation Manager and the Idea and Plan Reviewers also name the one-hour prompt
+cache (`cache = "long"` in their `role.toml`, written as `experimental.cacheTtl: 1h`):
+the first three wait between turns, on the user or on Coders, the reviewers can think
+longer than five minutes between two requests, and a dispatched role is otherwise on
+the five-minute cache. A
 one-hour cache write is billed at a higher rate, and Claude Code's own
 `subagentPromptCacheTtl` setting or `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` variable
 overrides the definition. `render` shows the cache beside the model and effort.
