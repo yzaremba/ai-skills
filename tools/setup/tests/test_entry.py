@@ -711,6 +711,44 @@ class NoRolesCase(EntryCase):
         self.assertIn("6 kept", report["summary"])
 
 
+class LinkedSkillDirectoryCase(EntryCase):
+    """The owner replaced setup's skill directory of a loaded role by a link
+    to a directory of theirs, with an empty ``agents`` in it: nothing of
+    theirs is removed through it, by either way a directory goes."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        if not hasattr(os, "symlink") or os.name == "nt":
+            self.skipTest("a symlink is made here")
+        self.ok()
+        self.skill = self.claude_skills / "lead"
+        self.mine = self.root / "mine"
+        (self.mine / "agents").mkdir(parents=True)
+        (self.mine / "SKILL.md").write_bytes((self.skill / "SKILL.md").read_bytes())
+        shutil.rmtree(self.skill)
+        os.symlink(self.mine, self.skill)
+
+    def no_roles(self) -> str:
+        code, out, err = self.render("--no-roles", "--follow-config-symlinks")
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertTrue((self.mine / "agents").is_dir(), out)
+        self.assertNotIn("remove directory home:.claude/skills/lead/agents", out.splitlines())
+        return out
+
+    def test_the_directories_a_removal_empties(self) -> None:
+        out = self.no_roles()
+        self.assertIn("is a link now, and setup removes nothing through a link", out)
+
+    def test_the_directories_the_record_still_lists(self) -> None:
+        record = json.loads(self.manifest_file.read_text(encoding="utf-8"))
+        for key in list(record["entries"]):
+            if key.startswith("home:.claude/skills/lead/") and record["entries"][key].get("kind") != "directory":
+                del record["entries"][key]
+        self.manifest_file.write_bytes(json.dumps(record).encode("utf-8"))
+        out = self.no_roles()
+        self.assertIn("is a link now, and setup removes nothing through a link", out)
+
+
 class EditedCase(EntryCase):
     def setUp(self) -> None:
         super().setUp()

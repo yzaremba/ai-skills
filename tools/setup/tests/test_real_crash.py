@@ -33,6 +33,13 @@ usual ones):
     7  render --apply-codex-settings --worktree-root ~/wt
     8  uninstall --project P, after a full install
     9  uninstall, after a full install
+    10 render, after Codex wrote into the Codex profile (trust answers and a
+       flag of its interface) and a setting changed the profile's text
+    11 uninstall, after Codex wrote into the profile: setup's part is taken
+       out and what Codex added is left
+    12 render, where an uninstall left what Codex added alone in the profile:
+       setup's text is written before it
+    13 render --no-roles, after Codex wrote into the profile
 
 For a scenario and a point N: the starting tree is put back from a
 template, the command is stopped after its N-th change, and then one of
@@ -56,7 +63,10 @@ then of the home); another writing command. Then always the whole way back:
       it (setup's own state aside: a stamp and a token differ);
     - at the end the tree is the one before setup ever ran, exactly: every
       path, every link's text, every byte, on POSIX every permission bit;
-      so no ``.wfsetup-*`` name, no directory setup made, no state directory;
+      so no ``.wfsetup-*`` name, no directory setup made, no state directory.
+      In scenarios 10 to 13 one more file is there: the profile, holding
+      what Codex added and nothing else; and right after the stop what
+      Codex added is in the profile or in a backup a record lists;
     - the clone the children ran from is as it was.
 
 The other writing command
@@ -173,6 +183,18 @@ class StoppedCommands(RealCase):
 
     def test_9_uninstall(self) -> None:
         self.stopped_everywhere("uninstall")
+
+    def test_10_render_after_codex_wrote_into_the_profile(self) -> None:
+        self.stopped_everywhere("render-carry")
+
+    def test_11_uninstall_after_codex_wrote_into_the_profile(self) -> None:
+        self.stopped_everywhere("uninstall-carry")
+
+    def test_12_render_over_what_an_uninstall_left_in_the_profile(self) -> None:
+        self.stopped_everywhere("render-prepend")
+
+    def test_13_no_roles_after_codex_wrote_into_the_profile(self) -> None:
+        self.stopped_everywhere("no-roles-carry")
 
     def test_every_scenario_has_a_test(self) -> None:
         names = {

@@ -157,7 +157,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import blocks, fileops, fsio, homes, locations, paths, tomlio
+from . import blocks, carried, fileops, fsio, homes, locations, paths, tomlio
 from .errors import SetupError
 
 # The two blocks of setup's in the user's Codex ``config.toml``.
@@ -838,6 +838,13 @@ def fill(run: Any) -> None:
         elif item is not None and why and item.status == render.REMOVE:
             item.says = f"removed, with nothing else in it: {why}"
     run.notes.extend(f"codex settings: {line}" for line in found.lines)
+    # Setup's own profile files may carry the key after setup's part.
+    for subject, _, keys in carried.parts(run.record):
+        if SANDBOX_KEY in keys:
+            run.notes.append(
+                f"codex settings: {subject} sets {SANDBOX_KEY} after setup's part, so a session started with that "
+                "profile uses the older sandbox settings and ignores the permission profile"
+            )
     run.notes.extend(_taken_out(facts.held, want, found))
     run.notes.extend(found.printed)
     if want.root is not None and not want.root.startswith("~") and not os.path.isdir(want.root):

@@ -106,7 +106,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from . import blocks, definitions, dictionary, entry, fileops, fsio, homes, jsonkeys, modellist, paths
+from . import blocks, carried, definitions, dictionary, entry, fileops, fsio, homes, jsonkeys, modellist, paths
 from . import profiles, render, settings, validate
 from . import discovery
 from . import codexsettings
@@ -235,8 +235,9 @@ class Probe(render.Run):
         super().__init__(found, sources, None, follow=True)
         self.inputs: dict[str, str] = {}
 
-    def file(self, provider: Any, place: Any, name: str, text: str, inputs: str, detail: Any = None) -> render.Item:
-        item = super().file(provider, place, name, text, inputs, detail)
+    def file(self, provider: Any, place: Any, name: str, text: str, inputs: str, detail: Any = None,
+             carry: bool = False) -> render.Item:
+        item = super().file(provider, place, name, text, inputs, detail, carry)
         if item.key is not None:
             self.inputs[item.key] = inputs
         return item
@@ -405,7 +406,9 @@ def _survey(context: Context) -> list[Fact]:
                 facts.append(Fact(GONE, key, None, "the file setup wrote is gone", generated))
             elif data is None:
                 facts.append(Fact(EDITED, key, None, f"no longer a file: {there} is there", generated))
-            elif generated and fsio.sha256(data) != found.get("sha256"):
+            elif generated and fsio.sha256(data) != found.get("sha256") and not carried.unchanged(data, found):
+                # What Codex or the user added to the Codex profile after
+                # setup's part is no edit: ``carried``.
                 facts.append(Fact(EDITED, key, None, "edited by hand since setup wrote it", generated))
             continue
         if kind == "text":
@@ -514,7 +517,7 @@ def check_drift(context: Context) -> list[Finding]:
                 findings.append(warning(f"{subject}: {again}", subject))
     for item in probe.stale:
         subject = _item_subject(item)
-        if item.status == render.REMOVE:
+        if item.status in (render.REMOVE, render.RELEASE):
             findings.append(warning(f"{subject}: {item.says}; run render", subject))
         elif item.status == render.KEPT:
             findings.append(warning(f"{subject}: {item.says}", subject))
@@ -537,6 +540,22 @@ def check_hand_edits(context: Context) -> list[Finding]:
             findings.append(warning(f"{fact.subject}: {detail}", fact.subject))
         elif fact.state == UNREADABLE:
             findings.append(warning(f"{fact.subject}: {fact.detail}", fact.subject))
+    # What follows setup's part of a Codex profile is no edit; a key there
+    # that Codex does not write itself is named, and a risky one warned of.
+    for key, _, keys in carried.parts(context.record):
+        extra = carried.named(keys)
+        for name in extra:
+            if name in carried.RISKS:
+                findings.append(warning(
+                    f"{key}: {name} is set after setup's part: {carried.RISKS[name]}. render keeps it; remove it "
+                    "from the file if the role should run as setup wrote it", key,
+                ))
+        plain = [name for name in extra if name not in carried.RISKS]
+        if plain:
+            findings.append(info(
+                f"{key}: after setup's part it also holds {', '.join(plain)}, which Codex does not write there "
+                "itself; render keeps it as yours", key,
+            ))
     return findings
 
 
@@ -1078,8 +1097,22 @@ def check_codex_settings(context: Context) -> list[Finding]:
         findings.append(fine(f"{THREADS_KEY} = {threads}", THREADS_KEY))
 
     sandbox, permissions = found.values[SANDBOX_KEY], found.values[PERMISSIONS_KEY]
+    # Setup's own profile files may carry either key after setup's part
+    # (``carried``): a session started with the profile then has it.
+    try:
+        profiles_found = carried.parts(context.record)
+    except SetupError:
+        profiles_found = []
+    for key_name in (SANDBOX_KEY, PERMISSIONS_KEY):
+        for subject, _, keys in profiles_found:
+            if key_name in keys:
+                value = _plain(keys[key_name]) or f"a {type(keys[key_name]).__name__}"
+                findings.append(info(
+                    f"{subject} sets {key_name} = {value} after setup's part: a session started with that profile "
+                    f"has it, whatever {found.path.name} says", key_name,
+                ))
     if sandbox is UNSET:
-        findings.append(info(f"{SANDBOX_KEY}: unset", SANDBOX_KEY))
+        findings.append(info(f"{SANDBOX_KEY}: unset in {found.path.name}", SANDBOX_KEY))
     else:
         findings.append(info(
             f"{SANDBOX_KEY} = {shown(SANDBOX_KEY)}: while this key is set in any loaded config, Codex uses the older "
@@ -1087,7 +1120,7 @@ def check_codex_settings(context: Context) -> list[Finding]:
             "changes or removes the key", SANDBOX_KEY,
         ))
     if permissions is UNSET:
-        findings.append(info(f"{PERMISSIONS_KEY}: unset", PERMISSIONS_KEY))
+        findings.append(info(f"{PERMISSIONS_KEY}: unset in {found.path.name}", PERMISSIONS_KEY))
     else:
         ignored = "" if sandbox is UNSET else f"; not used while {SANDBOX_KEY} is set"
         findings.append(info(f"{PERMISSIONS_KEY} = {shown(PERMISSIONS_KEY)}{ignored}", PERMISSIONS_KEY))

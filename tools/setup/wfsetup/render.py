@@ -79,8 +79,13 @@ The project (``--project``)
 Directories
     A directory setup created is removed again when a removal of this run
     leaves it empty: a loaded role's skill directory, a project's
-    ``.codex``. One that holds anything else stays, and so does a place of
-    a home (its skills, agents and rules directories), empty or not.
+    ``.codex``; and so is one the record lists below a place this run
+    writes, once nothing is in it (a stopped run may have emptied it).
+    One that holds anything else stays, and so does a place of a home
+    (its skills, agents and rules directories), empty or not, and one
+    below a directory of setup's that is a link now. These removals are
+    a clean-up: one the system refuses because the directory is no
+    longer empty or is in use is skipped with a note, and the run goes on.
 
     A part that cannot make what it installs says so with ``run.fail``; the
     run then stops before anything is written, like a conflict.
@@ -95,6 +100,20 @@ What ``Run.file`` decides for one generated file, in this order
     edited       setup's file, edited by hand since. It is kept and reported,
                  with what to do; with ``--overwrite-edited`` it is backed up
                  and replaced (``replace``)
+    The Codex profile is asked for with ``carry``: Codex writes into it
+    (its trust answers, flags of its interface), and what follows setup's
+    part is not setup's (``carried``). While setup's own part is as setup
+    wrote it and nothing after it sets one of setup's keys, the file is
+    not edited, whatever follows; it is written again with that after
+    the new text. Replaced on request, an edited profile keeps every key
+    of it that is not setup's. A file there that setup did not write and
+    whose keys are all ones Codex writes itself (what ``uninstall``
+    leaves) is written over, with setup's text before what it holds, and
+    not a conflict; any other file there is. A key after setup's part
+    that Codex does not write itself is named in the profile's line.
+    The record keeps the hash of setup's own part beside the hash of the
+    whole file. A stale profile with something after setup's part is
+    ``release``: setup's part is taken out and the rest left, as yours.
     ``inputs`` goes into the record with the file's hash. It starts with
     ``GENERATED_PREFIX``, which is how the stale sweep knows a file is one
     ``render`` generates and not, say, a settings file ``init`` wrote.
@@ -162,7 +181,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from . import blocks, definitions, entry, fileops, fsio, homes, jsonkeys, paths
+from . import blocks, carried, definitions, entry, fileops, fsio, homes, jsonkeys, paths
 from . import codexsettings
 from . import migrate
 from .errors import EXIT_ERROR, SetupError
@@ -180,6 +199,7 @@ REPLACE = "replace"        # a generated file edited by hand, replaced on reques
 EDITED = "edited"          # a generated file edited by hand, kept
 REMOVE = "remove"          # stale, still as setup made it
 FORGET = "forget"          # stale and gone: only the record changes
+RELEASE = "release"        # stale; setup's part taken out, the rest left as the user's
 KEPT = "kept"              # stale, and changed by the user
 SKIPPED = "skipped"
 NEEDS_FLAG = "needs-flag"
@@ -461,9 +481,11 @@ class Run:
         self.errors.extend(line for line in lines if line not in self.errors)
 
     def file(self, provider: homes.Provider, place: homes.Place, name: str, text: str, inputs: str,
-             detail: dict[str, Any] | None = None) -> Item:
+             detail: dict[str, Any] | None = None, carry: bool = False) -> Item:
         """Ask for the generated file ``place/name`` to hold ``text``; see
-        the module. ``inputs`` is the digest of what the text was made from."""
+        the module. ``inputs`` is the digest of what the text was made from.
+        With ``carry`` the file keeps what Codex or the user added after
+        setup's part (the Codex profile, see ``carried``)."""
         if not inputs.startswith(GENERATED_PREFIX):
             raise ValueError(f"{name}: the inputs digest of a generated file starts with {GENERATED_PREFIX}")
         path = place.path / name
@@ -498,6 +520,11 @@ class Run:
         except SetupError as exc:
             return settle(ERROR, exc.lines[0])
         policy = fileops.OWN
+        carrying: dict[str, Any] = {}
+        if carry:
+            # Setup's own part is ``text``; what the file there carries
+            # that is not setup's follows it (``carried``).
+            carrying["own_sha256"] = fsio.sha256(data)
         if seen.kind == fsio.ABSENT:
             if known not in (None, "file", "removed-file"):
                 return settle(CONFLICT, f"{path}: the record holds it as {known}, not as a file setup generates")
@@ -506,11 +533,43 @@ class Run:
             if not self.follow:
                 return settle(NEEDS_FLAG, f"{path}: a link to {seen.target}; give {FOLLOW_OPTION} to write where it leads")
             settle(UPDATE, "write where the link leads")
+            if carry:
+                # Where the link leads is setup's file: the same rules as
+                # for a file at the path.
+                try:
+                    real = Path(os.path.realpath(path))
+                    held = fsio.read_bytes(real) if os.path.isfile(real) else None
+                except SetupError as exc:
+                    return settle(ERROR, exc.lines[0])
+                if held is not None and known == "file":
+                    done = self._carry(item, path, text, held, base or {})
+                    if done is None:
+                        return item
+                    text, policy = done
+                    item.says += " (where the link leads)"
+                    carrying["made_from"] = fsio.sha256(held)
         elif seen.kind != fsio.FILE:
             return settle(CONFLICT, f"{path}: a {seen.kind} is there, where setup would write a file")
+        elif carry and known is None and carried.only_codexs(there or b""):
+            # What ``uninstall`` (or a sweep) left of setup's file: the part
+            # that was not setup's, alone. Setup's text goes before it again.
+            try:
+                keep = carried.tail_text(b"\n" + carried.left((there or b"").removeprefix(b"\xef\xbb\xbf")))
+                text = carried.join(text, keep)
+            except SetupError as exc:
+                return settle(ERROR, f"{path}: {exc.lines[0]}")
+            settle(CREATE, f"write before what the file there holds, which is kept ({carried.WHAT})")
+            policy = fileops.ANY
+            carrying["made_from"] = fsio.sha256(there or b"")
         elif known != "file":
             what = "setup did not write it" if known is None else f"the record holds it as {known}"
             return settle(CONFLICT, f"{path}: a file is there, and {what}")
+        elif carry:
+            done = self._carry(item, path, text, there or b"", base or {})
+            if done is None:
+                return item
+            text, policy = done
+            carrying["made_from"] = fsio.sha256(there or b"")
         elif there == data:
             settle(UP_TO_DATE, "as generated")
         elif fsio.sha256(there or b"") != (base or {}).get("sha256"):
@@ -526,8 +585,48 @@ class Run:
             settle(UPDATE, "write again: its sources or settings changed")
         # An up-to-date file is asked for as well: the plan checks it against
         # the disk once more, and brings the record's digest up to date.
-        self.plan.write_file(path, text, inputs=inputs, replace=policy)
+        item.size = len(text.encode("utf-8"))
+        self.plan.write_file(path, text, inputs=inputs, replace=policy, **carrying)
         return item
+
+    def _carry(self, item: Item, path: Path, text: str, there: bytes,
+               base: dict[str, Any]) -> tuple[str, str] | None:
+        """For ``file``: setup's file that carries a part that is not
+        setup's. Returns the text to write, setup's ``text`` with that part
+        after it, and the plan's policy; None when the item is settled
+        without a write (kept, or an error)."""
+        tail = carried.split(there, carried.own_hash(base))
+        try:
+            if tail is not None:
+                # Setup's part is as setup wrote it: whatever follows it is
+                # Codex's or the user's, and no edit of setup's file.
+                keep = carried.tail_text(tail)
+                whole = carried.join(text, keep)
+                kept = f"; {carried.WHAT} kept" if keep else ""
+                kept += carried.said(carried.named(carried.tail_keys(tail)))
+                if there == whole.encode("utf-8"):
+                    item.status, item.says = UP_TO_DATE, f"as generated{kept}"
+                else:
+                    item.status, item.says = UPDATE, f"write again: its sources or settings changed{kept}"
+                return whole, fileops.OWN
+            if not self.overwrite:
+                item.status, item.says = EDITED, (
+                    f"edited by hand since setup wrote it, and kept; {OVERWRITE_OPTION} backs it up and replaces "
+                    "it, keeping every key of it that is not setup's, or remove the file and run render again"
+                )
+                return None
+            keep, why = carried.extracted(there, text)
+            whole = carried.join(text, keep)
+        except SetupError as exc:
+            item.status, item.says = ERROR, f"{path}: {exc.lines[0]}"
+            return None
+        says = "edited by hand since setup wrote it; backed up and replaced"
+        if keep:
+            says += ", and its keys that are not setup's kept"
+        if why:
+            says += f"; {why}"
+        item.status, item.says = REPLACE, says
+        return whole, fileops.EDITED
 
     # --- Setup's part of a file the project owns ------------------------------
 
@@ -833,9 +932,28 @@ class Run:
             item.status, item.says = ERROR, exc.lines[0]
             return
         recorded = entry.get("sha256")
+        # A file that carries a part that is not setup's (``carried``):
+        # what follows setup's own part, while that part is as setup wrote it.
+        tail = None if there is None else carried.split(there, carried.own_hash(entry))
         if seen.kind == fsio.ABSENT:
             item.status, item.says = FORGET, "no longer generated and no longer there; taken out of the record"
             self.plan.remove_file(path)
+            self.emptied(path)
+        elif there is not None and tail and carried.left(tail).strip():
+            item.status = RELEASE
+            item.says = (
+                f"no longer generated; setup's part is taken out, and the file is left holding {carried.WHAT}, "
+                "as yours"
+            )
+            self.plan.release_file(path, carried.left(tail), expect_sha256=fsio.sha256(there))
+        elif there is not None and tail is None and carried.own_hash(entry) and carried.no_setup_key(there):
+            # Its owner took setup's part out: what is left is theirs.
+            item.status = RELEASE
+            item.says = "no longer generated, and setup's part is no longer in it; left as it is, as yours"
+            self.plan.release_file(path, there, expect_sha256=fsio.sha256(there))
+        elif there is not None and tail is not None:
+            item.says = "no longer generated; it still holds what setup wrote, so it is removed"
+            self.plan.remove_file(path, expect_sha256=fsio.sha256(there))
             self.emptied(path)
         elif there is not None and isinstance(recorded, str) and fsio.sha256(there) == recorded:
             item.says = "no longer generated; it still holds what setup wrote, so it is removed"
@@ -844,6 +962,15 @@ class Run:
         else:
             what = "it was edited since setup wrote it" if seen.kind == fsio.FILE else f"a {seen.kind} is there"
             item.status, item.says = KEPT, f"no longer generated, and {what}; kept, it is yours"
+
+    def _writes_into(self, directory: Path) -> bool:
+        """Whether this run writes into the place ``directory`` as it is."""
+        if not _is_directory(directory):
+            return False
+        standing = self.standing(directory)
+        if standing.kind == homes.UNKNOWN or not standing.writes or (standing.through_link and not self.follow):
+            return False
+        return self.in_clone(directory) is None
 
     def finish(self) -> None:
         """After the sweep: the project's ignore block (R6.6), and the
@@ -880,12 +1007,41 @@ class Run:
                 if ident in places:
                     break
                 asked.setdefault(ident, parent)
+        # A directory setup created below a place this run writes, which the
+        # record still lists: a run stopped after it emptied the directory
+        # and recorded that has left no stale entry that leads here. The
+        # plan removes it only when nothing is left in it.
+        writable = [
+            paths.fold(paths.absolute(place.path)) for provider in self.homes.providers for place in provider.places
+            if self._writes_into(place.path)
+        ]
+        for key, entry in self.record.entries.items():
+            if entry.get("kind") != "directory" or key.partition(":")[0] == fileops.PROJECT:
+                continue
+            try:
+                path = Path(os.path.abspath(self.roots.path(key)))
+            except SetupError:
+                continue
+            ident = paths.fold(path)
+            if ident in places or not _is_directory(path):
+                continue
+            if any(ident.startswith(place + os.sep) for place in writable):
+                asked.setdefault(ident, path)
         # A directory before its parent: the plan empties them in this order.
         for parent in sorted(asked.values(), key=lambda path: -len(path.parts)):
-            self.plan.remove_directory(parent)
+            # A clean-up: refused as not empty or in use, it is skipped.
+            self.plan.remove_directory(parent, optional=True)
 
 
 # --- The parts ----------------------------------------------------------------
+
+def _is_directory(path: Path) -> bool:
+    """A directory, and no link to one; False where it cannot be looked at."""
+    try:
+        return fsio.look(path).kind == fsio.DIRECTORY
+    except SetupError:
+        return False
+
 
 def _has_place(provider: homes.Provider, name: str) -> bool:
     return any(place.name == name for place in provider.places)
@@ -1082,9 +1238,10 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
             place = provider.place(homes.PROFILES)
             for one in made:
                 if one.kind == entry.PROFILE:
+                    # What Codex writes into the profile after setup's part: carried over.
                     item = run.file(provider, place, one.name, one.text, one.inputs, detail={
                         "entry": one.kind, "role": one.role, "model": one.model, "effort": one.effort,
-                    })
+                    }, carry=True)
                     _point(run, name, "start", one.role, entry.start_command(name, one.role), item,
                            model=one.model, effort=one.effort)
 
@@ -1318,6 +1475,7 @@ def _report(run: Run, result: fileops.Result | None, errors: list[str], dry_run:
         "file_write": _count(run.items, *_WRITES, kind=FILE),
         "file_up_to_date": _count(run.items, UP_TO_DATE, kind=FILE),
         "file_remove": _count(run.stale, REMOVE, kind=FILE),
+        "file_release": _count(run.stale, RELEASE, kind=FILE),
         "edited": _count(run.items, EDITED),
         # A project's default: the key and the block.
         "default_write": _count(run.items, *_WRITES, kind=KEY) + _count(run.items, *_WRITES, kind=BLOCK),
@@ -1394,7 +1552,8 @@ def _summary(report: dict[str, Any]) -> str:
     if counts["edited"]:
         left.append(f"{counts['edited']} edited by hand and kept, which {OVERWRITE_OPTION} would replace")
     tail = "".join(f"; {text}" for text in left)
-    files = counts["file_write"] or counts["file_remove"]
+    files = counts["file_write"] or counts["file_remove"] or counts.get("file_release")
+    released = counts.get("file_release") or 0
     defaults = counts.get("default_write") or counts.get("default_remove")
     if report["errors"]:
         stopped = []
@@ -1415,6 +1574,8 @@ def _summary(report: dict[str, Any]) -> str:
     made = f"{_plural(counts['create'], 'link')} created{instead}, {counts['remove']} removed"
     if files:
         made += f"; {_plural(counts['file_write'], 'file')} written, {counts['file_remove']} removed"
+        if released:
+            made += f", {released} left as yours with setup's part taken out"
     if defaults:
         made += f"; {_plural(counts['default_write'], 'project default')} set, {counts['default_remove']} removed"
     codex = counts.get("codex_settings_write") or counts.get("codex_settings_remove")
@@ -1425,6 +1586,8 @@ def _summary(report: dict[str, Any]) -> str:
         made = f"would create {_plural(counts['create'], 'link')}{instead} and remove {counts['remove']}"
         if files:
             made += f", write {_plural(counts['file_write'], 'file')} and remove {counts['file_remove']}"
+            if released:
+                made += f", and take setup's part out of {released}, left as yours"
         if defaults:
             made += f", set {_plural(counts['default_write'], 'project default')} and remove {counts['default_remove']}"
         if codex:
@@ -1436,7 +1599,7 @@ def _summary(report: dict[str, Any]) -> str:
 
 _WORDS = {
     UP_TO_DATE: "up to date", CREATE: "create", UPDATE: "update", REPLACE: "replace", EDITED: "kept",
-    REMOVE: "remove", FORGET: "forget", KEPT: "kept",
+    REMOVE: "remove", FORGET: "forget", KEPT: "kept", RELEASE: "left as yours",
     SKIPPED: "skipped", NEEDS_FLAG: f"skipped, needs {FOLLOW_OPTION}", CONFLICT: "conflict", ERROR: "error",
 }
 

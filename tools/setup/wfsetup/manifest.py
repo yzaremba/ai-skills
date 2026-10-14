@@ -56,12 +56,17 @@ nothing that merely looks like one.
                                               of what was there, put back
                                               when the link goes
     file          sha256, inputs, original,   a file setup wrote whole.
-                  rewritten                   ``rewritten``, true once setup
+                  rewritten, own_sha256       ``rewritten``, true once setup
                                               wrote it over a version its
                                               owner had edited (a settings
                                               file): it then holds what its
                                               owner put there, whatever its
-                                              hash says
+                                              hash says. ``own_sha256``, the
+                                              hash of setup's own part of a
+                                              Codex profile, whose file also
+                                              carries what Codex or the user
+                                              added after it (``carried``);
+                                              no other entry holds it
     text          sha256, created, original, syntax, blocks, removed_lines
     json          sha256, created, original, keys
     removed-file  original                    a user's file setup removed
@@ -172,6 +177,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from . import fsio, paths
+from .carried import PROFILE_INPUTS
 from .errors import SetupError
 
 SCHEMA_VERSION = 1
@@ -372,6 +378,11 @@ def entry_fault(key: str, entry: Any) -> str | None:
             return "its inputs digest is not text"
         if "rewritten" in entry and not isinstance(entry["rewritten"], bool):
             return "its rewritten mark is not true or false"
+        own = entry.get("own_sha256")
+        if "own_sha256" in entry and (not isinstance(own, str) or not _SHA256.fullmatch(own)):
+            return "the hash of setup's own part is not a hash"
+        if "own_sha256" in entry and not str(entry.get("inputs") or "").startswith(PROFILE_INPUTS):
+            return "it holds the hash of setup's own part, which only a Codex profile's entry holds"
         return _hash_fault(entry) or _original_fault(entry, key)
     if kind in ("text", "json"):
         if "created" in entry and not isinstance(entry["created"], bool):

@@ -86,6 +86,7 @@ For the crash tests only
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import os
 import re
@@ -834,11 +835,21 @@ def own_directory_mode(path: Path) -> int | None:
     return None if mode == 0o777 & ~mask else mode
 
 
+class DirectoryInUse(SetupError):
+    """A directory the system would not remove because something is in it
+    or it is in use (a mount point): another program wrote into it."""
+
+
+# What the system says of a directory that is not empty, or is in use.
+_IN_USE = {errno.ENOTEMPTY, errno.EEXIST, errno.EBUSY}
+
+
 def remove_directory(path: Path) -> None:
     try:
         _rmdir(path)
     except OSError as exc:
-        raise SetupError(f"{path}: the directory cannot be removed: {paths.reason(exc)}") from None
+        kind = DirectoryInUse if exc.errno in _IN_USE else SetupError
+        raise kind(f"{path}: the directory cannot be removed: {paths.reason(exc)}") from None
 
 
 def remove_file(path: Path) -> None:

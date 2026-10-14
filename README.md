@@ -453,6 +453,15 @@ and each skill's `SKILL.md`.
   where the file sets no limit.
 - **Codex reads a project's `.codex/config.toml` only in a trusted project.** In an
   untrusted one the Manager default does nothing on Codex.
+- **Codex writes into the profile file.** Started with `codex --profile manager`,
+  Codex adds to `~/.codex/manager.config.toml` what you do in it: the answer to "trust
+  this project?" as a `[projects."<path>"]` table, flags of its interface. What follows
+  setup's part is yours: `render` carries it over each time it writes the profile,
+  `doctor` does not count it as a hand edit unless it sets one of setup's keys, and
+  `uninstall` takes setup's part out and leaves the file holding the rest. Keys Codex
+  writes itself (`projects`, `notice`) pass without a word; any other key there is
+  named, and `doctor` warns of one that changes what the role may do, such as
+  `sandbox_mode` or `approval_policy`.
 - **Discovery cannot be shown for everything.** No provider output that was found lists
   Codex's role definitions, and Claude Code lists nothing without a session: `doctor`
   reports those items as unproven. `doctor --prove-discovery` starts one session for

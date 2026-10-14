@@ -17,6 +17,10 @@ What is undone
 
       - a link is removed if it still points where setup pointed it;
       - a generated file is removed if it still holds what setup wrote;
+        a Codex profile that also holds what Codex or you added after
+        setup's part (Codex writes your answer to "trust this project?"
+        and flags of its interface there) loses setup's keys and is left
+        holding the rest, as yours;
       - a file of yours that setup edited gets back, byte for byte, what it
         held before, if nothing changed it since. If it was changed, setup's
         blocks and keys are taken out, the lines setup removed are put back

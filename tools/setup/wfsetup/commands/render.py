@@ -112,6 +112,11 @@ Entry points. A role is given to a session in one of two ways, by "load" and
              <role>.config.toml in the Codex home, a layer over config.toml
              there. It holds model, model_reasoning_effort and
              developer_instructions. The user's config.toml is not touched.
+             Codex writes into that file, after setup's part: the answer
+             to "trust this project?" as a [projects."<path>"] table,
+             flags of its interface. render carries whatever follows
+             setup's part over each time it writes the file, and it counts
+             as no hand edit unless it sets one of setup's keys.
 
 A loaded role and a long session. After a compaction Claude Code re-attaches
 an invoked skill "keeping the first 5,000 tokens of each", and "Re-attached

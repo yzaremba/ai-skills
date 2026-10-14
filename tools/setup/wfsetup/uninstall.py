@@ -29,6 +29,17 @@ What is kept, and why (``report["kept"]``; the entry stays in the record)
 What is left (``report["left"]``; the user's from now on, no entry stays)
     - a directory setup created that holds something of the user's;
     - a key of a JSON file whose value was changed since setup set it;
+    - a Codex profile that holds, after setup's part as setup wrote it,
+      what Codex or the user added (its trust answers, flags of its
+      interface; see ``carried``): setup's part is taken out and the file
+      is left holding the rest. That is Codex's and the user's, like the
+      rest of a file of the user's that setup edited, so it is not
+      removed; keeping the whole file instead would leave setup's
+      instructions in effect for ``codex --profile`` and the uninstall
+      unfinished. It is said once, here, and not as restored. A later
+      ``render`` takes the file up again and writes setup's keys before
+      what it holds. A profile setup's part is no longer in at all is
+      left as it is;
     - the settings file ``init`` wrote, once it holds anything its owner
       put there, and with ``keep_settings`` in every case; see below.
 
@@ -324,6 +335,19 @@ def _names(line: str, key: str) -> bool:
     )
 
 
+def _without(lines: list[str], keys: set[str]) -> list[str]:
+    """``lines`` without the change of a file whose key is in ``keys``, and
+    without that change's detail lines."""
+    kept: list[str] = []
+    dropping = False
+    for line in lines:
+        if not line.startswith(" "):
+            dropping = any(_names(line, key) for key in keys)
+        if not dropping:
+            kept.append(line)
+    return kept
+
+
 def _heads(lines: list[str]) -> int:
     return sum(1 for line in lines if not line.startswith(" "))
 
@@ -488,6 +512,9 @@ def execute(found: homes.Homes, *, project: bool = False, dry_run: bool = False,
         removed, restored, forgotten, said = _groups(result.lines if result.changed else [])
         # What is left to the user is said once, under its own heading.
         forgotten = [line for line in forgotten if line.removeprefix("update record ") not in left_keys]
+        # A file left with setup's part taken out (a Codex profile with what
+        # Codex or the user added after it) is said there, not as restored.
+        restored = _without(restored, left_keys)
         if dry_run and settings_key is not None:
             # Before it goes, the one file of the plan the user may have
             # meant to keep is said to be keepable.

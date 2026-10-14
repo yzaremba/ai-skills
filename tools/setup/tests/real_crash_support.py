@@ -80,6 +80,28 @@ MIGRATE = ("render", "--migrate-v1", *STALE)
 CODEX = ("--apply-codex-settings", "--worktree-root", "~/wt")
 FULL_INSTALL = (INIT_USER, MIGRATE, INIT_PROJECT, ("render", "--project", P, *CODEX))
 
+# What Codex (0.162.1) adds to the profile it was started with: a trust
+# answer, with a Windows path among them, and a flag of its interface.
+PROFILE = ".codex/lead.config.toml"
+ADDED = (
+    b'\n[projects."/srv/work/alpha"]\ntrust_level = "trusted"\n'
+    b"\n[projects.'C:\\work\\beta']\ntrust_level = \"trusted\"\n"
+    b"\n[notice]\nhide_full_access_warning = true\n"
+)
+
+
+def add_to_profile(world: "World") -> None:
+    """A step of a preparation: Codex writes into the profile."""
+    path = world.home / PROFILE
+    path.write_bytes(path.read_bytes() + ADDED)
+
+
+def raise_effort(world: "World") -> None:
+    """A step of a preparation: a setting that changes the profile's text.
+    The settings file is then the user's, and ``uninstall`` leaves it."""
+    path = world.home / ".agents" / "workflow.toml"
+    path.write_bytes(path.read_bytes() + b'\n[roles.lead]\neffort = "high"\n')
+
 
 @dataclass(frozen=True)
 class Scenario:
@@ -91,7 +113,9 @@ class Scenario:
     machine the migration was written for, ``settings`` a hand-written
     user settings file, ``follow`` a skills directory that is a link to a
     directory inside the same home (and ``--follow-config-symlinks`` on the
-    way back)."""
+    way back). A step of ``prepare`` that is a function is called with
+    the world (``add_to_profile``), and ``added`` says that Codex wrote
+    into the profile there."""
 
     number: str
     name: str
@@ -101,6 +125,9 @@ class Scenario:
     l1: bool = False
     settings: bool = False
     follow: bool = False
+    # Codex wrote into the profile during the preparation: what it added is
+    # the user's, and is left at the end, alone, in the profile.
+    added: bool = False
 
     def way_back(self) -> tuple[tuple[str, ...], ...]:
         more = ("--follow-config-symlinks",) if self.follow else ()
@@ -121,6 +148,14 @@ SCENARIOS = {one.name: one for one in (
     Scenario("8", "uninstall-project", ("uninstall", "--project", P), other=("render", "--project", P),
              prepare=FULL_INSTALL, l1=True),
     Scenario("9", "uninstall", ("uninstall",), other=MIGRATE, prepare=FULL_INSTALL, l1=True),
+    Scenario("10", "render-carry", ("render",), other=INIT_USER,
+             prepare=(INIT_USER, ("render",), add_to_profile, raise_effort), added=True),
+    Scenario("11", "uninstall-carry", ("uninstall",), other=("render",),
+             prepare=(INIT_USER, ("render",), add_to_profile), added=True),
+    Scenario("12", "render-prepend", ("render",), other=INIT_USER,
+             prepare=(INIT_USER, ("render",), add_to_profile, ("uninstall",)), added=True),
+    Scenario("13", "no-roles-carry", ("render", "--no-roles"), other=("render",),
+             prepare=(INIT_USER, ("render",), add_to_profile), added=True),
 )}
 # What a run under the Windows Python samples, unless it is a full one.
 WINDOWS_SAMPLE = ("init-user", "render", "render-project", "uninstall")
@@ -401,6 +436,9 @@ class World:
         build(self.world, self.clone, self.scenario)
         self.pristine = self.picture()
         for argv in self.scenario.prepare:
+            if callable(argv):
+                argv(self)
+                continue
             ran = self.run(argv)
             if ran.code != 0 or ran.traceback:
                 raise HarnessError(f"{self.scenario.name}: the preparation did not end with 0\n{ran.said()}")
@@ -416,6 +454,16 @@ class World:
     def stops_at(self, n: int) -> bool:
         self.restore()
         return self.run(self.scenario.command, stop=n).code == fsio.STOP_EXIT_CODE
+
+    def holds_added(self) -> bool:
+        """Whether what Codex added to the profile is in it, or in a backup
+        a record lists."""
+        try:
+            if ADDED.strip() in (self.home / PROFILE).read_bytes():
+                return True
+        except OSError:
+            pass
+        return any(ADDED.strip() in data for data in self.listed_backups())
 
     # --- What a record lists -----------------------------------------------------
 
@@ -458,6 +506,9 @@ class World:
             wrong.append("the stopped command printed a traceback")
         after = self.picture()
         wrong.extend(self.lost(after))
+        if scenario.added and not self.holds_added():
+            wrong.append("right after the stop, what Codex added to the profile is neither in it nor in a backup a "
+                         "record lists")
 
         if continuation == SAME:
             then = (scenario.command,)
@@ -480,7 +531,16 @@ class World:
             if ran.code != 0:
                 wrong.append(f"{' '.join(ran.argv[:3])} ended with {ran.code}")
         final = self.picture()
-        changed = difference(self.pristine, final)
+        expected = dict(self.pristine)
+        if scenario.added:
+            # What Codex added stays, alone, in the profile, with the mode
+            # setup's file had.
+            now = final.get("home/" + PROFILE)
+            expected["home/" + PROFILE] = ("file", ADDED.lstrip(b"\n"), now[2] if now else None)
+        if raise_effort in scenario.prepare:
+            for left in ("home/.agents", "home/.agents/workflow.toml"):
+                expected[left] = self.start[left]
+        changed = difference(expected, final)
         if changed:
             wrong.append("the tree at the end is not the tree before setup ever ran:\n    " + "\n    ".join(changed))
         for path in final:

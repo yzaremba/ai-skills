@@ -245,8 +245,17 @@ Undoing (R8.1)
     key whose value was changed is the user's: it is left, and is no
     longer in the record (``Result.left``). A file setup wrote whole and
     the user edited is kept, and so is its entry; ``Result.kept`` lists
-    what was kept and why. A file that holds again exactly what the backup
-    of the original holds needs no undoing, and its entry goes. A link of
+    what was kept and why. A file setup wrote whole that carries a part
+    that is not setup's (what Codex or the user added to the Codex
+    profile after setup's part, see ``carried``) is not edited while
+    setup's own part is as setup wrote it: that part is taken out, and
+    the file is left holding the rest, as the user's (``Result.left``);
+    one that setup's part is no longer in at all is left as it is.
+    ``release_file`` does the same for ``render``. A file that holds
+    again exactly what the backup of the original holds needs no
+    undoing, and its entry goes. A directory setup created below a
+    directory of setup's that is a link now is left, as the user's:
+    nothing is removed through a link. A link of
     the user's that led to a credentials file is not put back: setup makes
     no such link, and the entry is kept. ``remove_state`` then removes the
     record, the backups it lists and the directories that held them, if
@@ -287,7 +296,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-from . import blocks, fsio, jsonkeys, lock, manifest as records, paths
+from . import blocks, carried, fsio, jsonkeys, lock, manifest as records, paths
 from .errors import SetupError
 from .fsio import ABSENT, DIRECTORY, FILE, LINK, OTHER
 from .lock import LockHeld
@@ -464,6 +473,9 @@ class _Step:
     # made, and that stay on disk: each holds text of the user's that setup
     # replaced on request and could not put back (``Result.unlisted``).
     unlist: list[str] = field(default_factory=list)
+    # A clean-up removal of a directory: refused by the system as not empty
+    # or in use, it is skipped and the run goes on (``remove_directory``).
+    optional: bool = False
 
     def item(self, roots: Roots) -> dict[str, Any]:
         """The step as the record lists it while it is pending."""
@@ -633,7 +645,7 @@ class Plan:
         and stays the user's."""
         self._actions.append(("create_directory", {"path": Path(path)}))
 
-    def remove_directory(self, path: Path, *, users: bool = False) -> None:
+    def remove_directory(self, path: Path, *, users: bool = False, optional: bool = False) -> None:
         """Remove a directory that the record shows setup created, when
         the plan leaves nothing in it. Any other directory is left as it
         is, without a word: one setup did not create is the user's, and one
@@ -644,8 +656,17 @@ class Plan:
         empties (the v1 migration): it is removed and recorded as
         ``removed-directory``, so a reversal makes it again. One that still
         holds anything the plan does not remove is a conflict, and nothing
-        is removed."""
-        self._actions.append(("remove_directory", {"path": Path(path), "users": users}))
+        is removed.
+
+        A directory setup created is never removed through a link: where a
+        directory above it that the record lists as one setup created is a
+        link now (its owner put a directory of theirs there), it is left as
+        it is, with a note. With ``optional`` the removal is a clean-up the
+        command does not depend on: should the system refuse it because the
+        directory is no longer empty or is in use (another program wrote
+        into it, a mount point), the directory stays, the record keeps it,
+        and the run goes on with a note."""
+        self._actions.append(("remove_directory", {"path": Path(path), "users": users, "optional": optional}))
 
     def write_file(
         self,
@@ -655,16 +676,34 @@ class Plan:
         inputs: str | None = None,
         mode: int | None = None,
         replace: str = OWN,
+        own_sha256: str | None = None,
+        made_from: str | None = None,
     ) -> None:
         """A file setup writes whole: UTF-8, LF. ``inputs`` is the caller's
         digest of what the file was generated from, kept in the record for
         ``doctor``. ``replace`` says what may be overwritten (``OWN``,
         ``EDITED``, ``ANY``); anything else there is a conflict. With
         ``ANY``, a user's file that already holds ``text`` is left the
-        user's."""
+        user's.
+
+        A file that carries a part that is not setup's (what Codex or the
+        user added to the Codex profile, see ``carried``): ``own_sha256`` is the hash of
+        setup's own part of ``text``, kept in the record, and ``made_from``
+        the hash of the file the carried part was read from. A file there
+        that holds anything else now is a conflict: what it carries would
+        be lost. Setup's file whose own part is as setup wrote it is not
+        edited, whatever it carries."""
         self._actions.append(("write_file", {
             "path": Path(path), "text": text, "inputs": inputs, "mode": mode, "policy": replace,
+            "own": own_sha256, "made_from": made_from,
         }))
+
+    def release_file(self, path: Path, data: bytes, *, expect_sha256: str | None = None) -> None:
+        """Give up a file setup wrote that carries a part that is not
+        setup's: the file is left holding ``data`` (that part, once setup's
+        own part is taken out), after a backup, and leaves the record. With
+        ``expect_sha256`` a file of any other content is a conflict."""
+        self._actions.append(("release_file", {"path": Path(path), "data": bytes(data), "expect": expect_sha256}))
 
     def remove_file(self, path: Path, *, expect_sha256: str | None = None) -> None:
         """Remove a file, after a backup. With ``expect_sha256`` a file of
@@ -855,14 +894,16 @@ class Plan:
             )
             if prepared.changed:
                 with fsio.named_temporaries(self.token):
-                    self._apply(prepared, mine)
+                    result.notes.extend(self._apply(prepared, mine))
             return result
 
     def _confined(self, key: str) -> Any:
         """The bounds of a change at the path ``key``; see ``fsio``."""
         return fsio.confined(*self.roots.confinement(records.scope_of(key) == PROJECT))
 
-    def _apply(self, prepared: _Prepared, locks: dict[bool, Any]) -> None:
+    def _apply(self, prepared: _Prepared, locks: dict[bool, Any]) -> list[str]:
+        """Make the changes; returns a note for each clean-up removal of a
+        directory the system refused (``remove_directory``, ``optional``)."""
         record, steps = prepared.record, prepared.steps
         first = [step for step in steps if step.state]
         rest = [step for step in steps if not step.state]
@@ -898,11 +939,19 @@ class Plan:
             self._close(record, [manifest for manifest in involved if manifest.on_disk], waiting, [], rest, None)
             raise
         done: list[_Step] = []
+        skipped: list[str] = []
         current: _Step | None = None
         try:
             for step in rest:
                 current = step
-                self._perform(step)
+                try:
+                    self._perform(step)
+                except fsio.DirectoryInUse as exc:
+                    if not step.optional:
+                        raise
+                    # Not made: the record keeps the directory as it was.
+                    skipped.append(f"{step.key}: left as it is, and still setup's: {exc.lines[0]}")
+                    continue
                 done.append(step)
         except SetupError as exc:
             closed = self._close(record, involved, waiting, done, rest, current)
@@ -912,11 +961,12 @@ class Plan:
             ) from None
         # Anything else (an interrupt, a kill) leaves the records as they
         # are on disk: every change pending, to be settled from the disk.
-        if not self._close(record, involved, waiting, rest, rest, None):
+        if not self._close(record, involved, waiting, done, rest, None):
             raise SetupError(
                 f"{involved[0].file if involved else self.roots.manifest_file}: the record could not be saved; "
                 "every change was made, and the next run completes the record"
             )
+        return skipped
 
     def _save_first(self, manifest: Manifest, mine: list[_Step], pending: list[dict[str, Any]]) -> None:
         """Save one record with the changes of the run pending, and the
@@ -1529,6 +1579,8 @@ class _Fold:
         self.details: dict[str, list[str]] = {}
         self.reals: dict[str, str] = {}
         self.written: dict[str, bytes] = {}
+        # Directories whose removal is a clean-up (``remove_directory``).
+        self.optional: set[str] = set()
         self.behind: set[str] = set()  # paths below a link that the plan takes away
         self.ahead: set[str] = set()   # state directories the lock made for this run
         # The blocks and keys, as (path, "blocks" or "keys", name), whose
@@ -1839,7 +1891,7 @@ class _Fold:
         self.now[ident] = _State(ABSENT)
         self.entries[key] = gone
 
-    def do_remove_directory(self, path: Path, users: bool = False) -> None:
+    def do_remove_directory(self, path: Path, users: bool = False, optional: bool = False) -> None:
         if users:
             self._remove_users_directory(path)
             return
@@ -1852,6 +1904,10 @@ class _Fold:
         if any(self._ident(held) == located[0] for project in (False, True)
                for held in self.roots.state_ancestors(project)):
             return  # it holds a record; ``remove_state`` takes it
+        link = self._replaced_by_link(located[1])
+        if link is not None:
+            self._note(f"{located[1]}: left as it is: {link} is a link now, and setup removes nothing through a link")
+            return
         found = self._state(path, internal=True)
         if found is None:
             return
@@ -1861,8 +1917,28 @@ class _Fold:
         elif state.kind == DIRECTORY and self._planned_empty(path):
             self.now[ident] = _State(ABSENT)
             self.entries[key] = None
+            if optional:
+                self.optional.add(ident)
 
-    def do_write_file(self, path: Path, text: str, inputs: str | None, mode: int | None, policy: str) -> None:
+    def _replaced_by_link(self, key: str) -> Path | None:
+        """A directory above the path ``key``, below its root, that the
+        record lists as one setup created and that is a link now, as this
+        plan leaves it: what is below it is no longer setup's to remove."""
+        for part in _chain_of(self.roots, key)[1:-1]:
+            known = self.record.get(self.roots.key(part) or "")
+            if known is None or known.get("kind") != "directory":
+                continue
+            planned = self.now.get(self._ident(part))
+            try:
+                kind = planned.kind if planned is not None else fsio.look(part).kind
+            except SetupError:
+                return part
+            if kind == LINK:
+                return part
+        return None
+
+    def do_write_file(self, path: Path, text: str, inputs: str | None, mode: int | None, policy: str,
+                      own: str | None = None, made_from: str | None = None) -> None:
         found = self._state(path, content=True)
         if found is None:
             return
@@ -1878,6 +1954,14 @@ class _Fold:
         entry = self._entry(key)
         kind = None if entry is None else entry["kind"]
         fresh = {"kind": "file", "sha256": None, "inputs": inputs, "original": None}
+        if own is not None:
+            fresh[carried.OWN_KEY] = own
+        if made_from is not None and state.kind == FILE and fsio.sha256(state.data or b"") != made_from:
+            self._problem(
+                CONFLICT, path,
+                f"{path}: changed since setup read it to carry over {carried.WHAT}; nothing was written. Run again",
+            )
+            return
         if state.kind == ABSENT:
             if kind in ("file", "removed-file"):
                 # Setup's file that went missing, or a user's file that setup
@@ -1897,7 +1981,10 @@ class _Fold:
             elif kind == "file":
                 fresh["original"] = entry.get("original")
                 disk, base = self.disk[ident], self.record.get(key) or {}
-                edited = disk.kind == FILE and fsio.sha256(disk.data or b"") != base.get("sha256")
+                edited = (
+                    disk.kind == FILE and fsio.sha256(disk.data or b"") != base.get("sha256")
+                    and not carried.unchanged(disk.data or b"", base)
+                )
                 if edited and policy == OWN and disk.data != data:
                     self._problem(CONFLICT, path, f"{path}: was edited since setup wrote it")
                     return
@@ -1920,6 +2007,25 @@ class _Fold:
         new = _State(FILE, data=data, mode=state.mode if mode is None else mode, real=state.real)
         if self._put(ident, key, new):
             self.entries[key] = fresh
+
+    def do_release_file(self, path: Path, data: bytes, expect: str | None) -> None:
+        found = self._state(path, content=True)
+        if found is None:
+            return
+        ident, key, state = found
+        entry = self._entry(key)
+        if state.kind != FILE or entry is None or entry.get("kind") != "file":
+            self._problem(CONFLICT, path, f"{path}: is not a file setup wrote, to take setup's part out of")
+            return
+        if expect is not None and fsio.sha256(state.data or b"") != expect:
+            self._problem(CONFLICT, path, f"{path}: does not hold what setup's part was to be taken out of; it was left as it is")
+            return
+        if self.written.setdefault(ident, data) != data:
+            self._problem(CONFLICT, path, f"{path}: the plan writes it twice, with different text")
+            return
+        if self._put(ident, key, _State(FILE, data=data, mode=state.mode, real=state.real)):
+            self._detail(ident, f"setup's part taken out; {carried.WHAT} left, no longer setup's")
+            self.entries[key] = None
 
     def do_remove_file(self, path: Path, expect: str | None) -> None:
         found = self._state(path)
@@ -2574,6 +2680,13 @@ class _Fold:
         for key, path in sorted(directories, key=lambda item: -len(item[1].parts)):
             if self._ident(path) in held:
                 continue  # it holds the record; ``remove_state`` takes it
+            link = self._replaced_by_link(key)
+            if link is not None:
+                # Nothing is removed through a link; the user put it there.
+                if self._state(path, internal=True) is not None:
+                    self._leave(key, f"{link} is a link now; setup removes nothing through a link")
+                    self.entries[key] = None
+                continue
             found = self._state(path, internal=True)
             if found is None:
                 continue
@@ -2675,13 +2788,33 @@ class _Fold:
             return
         ident, key, state = found
         original = entry.get("original")
+        # A file that carries a part that is not setup's (``carried``):
+        # what follows setup's own part, when that part is as setup wrote it.
+        tail = carried.split(state.data or b"", carried.own_hash(entry)) if state.kind == FILE else None
         if state.kind == ABSENT:
             if original:
                 self._keep(key, "removed since setup wrote it; the backup of what was there before is kept")
                 return
         elif state.kind == FILE and original and fsio.sha256(state.data or b"") == original.get("sha256"):
             pass  # what was there before setup is there again: nothing is left to undo
-        elif state.kind != FILE or fsio.sha256(state.data or b"") != entry.get("sha256"):
+        elif tail and carried.left(tail).strip():
+            # Setup's part goes, and what it carries stays, as the user's.
+            # A file that was there before setup (``render`` takes up what
+            # an earlier uninstall left) held that part alone, and is not
+            # put back over what it holds now.
+            if not self._put(ident, key, _State(FILE, data=carried.left(tail), mode=state.mode, real=state.real)):
+                return
+            self._detail(ident, f"setup's part taken out; {carried.WHAT} left")
+            self._leave(key, f"setup's part was taken out; the file holds {carried.WHAT}, which setup does not "
+                             "remove")
+            self.entries[key] = None
+            return
+        elif state.kind == FILE and tail is None and carried.own_hash(entry) and carried.no_setup_key(state.data or b""):
+            # Its owner took setup's part out: what is left is theirs.
+            self._leave(key, "setup's part is no longer in it; what it holds is left as it is")
+            self.entries[key] = None
+            return
+        elif state.kind != FILE or (fsio.sha256(state.data or b"") != entry.get("sha256") and tail is None):
             self._keep(key, "changed since setup wrote it")
             return
         elif original:
@@ -3123,7 +3256,7 @@ class _Fold:
             step = _Step(
                 op or _RECORD, path, key, before, after, entry, changed, backup, [],
                 state=ident in held and op == _MKDIR, premade=ident in self.ahead and op == _MKDIR, users=users,
-                unlist=self._not_put_back(key, base, entry),
+                unlist=self._not_put_back(key, base, entry), optional=op == _RMDIR and ident in self.optional,
             )
             if op in (_SWAP, _RELINK) and (op == _SWAP or key in self.between):
                 # The path is absent for a moment of the step: after what

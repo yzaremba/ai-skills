@@ -5,6 +5,7 @@ Run from the repository root:
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 import stat
@@ -447,6 +448,84 @@ class RemoveDirectoryTests(OpsCase):
         plan.remove_directory(inner)
         plan.apply()
         self.assertNotIn("home:.claude/skills/lead/agents", self.record().entries)
+
+    def linked(self) -> tuple[Path, Path, Path]:
+        """setup's skill directory replaced by its owner with a link to a
+        directory of theirs, which has an empty ``agents``: the record still
+        lists ``agents`` as a directory setup created."""
+        outer, inner = self.made()
+        plan = self.plan()
+        plan.remove_file(outer / "SKILL.md")
+        plan.remove_file(inner / "openai.yaml")
+        plan.apply()
+        os.rmdir(inner)
+        os.rmdir(outer)
+        mine = self.home / "mine"
+        (mine / "agents").mkdir(parents=True)
+        os.symlink(mine, outer)
+        self.assertEqual(self.record().entries["home:.claude/skills/lead/agents"], {"kind": "directory"})
+        return outer, inner, mine
+
+    def test_nothing_is_removed_through_a_directory_of_setups_that_is_a_link_now(self) -> None:
+        outer, inner, mine = self.linked()
+        for optional in (False, True):
+            plan = self.plan(follow_config_symlinks=True)
+            plan.remove_directory(inner, optional=optional)
+            plan.remove_directory(outer, optional=optional)
+            result = plan.apply()
+            self.assertTrue((mine / "agents").is_dir())
+            self.assertTrue(any("is a link now" in note for note in result.notes), result.notes)
+            self.assertFalse(any(line.startswith("remove directory home:.claude/skills/lead/agents")
+                                 for line in result.lines), result.lines)
+
+    def test_the_way_back_leaves_what_is_below_such_a_link(self) -> None:
+        outer, inner, mine = self.linked()
+        result = self.reversal(follow_config_symlinks=True).apply()
+        self.assertTrue((mine / "agents").is_dir())
+        self.assertIn("home:.claude/skills/lead/agents", [key for key, _ in result.left])
+        self.assertNotIn("home:.claude/skills/lead/agents", self.record().entries)
+
+    def test_a_clean_up_the_system_refuses_is_skipped_and_the_run_goes_on(self) -> None:
+        outer, inner = self.made()
+        refused = OSError(errno.ENOTEMPTY, "Directory not empty")
+        real = os.rmdir
+
+        def rmdir(path, *args, **kwargs):
+            if Path(path) == inner:
+                raise refused
+            return real(path, *args, **kwargs)
+
+        plan = self.plan()
+        plan.remove_file(outer / "SKILL.md")
+        plan.remove_file(inner / "openai.yaml")
+        plan.write_file(self.home / ".claude" / "other.md", "x\n", inputs="render:x")
+        plan.remove_directory(inner, optional=True)
+        plan.remove_directory(outer, optional=True)
+        with mock.patch.object(fsio.os, "rmdir", rmdir):
+            result = plan.apply()
+        self.assertTrue(inner.is_dir())
+        self.assertTrue(any("left as it is, and still setup's" in note and "lead/agents" in note
+                            for note in result.notes), result.notes)
+        entries = self.record().entries
+        self.assertEqual(entries["home:.claude/skills/lead/agents"], {"kind": "directory"})
+        self.assertEqual(entries["home:.claude/skills/lead"], {"kind": "directory"})
+        self.assertNotIn("home:.claude/skills/lead/SKILL.md", entries)
+        self.assertIn("home:.claude/other.md", entries)
+        self.assertIsNone(self.record().home.pending or None)
+
+    def test_a_removal_that_is_no_clean_up_still_fails(self) -> None:
+        outer, inner = self.made()
+        refused = OSError(errno.EBUSY, "Device or resource busy")
+
+        def rmdir(path, *args, **kwargs):
+            raise refused
+
+        plan = self.plan()
+        plan.remove_file(inner / "openai.yaml")
+        plan.remove_directory(inner)
+        with mock.patch.object(fsio.os, "rmdir", rmdir), self.assertRaises(SetupError) as caught:
+            plan.apply()
+        self.assertIn("cannot be removed", caught.exception.lines[0])
 
     def test_the_directories_that_hold_a_record_stay(self) -> None:
         self.made()

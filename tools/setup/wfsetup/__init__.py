@@ -2,6 +2,7 @@
 
 Modules:
     blocks      setup's marked blocks and exact lines in a user's text file
+    carried     what Codex or the user added to the Codex profile after setup's part
     cli         argument parsing and the one place errors are printed
     commands    one module per command, found by name
     definitions a role's definition for one provider, and its inputs digest
