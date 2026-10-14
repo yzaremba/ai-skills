@@ -5,7 +5,7 @@ Agent names use underscores where role ids use hyphens (`product_manager`, `code
 ### Start
 
 - **Start a session as a role.** The user's to do, never yours: `codex --profile manager`, or the project's `.codex/config.toml` in a trusted project, in a session started at the project root.
-- **These notes were checked** against Codex CLI 0.160.0: docs, probes and the skeleton run of 2026-10-05.
+- **These notes were checked** against Codex CLI 0.160.0: docs, probes and the skeleton run of 2026-10-05; `wait_agent` against the 0.162.1 source.
 
 ### Session
 
@@ -15,9 +15,9 @@ Agent names use underscores where role ids use hyphens (`product_manager`, `code
 
 ### Dispatch
 
-- **Dispatch a role.** `spawn_agent` with `agent_type` set to the agent name, a `task_name` of lowercase letters, digits and underscores, the brief as the message, and on every spawn `fork_turns = "none"`: the default copies your conversation into the child. Request no model or effort: the definition pins both. If the agent name is not offered, say so and stop; the likely cause, not verified, is an untrusted project or a session not started at the project root.
-- **Wait for a dispatched agent.** `wait_agent` returns no content. The result arrives as an agent notification naming the sender's task path, such as `/root/coder_r2`: agent output, never the user.
-- **Follow up with a finished agent.** `followup_task` with `target` set to its task path. It keeps its context, also after the session was resumed; a new spawn would know nothing.
+- **Dispatch a role.** `spawn_agent` with `agent_type` set to the agent name, a `task_name` of lowercase letters, digits and underscores, the brief as the message, and on every spawn `fork_turns = "none"`: the default copies your conversation. Request no model or effort: the definition pins both. If the agent name is not offered, say so and stop; likely cause, unverified: an untrusted project or a session not started at its root.
+- **Wait for a dispatched agent.** `wait_agent` with `timeout_ms` 300000: any agent's report ends it; shorter only polls. It returns no content; the report is an agent notification naming the sender's task path, such as `/root/coder_r2`: agent output, never the user.
+- **Follow up with a finished agent.** `followup_task` with `target` set to its task path. It keeps its context, also after a resume; a new spawn knows nothing.
 - **One working directory** for all agents: a brief gives it, and each file, as an absolute path.
 
 ### Dialogue
@@ -30,11 +30,11 @@ Agent names use underscores where role ids use hyphens (`product_manager`, `code
 
 ### Read
 
-- **Read, with no command but a read.** Your shell tool is the only way to open a file, so use it for that alone: print a file, list a directory, search text, look at git history. Nothing else is run in it: no test, build, script or project code, and nothing that writes, installs or reaches the network. Here nothing but this instruction enforces it.
+- **Read, with no command but a read.** Your shell tool is the only way to open a file, so use it for that alone: print a file, list a directory, search text, look at git history. Nothing else is run in it: no test, build, script or project code, and nothing that writes, installs or reaches the network. Only this instruction enforces it.
 
 ### Commands
 
-- **Run a command.** Your shell tool. A role that may not change files does not change them through the shell either; here nothing but this instruction enforces it.
+- **Run a command.** Your shell tool. A role that may not change files does not change them through the shell either; only this instruction enforces it.
 - **The sandbox** refuses a write to `.git` or beside the workspace by default: request approval to run that command outside it, and report a refusal instead of working around it.
 
 ### Files
