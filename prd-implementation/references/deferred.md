@@ -110,7 +110,7 @@ Each outcome is one change on the default branch, by whoever ran the check, on t
 The file holds what still waits. It is not a record of what was deferred.
 
 - **A resolved or dropped item stays only while its sprint has another item that is open.** The change that closes a sprint's last open item removes every item of that sprint from the file.
-- In that same change the sprint stops being code-complete: in `DONE/README.md` its Completed cell becomes that day's date, without the qualifier ([completion.md](completion.md)). That holds whether the last item was resolved or dropped: a code-complete sprint is not abandoned, and dropping what remains of it is how it ends ([abandon.md](abandon.md)).
+- In that same change the sprint stops being code-complete: in `DONE/README.md` its Completed cell becomes that day's date, without the qualifier ([completion.md](completion.md)); the PLAN header's status stays `Code-complete YYYY-MM-DD`, a record of how the sprint closed. That holds whether the last item was resolved or dropped: a code-complete sprint is not abandoned, and dropping what remains of it is how it ends ([abandon.md](abandon.md)).
 - So every sprint named in the file has at least one open item. A sprint whose items are all closed and still in the file is a violation.
 - What happened to an item is on its PLAN step's annotation and in `git log`. Do not keep it here, and do not move it anywhere else.
 

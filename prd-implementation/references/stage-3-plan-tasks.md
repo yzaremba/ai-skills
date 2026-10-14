@@ -8,7 +8,7 @@ Read [conventions.md](conventions.md) before creating the files. This stage star
 
 ## PLAN file structure
 
-- **Header**: title, links to THOUGHTS, PRD, TASKS, status, last-updated date
+- **Header**: title, links to THOUGHTS, PRD, TASKS, status, last-updated date. The status line is `**Status:** In progress` from the first draft until the close sets it ([completion.md](completion.md), "Integration", step 1; [abandon.md](abandon.md)); a close that goes back to the build sets it back to `In progress`. No approval is written in it: a gate passes by the user's word, not by the file. A change of status does not bump `Last updated:`.
 - **Phases**: logical groups (e.g. data, logic, API, UI)
 - **Steps**: unique IDs `P<phase>.<step>` where `<phase>` and `<step>` are **integers** (e.g. `P1.1`, `P3.4`). Do **not** use letters or words for `<phase>` (no `PA.1`, `PWATCHDOG.1`) — phases can still be *named* conceptually in the heading (e.g. "Phase 2 — API"), but the ID is always numeric.
 - **Step content**: what to do, files to touch, snippets or SQL if helpful, edge cases; use `> Depends on: P1.2` when order matters
