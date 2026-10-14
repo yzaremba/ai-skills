@@ -676,7 +676,7 @@ class Deferred(Case):
         self.assertEqual(self.found("Latest assigned: D4\n"), [])
         self.assertEqual(self.found("# Deferred items\n\nLatest assigned: D4\n"), [])
         self.assertEqual(self.found(deferred(item(4), pointer=4, title=False)), [])
-        self.assertEqual(self.found(""), [(None, "deferred-pointer-missing")])
+        self.assertEqual(self.found(""), [])  # an empty file is clean, as an empty backlog is
 
     def test_the_pointer_line(self):
         one = item(1)
@@ -689,7 +689,10 @@ class Deferred(Case):
         for line in ("Latest assigned: D09", "Latest assigned: D0", "Latest assigned: D9 ", "Latest assigned: 9",
                      "Latest assigned: B9", "Latest assigned:D9", "Latest assigned: D9, D8"):
             with self.subTest(line):
+                # A line that starts `Latest assigned:` makes the file one of the new form, never the old.
                 self.assertEqual(self.found(f"{line}\n"), [(None, "deferred-pointer-missing"), (1, "deferred-unknown-line")])
+                self.assertEqual(self.found(f"{line}\n\n" + item(1)),
+                                 [(None, "deferred-pointer-missing"), (1, "deferred-unknown-line")])
 
     def test_numbers(self):
         self.assertEqual(self.found(deferred(item(2), item(2, sprint="07 P3.5"))), [(12, "deferred-number-duplicate")])
@@ -747,7 +750,8 @@ class Deferred(Case):
                     self.assertIn((index + 1, "deferred-field-form"), found)
 
     def test_field_values(self):
-        for sprint in ("7 P3.4", "07", "07 P3", "07 3.4", "07  P3.4", "07 P3.4 ", "S07 P3.4", "07 P3.4, P3.5"):
+        for sprint in ("7 P3.4", "07", "07 P3", "07 3.4", "07  P3.4", "07 P3.4 ", "S07 P3.4", "07 P3.4, P3.5",
+                       "none ", " none", "None", "NONE", "none P3.4", "07 none", "none: a hotfix", "no", "-", "n/a"):
             with self.subTest(sprint):
                 self.assertEqual(self.found(deferred(item(1, sprint=sprint))), [(7, "deferred-sprint-form")])
         self.assertEqual(self.found(deferred(item(1, sprint="107 P12.34"))), [])
@@ -855,6 +859,117 @@ class Deferred(Case):
         code, text = check.run(["--project", str(self.project), "--home", str(self.home), "--json"])
         self.assertEqual(code, 1)
         self.assertEqual([e["past_date"] for e in json.loads(text)["deferred"]], [True, False])
+
+    def test_an_item_outside_a_sprint(self):
+        outside = item(2, sprint="none", title="Revisit the retry limit")
+        self.assertEqual(self.found(deferred(outside)), [])
+        # Closed, it leaves the file in the change that closes it.
+        for status in ("resolved 2026-10-01: done in 4e19c0a", "dropped 2026-10-01: not wanted"):
+            with self.subTest(status):
+                self.assertEqual(self.found(deferred(item(2, sprint="none", status=status))),
+                                 [(5, "deferred-closed-item")])
+        # It neither keeps a sprint's closed items in the file nor counts as one of them.
+        resolved = "resolved 2026-10-01: done in 4e19c0a"
+        self.assertEqual(self.found(deferred(item(1, status=resolved), item(2, sprint="none"))),
+                         [(5, "deferred-closed-sprint")])
+        self.assertEqual(self.found(deferred(item(1), item(2, sprint="none", status=resolved))),
+                         [(12, "deferred-closed-item")])
+        # Its state unknown, it is listed and flagged, and not taken for closed.
+        self.assertEqual(self.found(deferred(item(2, sprint="none", status="opne"))), [(10, "deferred-status-form")])
+        # An empty value is still reported.
+        self.assertIn((7, "deferred-field-form"), self.found(deferred(item(1).replace("Sprint: 07 P3.4", "Sprint:"))))
+        # Listed as belonging to no sprint, in the JSON and in the text.
+        self.write("DEFERRED.md", deferred(item(1), outside))
+        code, report = self.run_check()
+        self.assertEqual(code, 0)
+        self.assertEqual([(e["number"], e["sprint"], e["outside_sprint"]) for e in report["deferred"]],
+                         [(1, "07 P3.4", False), (2, "none", True)])
+        self.assertEqual(set(report["deferred"][1]), {"number", "title", "state", "sprint", "outside_sprint", "trigger",
+                                                      "review_by", "check", "past_date", "line", "file"})
+        self.assertEqual(report["summary"], {"open": 2, "state_unknown": 0, "past_date": 0, "violations": 0, "notes": 0})
+        text = check.run(self.arguments())[1]
+        self.assertIn("\nD1 — Remove the legacy export path\n  sprint: 07 P3.4\n", text)
+        self.assertIn("\nD2 — Revisit the retry limit\n  sprint: none (outside a sprint)\n", text)
+        # A malformed value is not outside a sprint.
+        self.write("DEFERRED.md", deferred(item(1, sprint="None")))
+        code, report = self.run_check()
+        self.assertEqual((code, report["deferred"][0]["outside_sprint"]), (1, False))
+        self.assertIn("  sprint: None\n", check.run(self.arguments())[1])
+
+    def notes(self, text: str) -> list[tuple]:
+        """The notes for a ``DEFERRED.md`` of ``text``; it has no violation."""
+        self.write("DEFERRED.md", text)
+        code, report = self.run_check()
+        self.assertEqual((code, report["violations"], report["exit_code"], report["deferred"]), (0, [], 0, []))
+        self.assertEqual(report["summary"]["notes"], len(report["notes"]))
+        self.assertEqual(report["summary"]["violations"], 0)
+        return [(note["file"], note["line"], note["rule"]) for note in report["notes"]]
+
+    def test_a_deferred_file_in_the_old_form_is_one_note_and_no_violation(self):
+        not_converted = [("DEFERRED.md", None, "deferred-not-converted")]
+        old = ("# DEFERRED decisions\n\nLong-lived decisions we postponed.\n\n---\n\n## INFRA-01 — re-evaluate sizing\n\n"
+               "**Added:** 2026-04-20\n**Context:** a paragraph\nthat goes on.\n\n**Trigger:**\n`peak_memory_pct > 75`\n\n"
+               "```\ncode\n```\n**Resolved:** 2026-05-01 — done\n" + "x" * 400 + "\n")
+        for body in (old, "Status: open\n", "Sprint: none\nStatus: open\n", "## D1 — two hashes\nprose\n",
+                     "#### D1 — four hashes\nprose\n", " ### D1 — indented\n", "### Data sources\nprose\n",
+                     "### d1 — lower case\nprose\n", "- a bullet\n", " Latest assigned: D1\n", "latest assigned: D1\n",
+                     "# Deferred items \nprose\n", "## Deferred items\nprose\n", "# Deferred\nprose\n"):
+            with self.subTest(body):
+                self.assertEqual(self.notes(body), not_converted)
+        message = ("no pointer line, no title `# Deferred items` and no item heading: the file is in the old form; "
+                   "its lines were not checked")
+        self.write("DEFERRED.md", old)
+        code, report = self.run_check()
+        self.assertEqual(report["notes"], [{"file": "DEFERRED.md", "line": None, "rule": "deferred-not-converted",
+                                            "message": message}])
+        self.assertEqual(report["summary"], {"open": 0, "state_unknown": 0, "past_date": 0, "violations": 0, "notes": 1})
+        code, text = check.run(self.arguments())
+        self.assertEqual(code, 0)
+        self.assertIn(f"\nViolations: 0\n\nNotes: 1\nDEFERRED.md: deferred-not-converted: {message}\n\n"
+                      "Result: nothing needs action\n", text)
+        # With a backlog in the old form as well: two notes, still nothing that needs action.
+        self.write("BACKLOG.md", "- an idea\n")
+        self.assertEqual(self.notes(old), [("DEFERRED.md", None, "deferred-not-converted"),
+                                           ("BACKLOG.md", None, "backlog-not-converted")])
+
+    def test_a_deferred_file_of_blank_lines_and_headings_is_clean(self):
+        for body in ("", "\n", "\n\n  \n\t\n", "# DEFERRED decisions\n", "# DEFERRED decisions\n\n## INFRA-01 — sizing\n",
+                     "#\n", "﻿## Group\r\n\r\n"):
+            with self.subTest(body):
+                self.assertEqual(self.notes(body), [])
+        self.assertIn("\nViolations: 0\n\nNotes: 0\n\nResult: nothing needs action\n", check.run(self.arguments())[1])
+
+    def test_an_old_form_note_does_not_change_the_exit_code_either_way(self):
+        self.write("DEFERRED.md", "# DEFERRED decisions\n\nSome prose.\n")
+        self.write(TASKS, LONG_TASK + "\n")
+        code, report = self.run_check()
+        self.assertEqual((code, report["summary"]["violations"], report["summary"]["notes"]), (1, 1, 1))
+        self.assertEqual([v["rule"] for v in report["violations"]], ["tasks-line-too-long"])
+
+    def test_a_file_of_the_new_form_is_checked_line_by_line(self):
+        # A pointer line makes it one, with prose and old entries around it.
+        prose = "Latest assigned: D3\n\nSome prose about the decisions.\n\n## INFRA-01 — sizing\n**Added:** 2026-04-20\n"
+        self.assertEqual(self.found(prose), [(3, "deferred-unknown-line"), (5, "deferred-unknown-line"),
+                                             (6, "deferred-unknown-line")])
+        # So does a broken pointer line, and the title: a lost pointer is reported, not taken for the old form.
+        self.assertEqual(self.found("# Deferred items\n\nLatest assigned D5\n"),
+                         [(None, "deferred-pointer-missing"), (3, "deferred-unknown-line")])
+        self.assertEqual(self.found("Latest assigned: D5x\n\nSome prose.\n"),
+                         [(None, "deferred-pointer-missing"), (1, "deferred-unknown-line"), (3, "deferred-unknown-line")])
+        self.assertEqual(self.found("# Deferred items\n"), [(None, "deferred-pointer-missing")])
+        self.assertEqual(self.found("﻿# Deferred items\r\n\r\n## Group\r\n"),
+                         [(None, "deferred-pointer-missing"), (3, "deferred-unknown-line")])
+        self.assertEqual(self.found("# Deferred items\n\nSome prose.\n"),
+                         [(None, "deferred-pointer-missing"), (3, "deferred-unknown-line")])
+        # So does an item heading, well formed or not.
+        self.assertEqual(self.found("### D1 — Sizing\n\nprose\n"),
+                         [(None, "deferred-pointer-missing")] + [(1, "deferred-field-missing")] * 4
+                         + [(3, "deferred-unknown-line")])
+        self.assertEqual(self.found("### D01 — Sizing\nprose\n"),
+                         [(None, "deferred-pointer-missing"), (1, "deferred-heading-form")]
+                         + [(1, "deferred-field-missing")] * 4 + [(2, "deferred-unknown-line")])
+        _, report = self.run_check()
+        self.assertEqual(report["notes"], [])
 
 
 # --- BACKLOG.md ---------------------------------------------------------------

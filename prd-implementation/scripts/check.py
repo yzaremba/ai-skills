@@ -79,10 +79,12 @@ not read. The docs directory itself is taken as named, link or not.
 
 The report has four parts. The deferred items: every item that is open,
 and every item whose state cannot be told (its "Status:" is missing or
-malformed), which is marked so. The sprint workspaces, when the project
-root holds a .git. The violations. And the notes: facts that
-need no action, such as a BACKLOG.md still in the old form. A note is not
-a violation and has no effect on the exit code.
+malformed), which is marked so; an item of "Sprint: none" is outside a
+sprint, the checks tied to a sprint skip it, and closed it is reported,
+since it leaves the file when it is closed. The sprint workspaces,
+when the project root holds a .git. The violations. And the notes: facts
+that need no action, such as a BACKLOG.md or a DEFERRED.md still in the
+old form. A note is not a violation and has no effect on the exit code.
 
 Settings. The process group is read here, and no other group: from the
 same files, in the same order and under the same rules as the setup tool's
@@ -223,9 +225,12 @@ NOWHERE = "nowhere"
 D_TITLE = "# Deferred items"
 D_POINTER = re.compile(r"^Latest assigned: D([1-9][0-9]*)$")
 D_HEAD = re.compile(r"^### D([1-9][0-9]*) — (\S.*)$")
+# An item heading, well formed or not: what makes a file one of the new form.
+D_NUMBERED = re.compile(r"^### D[0-9]+(?![0-9A-Za-z])")
 D_FIELDS = ("Sprint", "Trigger", "Review by", "Check", "Status")
 D_REQUIRED = ("Sprint", "Trigger", "Review by", "Status")
 D_SPRINT = re.compile(r"^([0-9]{2,}) (P[0-9]+\.[0-9]+)$")
+D_NO_SPRINT = "none"  # the whole value of `Sprint:` for an item outside a sprint
 D_REVIEW = re.compile(rf"^({DATE})(?: \(re-dated ({DATE}): \S.*\))?$")
 D_STATUS = re.compile(rf"^(?:open|(?:resolved|dropped) ({DATE}): \S.*)$")
 
@@ -716,9 +721,26 @@ def _check_document_link(line: str, item: int, number: int, names: set[str], poi
 
 # --- DEFERRED.md --------------------------------------------------------------
 
-def check_deferred(lines: list[str], today: datetime.date, add) -> list[dict]:
+def check_deferred(lines: list[str], today: datetime.date, add, note) -> list[dict]:
     """Check ``DEFERRED.md``. Returns, in the file's order, its open items
-    and the items whose state cannot be told."""
+    and the items whose state cannot be told.
+
+    A file with no line that starts `Latest assigned:`, no title `# Deferred
+    items` and no item heading, well formed or not, is clean when it holds
+    nothing but blank lines and headings; otherwise it has not been
+    converted, which is a note and not a violation, as for the backlog.
+    Any one of the three makes it a file of the new form, so that a broken
+    pointer line or a lost one is reported and not taken for the old form.
+    """
+    if not any(line.startswith("Latest assigned:") or line == D_TITLE or D_NUMBERED.match(line) for line in lines):
+        if any(line.strip() and not line.startswith("#") for line in lines):
+            note(
+                None,
+                "deferred-not-converted",
+                "no pointer line, no title `# Deferred items` and no item heading: the file is in the old form; "
+                "its lines were not checked",
+            )
+        return []
     pointer = None
     title_seen = False
     items: list[dict] = []
@@ -803,11 +825,13 @@ def check_deferred(lines: list[str], today: datetime.date, add) -> list[dict]:
                     f"D{item['number']} is above the pointer line's D{pointer}",
                 )
         sprint = None
+        outside = False
         if "Sprint" in fields:
             value, at = fields["Sprint"]
             sprint = D_SPRINT.match(value)
-            if not sprint:
-                add(at, "deferred-sprint-form", "not a sprint number and a step ID, as in `07 P3.4`")
+            outside = value == D_NO_SPRINT
+            if not sprint and not outside:
+                add(at, "deferred-sprint-form", "not a sprint number and a step ID, as in `07 P3.4`, or `none`")
         review = None
         if "Review by" in fields:
             value, at = fields["Review by"]
@@ -839,6 +863,9 @@ def check_deferred(lines: list[str], today: datetime.date, add) -> list[dict]:
             else:
                 state = "open" if value == "open" else "closed"
         item["state"] = state
+        if outside and state == "closed":
+            add(item["line"], "deferred-closed-item",
+                "a closed item outside a sprint leaves the file in the change that closes it")
         if sprint:
             sprints.setdefault(sprint.group(1), []).append(item)
         if state != "closed":
@@ -849,6 +876,7 @@ def check_deferred(lines: list[str], today: datetime.date, add) -> list[dict]:
                 "title": item["title"],
                 "state": "open" if state == "open" else "unknown",
                 "sprint": fields["Sprint"][0] if "Sprint" in fields else None,
+                "outside_sprint": outside,
                 "trigger": fields["Trigger"][0] if "Trigger" in fields else None,
                 "review_by": fields["Review by"][0] if "Review by" in fields else None,
                 "check": fields["Check"][0] if "Check" in fields else None,
@@ -1289,7 +1317,7 @@ def build_report(project: Path, docs: Path, docs_from: str, settings: dict, toda
     if DEFERRED_FILE in names:
         lines = lines_of(DEFERRED_FILE, docs)
         if lines is not None:
-            deferred = check_deferred(lines, today, adder(DEFERRED_FILE))
+            deferred = check_deferred(lines, today, adder(DEFERRED_FILE), adder(DEFERRED_FILE, notes))
     pointed: set[str] = set()
     if BACKLOG_FILE in names:
         lines = lines_of(BACKLOG_FILE, docs)
@@ -1422,6 +1450,8 @@ def render_text(report: dict) -> str:
         out.append(f"{number} — {shown(item['title'])}{flags}")
         for label, key in (("sprint", "sprint"), ("trigger", "trigger"), ("review by", "review_by")):
             out.append(f"  {label}: " + ("(missing)" if item[key] is None else shown(item[key])))
+            if key == "sprint" and item["outside_sprint"]:
+                out[-1] += " (outside a sprint)"
         out.append("  no check named" if item["check"] is None else f"  check: {shown(item['check'])}")
         out.append(f"  at: {shown(item['file'])}:{item['line']}")
     if report["git"] is not None and report["sprint_workspaces"] is None:

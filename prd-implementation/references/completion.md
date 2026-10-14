@@ -6,7 +6,7 @@ A sprint closes in this order: its last open steps are settled, its work is **in
 
 ## Closing as code-complete
 
-A sprint whose only open steps wait on elapsed time or on an outside event does not stay open for them. On the user's word it closes as **code-complete**: each waiting step becomes an item in `DEFERRED.md`, and its PLAN step and TASKS line are closed as [deferred.md](deferred.md) says. Read that file before closing such a sprint.
+A sprint whose only open steps wait on elapsed time or on an outside event does not stay open for them. On the user's word it closes as **code-complete**: each waiting step becomes an item in `DEFERRED.md`, and its PLAN step and TASKS line are closed as [deferred.md](deferred.md) says. Read that file before closing such a sprint. A `DEFERRED.md` still in the old form is converted first; if the user declines, the steps stay open and the sprint does not close as code-complete.
 
 After that no checkbox is open, and the sprint is integrated and archived like a finished one, with one difference: the PLAN header's status and, in `DONE/README.md`, the sprint's Completed cell read `Code-complete YYYY-MM-DD`. When the sprint's last deferred item is closed, resolved or dropped, the cell becomes that day's date, without the qualifier; the PLAN's status stays, a record of how the sprint closed. A code-complete sprint is not abandoned later: what remains of it is settled item by item, as [deferred.md](deferred.md) says.
 
@@ -39,7 +39,7 @@ When **all TASKS checkboxes** are resolved (no `- [ ]` or `- [~]`) and the sprin
 
 If the user declines the move, the set stays where it is and the rest of the change is still made: STATE is deleted, the roadmap row is set and the approved lessons are written.
 
-`DONE/README.md`, the sprint index, the roadmap and `DEFERRED.md` are shared between sprints, so they change on the default branch (see "Where each doc is written" in [conventions.md](conventions.md)). The sprint's own docs are there too by now: the merge brought them, and that is why the move is made after it and not in the sprint's worktree.
+`DONE/README.md`, the sprint index, the roadmap and `DEFERRED.md` with `DEFERRED-context.md` are shared between sprints, so they change on the default branch (see "Where each doc is written" in [conventions.md](conventions.md)). The sprint's own docs are there too by now: the merge brought them, and that is why the move is made after it and not in the sprint's worktree.
 
 ## Lessons
 

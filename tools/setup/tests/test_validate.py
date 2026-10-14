@@ -1658,7 +1658,8 @@ class StageRowsTests(TreeCase):
                  for name, source in run.skills.items()}
         self.assertEqual({name: files for name, files in found.items() if files}, {
             "prd-implementation": [
-                "abandon.md", "backlog-conversion.md", "completion.md", "deferred.md", "stage-0-backlog.md",
+                "abandon.md", "backlog-conversion.md", "completion.md", "deferred-conversion.md", "deferred.md",
+                "stage-0-backlog.md",
                 "stage-1-thoughts.md", "stage-2-prd.md", "stage-3-implementation.md", "stage-3-plan-tasks.md", "state.md",
             ],
             "epic-implementation": [

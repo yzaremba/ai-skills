@@ -145,7 +145,7 @@ The agent's duties are now "The implementer's part" of
 | Settings: the sprint docs directory, and how questions are put to the user | R3.3, R5.3, R5.4 | [SKILL.md][p-skill], "Settings"; [conventions.md][p-conv], "The sprint docs directory", "Questions to the user"; [`scripts/settings.py`][p-set] in each skill |
 | Parallel groups and the `light` and `hard` tags, with a group member's one commit | R3.5, R3.7, decision R | [stage-3-plan-tasks.md][p-s3p], "Marks on a step"; [stage-3-implementation.md][p-s3i], "Which implementer a step gets", "Parallel groups", "As a member of a parallel group" |
 | Exact limits: an annotation 300 characters, a TASKS line 150, and how they are counted | R3.12 | [conventions.md][p-conv], "Format limits" |
-| Deferred items, and closing a sprint as code-complete | R3.8 | [deferred.md][p-def]; [completion.md][p-done], "Closing as code-complete" |
+| Deferred items, and closing a sprint as code-complete | R3.8 | [deferred.md][p-def]; [completion.md][p-done], "Closing as code-complete"; [deferred-conversion.md][p-conv2] |
 | The backlog item form: one numbered line, an item document, the one-time conversion | R3.13 | [stage-0-backlog.md][p-s0], "The file", "Numbers", "A longer idea"; [backlog-conversion.md][p-conv1] |
 | Integration at completion: merge, removal of the worktree and branch, the roadmap row | R3.10 | [completion.md][p-done], "Integration"; [conventions.md][e-conv], "ROADMAP maintenance" |
 | Abandon and supersede | R3.11 | [abandon.md][p-ab]; [completion.md][e-done], "Closing an epic as `Abandoned`" |
@@ -165,6 +165,7 @@ The agent's duties are now "The implementer's part" of
 [p-state]: ../prd-implementation/references/state.md
 [p-def]: ../prd-implementation/references/deferred.md
 [p-conv1]: ../prd-implementation/references/backlog-conversion.md
+[p-conv2]: ../prd-implementation/references/deferred-conversion.md
 [p-cc]: ../prd-implementation/references/claude-code.md
 [p-cx]: ../prd-implementation/references/codex.md
 [p-set]: ../prd-implementation/scripts/settings.py

@@ -20,7 +20,7 @@ A backlog written before items had numbers is free-form: bullets, items of sever
 7. **Verify.**
    - Run the check command ([deferred.md](deferred.md)): it reports no violation for the backlog.
    - Count: the items marked in step 2, plus the parts added by splits, equal the item lines in the file, and the pointer line holds the highest number.
-   - Nothing is lost: every line of the old file is in the new file or in an item document, apart from what the user said to delete. Compare with `git diff`.
+   - Nothing is lost: every line of the old file, as `git show HEAD:<docs>/BACKLOG.md` prints it, is in the new file or in an item document, apart from what the user said to delete. The item documents are new and untracked, so `git diff` does not show them: read them.
 8. **Report and stop.** Tell the user how many items there are, which got documents and which were split. The commit is the user's decision; propose one commit holding exactly this change.
 
 ## Afterwards

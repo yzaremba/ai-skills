@@ -9,7 +9,8 @@
 
 schema_version = 1
 
-# Product Manager: the backlog, and a sprint from it to its final PRD.
+# Product Manager: the backlog, the one-time conversions of the backlog and
+# of the deferred file, and a sprint from the backlog to its final PRD.
 
 [[binding]]
 role = "product-manager"
@@ -21,6 +22,12 @@ part = "owns"
 role = "product-manager"
 skill = "prd-implementation"
 stage = "backlog-conversion.md"
+part = "owns"
+
+[[binding]]
+role = "product-manager"
+skill = "prd-implementation"
+stage = "deferred-conversion.md"
 part = "owns"
 
 [[binding]]
@@ -147,7 +154,7 @@ role = "implementation-manager"
 skill = "prd-implementation"
 stage = "deferred.md"
 part = "writes"
-note = "Writes what the user decided for an item, with the PLAN annotation that goes with it, on the Manager's brief. Runs no check and decides nothing."
+note = "Writes a new item or what the user decided for one, with the PLAN annotation an item of a sprint takes, on the Manager's brief. Runs no check and decides nothing."
 
 # Coder: both of its definitions, coder and coder-hard.
 

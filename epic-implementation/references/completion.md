@@ -10,7 +10,7 @@ When **every ROADMAP row** is resolved (`Done` or `Skipped`) and the PRD's succe
 
 All of this is done on the default branch (see "Where each doc is written" in [conventions.md](conventions.md)). Each commit of it, and each push, is a separate decision of the user.
 
-A row is `Done` also for a sprint that closed as code-complete. Before the offer, look in `DEFERRED.md` for open items of the epic's sprints, and put to the user whether the success criteria are met while those wait.
+A row is `Done` also for a sprint that closed as code-complete. Before the offer, look in `DEFERRED.md` for open items of the epic's sprints (an item of `Sprint: none` is of no sprint), and put to the user whether the success criteria are met while those wait.
 
 ## Closing an epic as `Abandoned`
 

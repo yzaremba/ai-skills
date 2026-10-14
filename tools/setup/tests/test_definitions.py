@@ -1506,7 +1506,7 @@ class RepositoryCase(RenderCase):
             "manager": {(sprint, "deferred.md", "checks"), (sprint, "stage-3-implementation.md", "choices"),
                         (sprint, "completion.md", "close-commands"), (sprint, "abandon.md", "close-commands")},
             "product-manager": {(sprint, "stage-0-backlog.md", "owns"), (sprint, "backlog-conversion.md", "owns"),
-                                (sprint, "stage-1-thoughts.md", "owns"), (sprint, "stage-2-prd.md", "owns"),
+                                (sprint, "deferred-conversion.md", "owns"), (sprint, "stage-1-thoughts.md", "owns"), (sprint, "stage-2-prd.md", "owns"),
                                 (epic, "stage-e0-backlog.md", "owns"), (epic, "stage-e1-thoughts.md", "owns"),
                                 (epic, "stage-e2-charter.md", "owns"), (epic, "stage-e3-roadmap.md", "seam"),
                                 (epic, "completion.md", "owns")},
@@ -1523,8 +1523,7 @@ class RepositoryCase(RenderCase):
                 self.assertLessEqual(wanted, found.get(role, set()))
         # The Manager writes nothing, so what the close and a deferred item
         # write has a role that does.
-        self.assertIn((sprint, "deferred.md", "writes"), found["implementation-manager"])
-        # The Investigator and the Code Reviewer follow no stage file.
+        self.assertIn((sprint, "deferred.md", "writes"), found["implementation-manager"])        # The Investigator and the Code Reviewer follow no stage file.
         self.assertEqual(set(found) & {"investigator", "code-reviewer"}, set())
 
     def test_every_stage_file_of_both_process_skills_has_a_row(self) -> None:
@@ -1537,7 +1536,7 @@ class RepositoryCase(RenderCase):
             - {"conventions.md", "claude-code.md", "codex.md"}
             for skill in ("prd-implementation", "epic-implementation")
         }
-        self.assertEqual(len(stages["prd-implementation"]), 10)
+        self.assertEqual(len(stages["prd-implementation"]), 11)
         self.assertEqual(len(stages["epic-implementation"]), 5)
         self.assertEqual({skill: {row.stage for row in rows if row.skill == skill} for skill in stages}, stages)
         self.assertEqual(validate.check(where).lines(), [])
