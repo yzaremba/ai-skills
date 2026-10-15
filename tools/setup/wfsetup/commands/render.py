@@ -69,8 +69,9 @@ NotebookEdit; Bash, PowerShell, Monitor; Agent), and the Codex definition
 asks for a read-only sandbox where the role may not change files. A role
 that may not dispatch is denied both tools that start an agent, Agent and
 Workflow. A role whose profile has cache = "long" waits between its turns, on
-the user or on agents it dispatched: the Product Manager, the Architect and
-the Implementation Manager. Its Claude Code definition names the one-hour
+the user or on agents it dispatched: the Product Manager, the Architect, the
+Implementation Manager and the two document reviewers. Its Claude Code
+definition names the one-hour
 prompt cache (experimental.cacheTtl: 1h), where a dispatched role is
 otherwise on the five-minute one; a one-hour cache write is billed at a
 higher rate, and Claude Code's own subagentPromptCacheTtl setting or

@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Roles Framework</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+
+  :root {
+    --ink: #12161c;
+    --ink-soft: #55616c;
+    --paper: #f2f4f6;
+    --card: #ffffff;
+    --border: #d7dde1;
+    --rail: #2e6b6e;
+    --rail-strong: #204d50;
+    --tag-bg: #e4eeed;
+    --gate: #c2803a;
+    --gate-ink: #8a5a24;
+    --done-bg: #c2803a;
+    --done-fg: #fff9f2;
+    --epic-line: #a9c3c4;
+    --shadow: 0 1px 2px rgba(18, 22, 28, 0.07), 0 4px 10px rgba(18, 22, 28, 0.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #e7eaec;
+      --ink-soft: #97a3ab;
+      --paper: #12161c;
+      --card: #1a2027;
+      --border: #2a323b;
+      --rail: #4fa3a8;
+      --rail-strong: #6cc0c5;
+      --tag-bg: #17393b;
+      --gate: #e3a15c;
+      --gate-ink: #e3a15c;
+      --done-bg: #e3a15c;
+      --done-fg: #241505;
+      --epic-line: #2f5457;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 6px 16px rgba(0, 0, 0, 0.28);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ink: #e7eaec;
+    --ink-soft: #97a3ab;
+    --paper: #12161c;
+    --card: #1a2027;
+    --border: #2a323b;
+    --rail: #4fa3a8;
+    --rail-strong: #6cc0c5;
+    --tag-bg: #17393b;
+    --gate: #e3a15c;
+    --gate-ink: #e3a15c;
+    --done-bg: #e3a15c;
+    --done-fg: #241505;
+    --epic-line: #2f5457;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 6px 16px rgba(0, 0, 0, 0.28);
+  }
+
+  :root[data-theme="light"] {
+    --ink: #12161c;
+    --ink-soft: #55616c;
+    --paper: #f2f4f6;
+    --card: #ffffff;
+    --border: #d7dde1;
+    --rail: #2e6b6e;
+    --rail-strong: #204d50;
+    --tag-bg: #e4eeed;
+    --gate: #c2803a;
+    --gate-ink: #8a5a24;
+    --done-bg: #c2803a;
+    --done-fg: #fff9f2;
+    --epic-line: #a9c3c4;
+    --shadow: 0 1px 2px rgba(18, 22, 28, 0.07), 0 4px 10px rgba(18, 22, 28, 0.05);
+  }
+
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--paper); }
+
+  .slide {
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+    min-height: 100vh;
+    max-width: 1440px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: clamp(14px, 2vh, 22px);
+    padding: clamp(24px, 4vh, 44px) clamp(28px, 4.5vw, 64px);
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+  }
+
+  code, .mono { font-family: var(--font-mono); }
+
+  /* ---------- header ---------- */
+  .head { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
+  .head-main { max-width: 900px; }
+  .eyebrow {
+    margin: 0 0 6px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--rail-strong);
+  }
+  .head-main h1 {
+    margin: 0 0 8px;
+    font-size: clamp(26px, 3.2vw, 40px);
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  .thesis {
+    margin: 0;
+    max-width: 72ch;
+    font-size: clamp(12.5px, 1.05vw, 15px);
+    line-height: 1.45;
+    color: var(--ink-soft);
+  }
+  .thesis em { font-style: normal; font-weight: 700; color: var(--gate-ink); }
+  .head-scope { text-align: right; flex: 0 0 auto; }
+  .scope-label {
+    margin: 0 0 3px;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  .scope-path { margin: 0; font-family: var(--font-mono); font-size: 11px; line-height: 1.5; color: var(--rail-strong); }
+
+  /* ---------- main grid ---------- */
+  .main { display: grid; grid-template-columns: minmax(0, 1.42fr) minmax(0, 1fr); gap: clamp(18px, 2vw, 28px); align-items: start; }
+
+  .section-title {
+    margin: 0 0 10px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--rail-strong);
+  }
+  .section-title span { font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--ink-soft); }
+
+  /* ---------- org chart ---------- */
+  .org { display: flex; flex-direction: column; }
+
+  .org-top { display: grid; grid-template-columns: 1fr minmax(0, 340px) 1fr; align-items: center; gap: 10px; }
+
+  .user-side { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+  .user-pill {
+    flex: 0 0 auto;
+    padding: 7px 14px;
+    border: 1.5px dashed var(--rail);
+    border-radius: 10px;
+    text-align: center;
+  }
+  .user-title { margin: 0; font-size: 12px; font-weight: 800; color: var(--rail-strong); }
+  .user-arrow { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
+  .user-arrow .lbl { margin: 0; font-size: 9px; line-height: 1.25; color: var(--ink-soft); text-align: center; }
+  .user-arrow .bar { width: 100%; min-width: 44px; height: 2px; background: var(--rail); position: relative; opacity: .7; }
+  .user-arrow .bar::before, .user-arrow .bar::after {
+    content: ""; position: absolute; top: -4px; width: 0; height: 0;
+    border-top: 5px solid transparent; border-bottom: 5px solid transparent;
+  }
+  .user-arrow .bar::after { right: -2px; border-left: 7px solid var(--rail); }
+  .user-arrow .bar::before { left: -2px; border-right: 7px solid var(--rail); }
+
+  .legend { display: flex; flex-direction: column; gap: 4px; font-size: 9.5px; color: var(--ink-soft); }
+  .legend p { margin: 0; display: flex; align-items: center; gap: 6px; }
+  .sw { flex: 0 0 auto; width: 18px; height: 11px; border-radius: 3px; background: var(--card); border: 1px solid var(--border); }
+  .sw.review { border: 1.5px dashed var(--epic-line); background: transparent; }
+
+  .card {
+    display: flex; flex-direction: column; gap: 5px;
+    padding: 10px 11px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: var(--shadow); position: relative;
+  }
+  .card.review { background: transparent; border: 1.5px dashed var(--epic-line); box-shadow: none; }
+  .card.manager { border: 1.5px solid var(--gate); }
+
+  .stage-eyebrow {
+    margin: 0; font-size: 9px; font-weight: 700; letter-spacing: .11em;
+    text-transform: uppercase; color: var(--ink-soft);
+  }
+  .card h2 { margin: 0; font-size: clamp(13px, 1.1vw, 15px); font-weight: 800; letter-spacing: -0.01em; }
+  .card.manager h2 { font-size: clamp(15px, 1.3vw, 18px); }
+  .desc { margin: 0; font-size: clamp(10.5px, 0.82vw, 11.5px); line-height: 1.35; color: var(--ink-soft); }
+  .desc code { font-size: .95em; color: var(--rail-strong); }
+
+  .prof { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+  .tag {
+    margin: 0; padding: 1px 6px; font-family: var(--font-mono); font-size: 10px; line-height: 1.5;
+    color: var(--rail-strong); background: var(--tag-bg); border-radius: 4px; white-space: nowrap;
+  }
+  .tag.flag { background: transparent; border: 1px solid var(--border); color: var(--ink-soft); }
+  .tag.hs { background: transparent; color: var(--gate-ink); padding-left: 0; padding-right: 0; }
+  .card.review .tag:not(.flag) { background: var(--tag-bg); }
+
+  .note {
+    margin: 3px 0 0; padding-top: 5px; border-top: 1px dashed var(--border);
+    font-size: 10px; line-height: 1.35; color: var(--ink-soft);
+  }
+  .note b { color: var(--ink); }
+  .note code { color: var(--gate-ink); font-weight: 700; }
+
+  .mgr-stub { width: 2px; height: 14px; background: var(--rail); opacity: .7; margin: 0 auto; }
+
+  .lanes {
+    --lane-gap: 12px;
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: auto 1fr;
+    column-gap: var(--lane-gap);
+    row-gap: 10px;
+    padding-top: 14px;
+  }
+  .lanes::before {
+    content: ""; position: absolute; top: 0; height: 2px; background: var(--rail); opacity: .7;
+    left: calc(100% / 6 - var(--lane-gap) / 3);
+    right: calc(100% / 6 - var(--lane-gap) / 3);
+  }
+  .lane {
+    position: relative;
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 9px 10px 10px;
+    border: 1.5px dashed var(--epic-line); border-radius: 10px;
+  }
+  .lane::before {
+    content: ""; position: absolute; top: -15px; left: 50%; width: 2px; height: 14px;
+    margin-left: -1px; background: var(--rail); opacity: .7;
+  }
+  .lane.build { grid-row: 1 / span 2; grid-column: 3; }
+  .lane-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+  .lane-name { margin: 0; font-size: 10.5px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--rail-strong); }
+  .lane-sub { margin: 0; font-size: 9.5px; color: var(--ink-soft); }
+
+  .sub { display: flex; flex-direction: column; gap: 8px; margin-left: 8px; padding-left: 10px; border-left: 2px solid var(--rail); }
+  .sub-label { margin: 0 0 -2px; font-size: 9px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--rail-strong); }
+
+  .inv { grid-column: 1 / span 2; grid-row: 2; display: flex; flex-direction: column; }
+  .inv-links { display: grid; grid-template-columns: 1fr 1fr; column-gap: var(--lane-gap); height: 10px; }
+  .inv-links span { position: relative; }
+  .inv-links span::before { content: ""; position: absolute; top: -10px; left: 50%; width: 2px; height: 20px; margin-left: -1px; background: var(--rail); opacity: .7; }
+  .inv .card { flex-direction: row; align-items: center; gap: 12px; }
+  .inv .card .inv-text { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+
+  .bind {
+    margin: 12px 0 0; padding: 9px 12px;
+    background: var(--tag-bg); border-radius: 8px;
+    font-size: clamp(10.5px, 0.85vw, 12px); line-height: 1.45; color: var(--ink);
+  }
+  .bind code { color: var(--rail-strong); font-size: .95em; }
+  .bind a { color: var(--rail-strong); font-weight: 700; }
+
+  /* ---------- right column ---------- */
+  .side { display: flex; flex-direction: column; gap: 12px; }
+  .panel {
+    padding: 12px 14px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: var(--shadow);
+  }
+  .panel .section-title { margin-bottom: 8px; }
+
+  .rules { margin: 0; padding: 0; list-style: none; counter-reset: r; display: flex; flex-direction: column; gap: 6px; }
+  .rules li {
+    counter-increment: r; position: relative; padding-left: 22px;
+    font-size: clamp(10.5px, 0.85vw, 12px); line-height: 1.4; color: var(--ink-soft);
+  }
+  .rules li::before {
+    content: counter(r); position: absolute; left: 0; top: 1px;
+    width: 15px; height: 15px; border-radius: 50%;
+    background: var(--tag-bg); color: var(--rail-strong);
+    font-size: 9px; font-weight: 800; line-height: 15px; text-align: center;
+  }
+  .rules b { color: var(--ink); }
+  .rules code { color: var(--rail-strong); font-size: .95em; }
+
+  .gates { display: flex; flex-direction: column; gap: 9px; }
+  .gate-row { display: grid; grid-template-columns: 14px minmax(0, 1fr); column-gap: 10px; align-items: start; }
+  .gate-glyph { width: 11px; height: 11px; margin: 3px 0 0 1px; background: var(--gate); box-shadow: var(--shadow); transform: rotate(45deg); }
+  .gate-glyph.hollow { background: transparent; border: 2px solid var(--gate); box-shadow: none; }
+  .gate-name { margin: 0; font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--gate-ink); }
+  .gate-items { margin: 3px 0 2px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .gate-items .tag { font-size: 10px; }
+  .gate-sub { margin: 0; font-size: clamp(10px, 0.8vw, 11px); line-height: 1.35; color: var(--ink-soft); }
+  .gate-sub b { color: var(--ink); }
+
+  .close-rail { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 3px; margin: 4px 0 3px; }
+  .close-rail .step {
+    padding: 2px 6px; font-size: 10px; font-weight: 600; white-space: nowrap;
+    color: var(--done-fg); background: var(--done-bg); border-radius: 4px;
+  }
+  .close-rail .word { padding: 2px 6px; font-family: var(--font-mono); font-size: 10px; white-space: nowrap; color: var(--gate-ink); border: 1px solid var(--gate); border-radius: 4px; }
+  .close-rail .arr { font-size: 10px; color: var(--ink-soft); }
+  .close-rail .hop { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+
+  .tiers { width: 100%; border-collapse: collapse; margin: 2px 0 6px; font-size: 11px; }
+  .tiers th, .tiers td { padding: 3px 6px; text-align: left; border-bottom: 1px solid var(--border); }
+  .tiers th { font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); }
+  .tiers td { font-family: var(--font-mono); color: var(--ink); }
+  .tiers td:first-child { font-family: var(--font-sans); font-weight: 700; color: var(--rail-strong); }
+  .tiers tr:last-child td { border-bottom: 0; }
+  .gen { margin: 0 0 8px; font-size: clamp(10.5px, 0.85vw, 12px); line-height: 1.4; color: var(--ink-soft); }
+  .gen b { color: var(--ink); }
+  .gen code { color: var(--rail-strong); font-size: .95em; }
+  .small { margin: 0; font-size: 10px; line-height: 1.35; color: var(--ink-soft); }
+  .small code { color: var(--rail-strong); }
+
+  /* ---------- footer chips ---------- */
+  .chips { display: flex; gap: 16px; }
+  .chip {
+    flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px;
+    padding: 10px 14px; background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: var(--shadow);
+  }
+  .chip-label { margin: 0; font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); }
+  .chip-main { margin: 0; font-family: var(--font-mono); font-size: clamp(11px, 0.92vw, 13px); line-height: 1.45; overflow-wrap: anywhere; }
+  .chip-main .var { color: var(--gate-ink); font-weight: 800; }
+  .chip-sub { margin: 0; font-size: 10.5px; line-height: 1.35; color: var(--ink-soft); }
+  .chip-sub code { color: var(--rail-strong); white-space: nowrap; }
+
+  @media (max-width: 1080px) {
+    .main { grid-template-columns: minmax(0, 1fr); }
+  }
+
+  @media (max-width: 760px) {
+    .slide { justify-content: flex-start; padding: 24px 16px; }
+    .head { flex-direction: column; align-items: flex-start; gap: 10px; }
+    .head-scope { text-align: left; }
+
+    .org-top { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+    .user-side { justify-content: flex-start; }
+    .user-arrow .bar { min-width: 36px; }
+    .legend { flex-direction: row; flex-wrap: wrap; gap: 4px 14px; }
+    .mgr-stub { margin: 0 0 0 20px; }
+
+    .lanes { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; padding-top: 0; row-gap: 12px; margin-left: 20px; padding-left: 12px; border-left: 2px solid var(--rail); }
+    .lanes::before, .lane::before, .inv-links { display: none; }
+    .lane.build, .inv { grid-row: auto; grid-column: auto; }
+    .inv .card { flex-direction: column; align-items: stretch; gap: 5px; }
+
+    .chips { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+<div class="slide">
+
+  <header class="head">
+    <div class="head-main">
+      <p class="eyebrow">Sprint &amp; Epic Workflow · Agent Roles</p>
+      <h1>Agent Roles Framework</h1>
+      <p class="thesis">Nine agents, each with its own context and a pinned model tier and effort, the same on Claude Code and on Codex. You talk to one of them, the Manager, and it hands the work to the others. <em>Nothing passes a gate without your word.</em></p>
+    </div>
+    <div class="head-scope">
+      <p class="scope-label">Generated by setup from</p>
+      <p class="scope-path">roles/</p>
+      <p class="scope-path">providers/&lt;name&gt;/</p>
+      <p class="scope-path">.agents/workflow.toml settings</p>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <section class="org" aria-label="Who dispatches whom">
+      <p class="section-title">Who dispatches whom <span>· tier · effort as shipped</span></p>
+
+      <div class="org-top">
+        <div class="user-side">
+          <div class="user-pill"><p class="user-title">You</p></div>
+          <div class="user-arrow">
+            <p class="lbl">requests · answers · gate words</p>
+            <span class="bar"></span>
+            <p class="lbl">questions, word for word</p>
+          </div>
+        </div>
+
+        <div class="card manager">
+          <p class="stage-eyebrow">The session you start</p>
+          <h2>Manager</h2>
+          <p class="desc">Routes each request to the role that owns it, holds the gates, relays questions and answers. Runs the deferred-item check and the close's commands. Writes no file.</p>
+          <div class="prof"><span class="tag">standard · medium</span><span class="tag flag">start · load</span></div>
+        </div>
+
+        <div class="legend" aria-label="Legend">
+          <p><span class="sw"></span>writes its own documents or code</p>
+          <p><span class="sw review"></span>reviewer: reports, changes nothing</p>
+          <p><span class="tag flag">1h</span>long prompt cache (Claude Code)</p>
+          <p><span class="tag flag">load</span>can also be loaded into your session</p>
+        </div>
+      </div>
+
+      <div class="mgr-stub"></div>
+
+      <div class="lanes">
+
+        <div class="lane">
+          <div class="lane-head"><p class="lane-name">Idea</p><p class="lane-sub">THOUGHTS · PRD · charter</p></div>
+          <div class="card">
+            <p class="stage-eyebrow">Writes</p>
+            <h2>Product Manager</h2>
+            <p class="desc">The backlog; one idea from first thought to final PRD; an epic's THOUGHTS, charter and close.</p>
+            <div class="prof"><span class="tag">deep · high</span><span class="tag hs">frontier if high-stakes</span><span class="tag flag">1h</span><span class="tag flag">load</span></div>
+          </div>
+          <div class="card review">
+            <p class="stage-eyebrow">Review · by the Manager</p>
+            <h2>Idea Reviewer</h2>
+            <p class="desc">Critical pass on THOUGHTS and the PRD, or an epic's charter, against the goal. Runs no command.</p>
+            <div class="prof"><span class="tag">frontier · max</span><span class="tag flag">1h</span></div>
+          </div>
+        </div>
+
+        <div class="lane">
+          <div class="lane-head"><p class="lane-name">Plan</p><p class="lane-sub">PLAN + TASKS · roadmap</p></div>
+          <div class="card">
+            <p class="stage-eyebrow">Writes</p>
+            <h2>Architect</h2>
+            <p class="desc">PLAN and TASKS from a final PRD, with parallel groups and <code>light</code>/<code>hard</code> tags; an epic's roadmap.</p>
+            <div class="prof"><span class="tag">deep · high</span><span class="tag hs">frontier if high-stakes</span><span class="tag flag">1h</span><span class="tag flag">load</span></div>
+          </div>
+          <div class="card review">
+            <p class="stage-eyebrow">Review · by the Manager</p>
+            <h2>Plan Reviewer</h2>
+            <p class="desc">Checks the PLAN against the PRD and the code, and every parallel claim in it. Runs no command.</p>
+            <div class="prof"><span class="tag">frontier · max</span><span class="tag flag">1h</span></div>
+          </div>
+        </div>
+
+        <div class="lane build">
+          <div class="lane-head"><p class="lane-name">Build</p><p class="lane-sub">sprint · hotfix · close</p></div>
+          <div class="card">
+            <p class="stage-eyebrow">Build lead</p>
+            <h2>Implementation Manager</h2>
+            <p class="desc">Briefs Coders; keeps TASKS, PLAN annotations and STATE; makes the local commits and merges. Writes no code.</p>
+            <div class="prof"><span class="tag">deep · medium</span><span class="tag flag">1h</span></div>
+          </div>
+          <div class="sub">
+            <p class="sub-label">Dispatched by the IM</p>
+            <div class="card">
+              <p class="stage-eyebrow">Implements</p>
+              <h2>Coder</h2>
+              <p class="desc">One brief, implemented and self-verified. Commits only when the brief asks; never pushes.</p>
+              <div class="prof"><span class="tag">standard · medium</span></div>
+              <p class="note"><b>Hard Coder</b> <span class="mono">coder-hard</span>, same text, for steps tagged <code>**[hard]**</code> · <span class="mono">deep · high</span></p>
+            </div>
+            <div class="card review">
+              <p class="stage-eyebrow">Review · by the IM</p>
+              <h2>Code Reviewer</h2>
+              <p class="desc">Adversarial pass on the diff against its PLAN steps and PRD; runs the tests; changes nothing.</p>
+              <div class="prof"><span class="tag">frontier · max</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="inv">
+          <div class="inv-links" aria-hidden="true"><span></span><span></span></div>
+          <div class="card">
+            <div class="inv-text">
+              <p class="stage-eyebrow">Dispatched by the Product Manager or the Architect</p>
+              <h2>Investigator</h2>
+              <p class="desc">One investigation about the code or an external contract; findings go back to the role that asked. Changes nothing, dispatches nobody.</p>
+            </div>
+            <div class="prof"><span class="tag">standard · high</span></div>
+          </div>
+        </div>
+
+      </div>
+
+      <p class="bind">Roles run the process skills, they do not replace them. <code>roles/bindings.toml</code> binds every stage file of <code>prd-implementation</code> and <code>epic-implementation</code> to the role that <code>owns</code> it or a part of it (critical pass, choices, build lead, close…). The Investigator and the Code Reviewer follow no stage file. The process itself: <a href="prd-implementation-slide.html">prd-implementation-slide.html</a>.</p>
+    </section>
+
+    <aside class="side">
+
+      <section class="panel" aria-label="How you work with it">
+        <p class="section-title">How you work with it</p>
+        <ol class="rules">
+          <li><b>Talk to the Manager.</b> It dispatches the role that owns the work, prints each question that role has for you word for word, and sends your answer back. On Claude Code you may also type in a dispatched role's thread.</li>
+          <li><b>You never have to load a role.</b> Loading the Product Manager or the Architect into your own session (<code>/architect</code>, <code>$architect</code>) is an option; on Claude Code, only in a session not started as the Manager.</li>
+          <li><b>One review per document, by another role.</b> The Manager sends a PRD or charter to the Idea Reviewer and a PLAN to the Plan Reviewer before its gate; the IM sends code to the Code Reviewer.</li>
+          <li><b>Coders in parallel</b> only where the PLAN marks a group, each in its own worktree, at most <code>roles.max_parallel_coders</code> (3) at once.</li>
+          <li><b>Commits you ask for:</b> the Manager commits the files a role wrote and reported, each by name.</li>
+          <li><b>STATE carries the sprint.</b> Any session, on either provider, picks a sprint up from its docs and STATE.</li>
+          <li><b>Lessons at the close.</b> Proposed with the Ready commit, written to the project memory only when you approve them.</li>
+        </ol>
+      </section>
+
+      <section class="panel" aria-label="Gates">
+        <p class="section-title">Gates <span>· one word, one gate</span></p>
+        <div class="gates">
+          <div class="gate-row">
+            <span class="gate-glyph hollow"></span>
+            <div>
+              <p class="gate-name">Document gates</p>
+              <div class="gate-items"><span class="tag">PRD</span><span class="tag">PLAN + TASKS</span><span class="tag">epic charter</span></div>
+              <p class="gate-sub">Say it to the Manager, or to the role that owns the finished, unchanged document.</p>
+            </div>
+          </div>
+          <div class="gate-row">
+            <span class="gate-glyph"></span>
+            <div>
+              <p class="gate-name">Action gates</p>
+              <div class="gate-items"><span class="tag">implement</span><span class="tag">merge to trunk</span><span class="tag">push</span><span class="tag">tag</span><span class="tag">deploy</span></div>
+              <p class="gate-sub"><b>Only a message you write to the Manager.</b> Approving the PLAN starts no build: implementation has its own word, given with the choices.</p>
+            </div>
+          </div>
+          <div class="gate-row">
+            <span class="gate-glyph"></span>
+            <div>
+              <p class="gate-name">One word closes a sprint</p>
+              <div class="close-rail">
+                <span class="word">"close it"</span>
+                <span class="hop"><span class="arr">→</span><span class="step">Ready commit</span></span>
+                <span class="hop"><span class="arr">→</span><span class="step">merge</span></span>
+                <span class="hop"><span class="arr">→</span><span class="step">suite</span></span>
+                <span class="hop"><span class="arr">→</span><span class="step">cleanup</span></span>
+                <span class="hop"><span class="arr">→</span><span class="step">archive + commit</span></span>
+              </div>
+              <p class="gate-sub">Stops only on trouble. A push is a word of its own.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-label="One source, two providers">
+        <p class="section-title">One source, two providers</p>
+        <p class="gen"><code>render</code> writes each role's definition for <b>Claude Code</b> and for <b>Codex</b>. A role names a tier, never a model; the dictionary maps the tier, and your settings may change it.</p>
+        <table class="tiers">
+          <thead><tr><th>Tier</th><th>Claude Code</th><th>Codex</th></tr></thead>
+          <tbody>
+            <tr><td>standard</td><td>sonnet</td><td>gpt-6.1-sol</td></tr>
+            <tr><td>deep</td><td>opus</td><td>gpt-6.1-sol</td></tr>
+            <tr><td>frontier</td><td>fable</td><td>gpt-6-astra</td></tr>
+          </tbody>
+        </table>
+        <p class="small">Shipped mapping in <code>providers/&lt;name&gt;/dictionary.toml</code>; <code>fast</code> (haiku · gpt-6-luna) is used by no shipped role. Claude Code enforces a role's tool limits; on Codex they are instructions.</p>
+      </section>
+
+    </aside>
+  </main>
+
+  <footer class="chips">
+    <div class="chip">
+      <p class="chip-label">Start as the Manager</p>
+      <p class="chip-main">claude --agent manager --effort medium</p>
+      <p class="chip-main">codex --profile manager</p>
+      <p class="chip-sub">or the project default <code>roles.manager_default</code>: <code>init --project DIR --manager-default</code>, then <code>render --project DIR</code>; Codex honours it only in a trusted project</p>
+    </div>
+    <div class="chip">
+      <p class="chip-label">Settings · later layer wins</p>
+      <p class="chip-main">~/.agents/workflow.toml</p>
+      <p class="chip-main">&lt;project&gt;/.agents/workflow<span class="var">[.local]</span>.toml</p>
+      <p class="chip-sub">over the shipped defaults, key by key; <code>show roles</code> prints each role's model and effort</p>
+    </div>
+    <div class="chip">
+      <p class="chip-label">Setup</p>
+      <p class="chip-main">workflow_setup.py <span class="var">init</span> · <span class="var">render</span> · <span class="var">doctor</span></p>
+      <p class="chip-sub">init proposes the mapping, render writes the definitions, doctor checks drift and discovery</p>
+    </div>
+  </footer>
+
+</div>
+</body>
+</html>

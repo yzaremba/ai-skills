@@ -18,7 +18,9 @@ providers/  <name>/dictionary.toml  <name>/actions.md   for claude-code and code
 tools/      setup/            workflow_setup.py  wfsetup/  defaults.toml  tests/
                               manifest-keys.json  v1-known-hashes.json  build_v1_hashes.py
             session-profile/  session-record reader and its tests
-docs/       agent-roles-framework.md, v1-to-v2.md and the v1 slide
+docs/       agent-roles-framework.md  v1-to-v2.md
+            prd-implementation-slide.html  roles-framework-slide.html   the two slides,
+                                                                        each with its -preview.png
 ```
 
 ## One directory per logical unit

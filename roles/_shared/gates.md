@@ -2,7 +2,7 @@
 
 A gate is a point where the work goes on only on the user's word; it opens when that word passes it.
 
-- **Document gates** approve a finished document so that the next can be written: a PRD, a PLAN with its TASKS, an epic charter, an epic roadmap.
+- **Document gates** approve a finished document so that the next can be written: a PRD, a PLAN with its TASKS, an epic charter.
 - **Action gates** start something that changes more than documents: implementation, and any push, merge to trunk, tag or deploy.
 
 Approving the PLAN with its TASKS starts no implementation: that action gate has its own word, given with the implementation choices.
