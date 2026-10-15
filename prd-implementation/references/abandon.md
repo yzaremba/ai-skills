@@ -32,7 +32,7 @@ Read [conventions.md](conventions.md) first. This closes a sprint that will not 
    - The commit of this change is a separate decision of the user, and a push another.
 5. **Report** what was closed and everything that is left in place: each worktree by its path, each branch with the number of commits the default branch lacks and whether a remote has it, and any uncommitted files. For work left in place, name what a later decision to keep it means (step 3).
 
-Lessons are put to the user with the archive offer of step 4, and the approved ones are written where "Lessons" in [completion.md](completion.md) says: with sprint docs in a separate repository, not in the docs repository.
+Lessons are put to the user before the change of step 4, and the approved ones are written where "Lessons" in [completion.md](completion.md) says: with sprint docs in a separate repository, not in the docs repository.
 
 An idea of the abandoned sprint that should still be done goes to the backlog as a new item with a new number, on the user's word ([stage-0-backlog.md](stage-0-backlog.md)). The numbers of the items it was started from are not used again.
 

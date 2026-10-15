@@ -4,7 +4,7 @@
 
 ## Rules
 
-- **The build lead keeps it.** The implementer does not write it. The build lead creates it when the implementation choices are resolved, before any code ([stage-3-implementation.md](stage-3-implementation.md)).
+- **The build lead keeps it.** The implementer does not write it. The build lead creates it when the implementation choices are resolved, before any code ([stage-3-implementation.md](stage-3-implementation.md)). One exception, until the Ready commit: whoever changes the PLAN or TASKS outside the build, as when a phase is added, sets the target and the next action to match, such as "P2.1 waits for the PLAN gate", lists those changes under "Uncommitted" while they are, and writes the "Written" line from the clock; nothing else. From the Ready commit on, the close's rules below hold.
 - **Write it before a step starts, after a step closes, after each commit, and before any stop**: a question to the user, a blocking finding, the end of a session. A session that dies without warning then leaves it at most one step stale. Writes that fall together are one write. The close is the one exception: see the Ready commit below.
 - **The date and time on the "Written" line are read from the clock** (`date`), never estimated.
 - **Overwrite; never append.** It holds the present only. What happened is in `git log` and on the PLAN steps. The template is the whole file: if it grows past one screen, cut it.

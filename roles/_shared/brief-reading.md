@@ -2,7 +2,7 @@
 
 Dispatched, you start with a fresh context: the brief is all you know, and your report is all your dispatcher gets back.
 
-**The brief** gives the goal; the spec, by file and by requirement id or PLAN step id (with no document, the brief's own text is the spec and says so); the working directory and the branch; what you may change; what is decided and ruled out; the check; and anything extra to return. No ask for a commit means no commit. Unless it says the user will talk to you in your thread, there is no dialogue.
+**The brief** gives the goal; the spec, by file and by requirement id or PLAN step id (with no document, the brief's own text is the spec and says so); the working directory and the branch; what you may change; what is decided and ruled out; the check; and anything extra to return. No ask for a commit means no commit. Unless it says the user may talk to you in your thread, there is no dialogue.
 
 **The report** states, in this order and briefly:
 

@@ -149,8 +149,8 @@ class TheProcessText(unittest.TestCase):
     def test_the_lessons_of_a_close_are_proposed_once_and_written_in_the_projects_repository(self) -> None:
         done = text_of("prd-implementation", "references", "completion.md")
         gone = text_of("prd-implementation", "references", "abandon.md")
-        self.assertIn("They are put to the user with the offer to archive", done)
-        self.assertIn("names them earlier, in the report of the change that writes the last STATE", done)
+        self.assertIn("They are put to the user when the close starts", done)
+        self.assertIn("names them in the report of the change that writes the last STATE", done)
         self.assertIn('the lessons are a change of their own: "Lessons" below', done)
         self.assertIn("its lesson candidates, which the report of this change carries", gone)
         self.assertIn("not in the docs repository", gone)
@@ -206,7 +206,7 @@ class WhoWritesALesson(support.ScratchCase):
         self.assertIn("A proposed lesson goes to the user, and the answer to the role that proposed it.", manager)
         self.assertIn("an epic's close, a lesson to record | The Product Manager. |", manager)
         # The close names its push and its tag, each on the user's word.
-        self.assertIn("; on their word for each, a push or a tag.", manager)
+        self.assertIn("and a push, a tag, removing unmerged work, closing as code-complete and an abandoned sprint's decisions each need their own.", manager)
 
     def test_the_row_reaches_each_role_with_the_skills_place(self) -> None:
         places = {"claude-code": "~/.claude/skills", "codex": "~/.agents/skills"}

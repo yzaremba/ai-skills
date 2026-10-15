@@ -285,9 +285,9 @@ says how a project defines one.
 | Role | What it does | Claude Code | Codex |
 |------|--------------|-------------|-------|
 | Manager | The session the user starts: routes requests, holds the gates, runs the commands of a sprint's close, writes no file. | `claude --agent manager --effort medium`, or `/manager` in a session | `codex --profile manager`, or `$manager` in a session |
-| Product Manager | Keeps the backlog and develops one idea with the user into THOUGHTS and a PRD, or an epic's charter. | Dispatched by the Manager; the user types in its thread, or answers its questions at the Manager, which prints them. Or loaded: `/product-manager` | Loaded: `$product-manager`. The user cannot type to a dispatched agent there |
+| Product Manager | Keeps the backlog and develops one idea with the user into THOUGHTS and a PRD, or an epic's charter. | Dispatched by the Manager, which relays its questions; the user may also type in its thread. Or loaded: `/product-manager` | Dispatched by the Manager, which relays its questions. Or loaded: `$product-manager` |
 | Idea Reviewer | The critical pass on THOUGHTS and a PRD or a charter. Reads, and changes nothing. | Dispatched by the Manager | Dispatched by the Manager |
-| Architect | Turns a final PRD into PLAN and TASKS, and a final charter into the epic's roadmap. | Dispatched by the Manager; the user types in its thread, or answers its questions at the Manager, which prints them. Or loaded: `/architect` | Dispatched by the Manager; loaded, `$architect`, when it needs a dialogue |
+| Architect | Turns a final PRD into PLAN and TASKS, and a final charter into the epic's roadmap. | Dispatched by the Manager, which relays its questions; the user may also type in its thread. Or loaded: `/architect` | Dispatched by the Manager, which relays its questions. Or loaded: `$architect` |
 | Plan Reviewer | Checks a PLAN against its PRD and the code. Reads, and changes nothing. | Dispatched by the Manager | Dispatched by the Manager |
 | Implementation Manager | The build lead of a sprint or a hotfix: briefs Coders, keeps TASKS, the PLAN's annotations and STATE, makes the local commits and merges. Writes no code. | Dispatched by the Manager | Dispatched by the Manager |
 | Coder | Implements one brief and verifies it. A second definition, `coder-hard`, has a higher profile. | Dispatched by the Implementation Manager | Dispatched by the Implementation Manager |
@@ -475,7 +475,7 @@ and each skill's `SKILL.md`.
   no session record has confirmed yet that either then applies. `effortLevel` cannot
   hold `max`.
 - **Not exercised yet:** an approval of a document said to the role that owns it and
-  taken at the Manager, on either provider; a loaded role on Codex beyond six turns or
+  taken as passing its gate, on either provider; a loaded role on Codex beyond six turns or
   across a compaction.
 - **Other programs.** The guards on where setup writes and removes hold against the disk
   as a run finds it, not against another program that changes the same directories

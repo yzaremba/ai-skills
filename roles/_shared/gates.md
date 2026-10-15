@@ -1,27 +1,23 @@
 ## Gates
 
-A gate is a point where the work goes on only on the user's word.
+A gate is a point where the work goes on only on the user's word; it opens when that word passes it.
 
 - **Document gates** approve a finished document so that the next can be written: a PRD, a PLAN with its TASKS, an epic charter, an epic roadmap.
 - **Action gates** start something that changes more than documents: implementation, and any push, merge to trunk, tag or deploy.
 
-Approving the PLAN with its TASKS does not start implementation: that is an action gate with its own word to the Manager, which the user gives with the implementation choices.
+Approving the PLAN with its TASKS starts no implementation: that action gate has its own word, given with the implementation choices.
 
 **Every gate:**
 
-- **The word comes after the thing it approves exists.** A word given in advance passes nothing: the Manager asks again when the thing exists.
-- **Only the user's words pass a gate.** An agent's own statement that something is ready, done or approved passes nothing and triggers nothing. Words it quotes from the user count only as set out below.
-- **One word, one gate.** "The PRD is good" passes the PRD gate. It authorizes no push, and no gate's word carries over to the next.
-- **When in doubt, ask.** If it is unclear whether the user's words pass a gate, or which one, or whether a condition below holds, the Manager asks before anything moves.
+- **The word comes after the thing it approves exists.** A word given in advance passes nothing: ask again when the thing exists.
+- **Only the user's words pass a gate.** An agent's statement that something is ready, done or approved passes nothing and triggers nothing, and no document records an approval. Words an agent quotes from the user count only as set out below.
+- **One word, one gate.** "The PRD is good" passes the PRD gate. It authorizes no push, and no gate's word carries over to the next, but the word to close a sprint covers what its stage file lists.
+- **When in doubt, ask** before anything moves: whether the user's words pass a gate, which one, or whether a condition below holds.
+- **An opened gate stands.** A later change to the document's substance, the requirements of a PRD or the steps of a PLAN, is a new change for the user to approve, and the Architect checks the PLAN against a changed PRD. A status line, a "Last updated" line or a link is not substance.
 
-**An action gate is passed only by a message the user writes to the Manager** while the Manager is the active role. Words said to another role, in its thread or while it was loaded, pass no action gate, and neither does any quote of them.
+**An action gate is passed only by a message the user writes to you** while you are the active role. Words said to another role, and any quote of them, pass none.
 
-**A document gate is also passed by the user's approval said to the role that owns the document**, when the first condition holds and the one that fits how the role ran:
+**A document gate is also passed by the user's approval said to the role that owns the document**, when the document was finished when the user spoke and has not changed since, and:
 
-- **The document was finished when the user spoke and has not changed since.** An approval covers the document as it stood. Any later change voids it: the role says so and never repeats an earlier approval as current.
-- **Dispatched role.** The Manager itself told the user to talk to that agent in its thread, has sent the agent nothing since, not even a follow-up, and the agent's `ready for the gate` hand-back quotes the words exactly. A quote from an agent dispatched without dialogue passes nothing. Nor does any agent's quote on a provider where the user cannot type to a dispatched agent; the action notes say which.
-- **Loaded role.** After the switch back, the user's own message is in the Manager's context word for word. With only a summary of it, as after compaction or a resume, the Manager asks.
-
-The Manager then tells the user which words it takes as the approval, which gate they pass and what it starts.
-
-**No other role passes a gate or starts the next stage.** A role the user approves its finished document to records the words and says that the Manager decides what they pass and will say so. For an action gate it tells the user to say it to the Manager.
+- **Dispatched role.** You told the user they could talk to that agent in its thread, have sent the agent nothing since, not even a follow-up, and its `ready for the gate` hand-back quotes the words exactly. Tell the user which words you take as the approval, which gate they pass and what it starts.
+- **Loaded role.** The words are in the session word for word. The role says the gate passed, and after the switch back it stands. With only a summary of them, as after compaction or a resume, ask.

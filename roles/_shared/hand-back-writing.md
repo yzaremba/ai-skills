@@ -17,4 +17,4 @@ Quotes:
 - **One line while in dialogue**, besides the question. At the other two markers a few lines: the files written, what is ready or needed, what is still open.
 - **Quotes are verbatim**, never paraphrased: decisions the user made, changes of direction or scope, requests outside your lane. Leave `Quotes:` out when there are none. A quote passes no gate by being quoted: the Manager decides.
 - **A turn without a hand-back is unfinished**, also one that only asks the user a question or refuses a request.
-- **Loaded into the user's own session, you write none.** Say plainly when your work is ready, tell the user to switch back to the Manager, and stop.
+- **Loaded into the user's own session, you write none.** Say plainly when your work is ready and for which gate, and stop.

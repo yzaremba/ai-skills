@@ -1511,7 +1511,8 @@ class RepositoryCase(RenderCase):
                                 (epic, "stage-e2-charter.md", "owns"), (epic, "stage-e3-roadmap.md", "seam"),
                                 (epic, "completion.md", "owns")},
             "idea-reviewer": {(sprint, "stage-2-prd.md", "critical-pass"), (epic, "stage-e2-charter.md", "critical-pass")},
-            "architect": {(sprint, "stage-3-plan-tasks.md", "owns"), (epic, "stage-e3-roadmap.md", "decomposes")},
+            "architect": {(sprint, "stage-3-plan-tasks.md", "owns"), (sprint, "state.md", "plan-change"),
+                          (epic, "stage-e3-roadmap.md", "decomposes")},
             "plan-reviewer": {(sprint, "stage-3-plan-tasks.md", "reviews")},
             "implementation-manager": {(sprint, "stage-3-implementation.md", "build-lead"),
                                        (sprint, "state.md", "build-lead"),
@@ -1525,6 +1526,76 @@ class RepositoryCase(RenderCase):
         # write has a role that does.
         self.assertIn((sprint, "deferred.md", "writes"), found["implementation-manager"])        # The Investigator and the Code Reviewer follow no stage file.
         self.assertEqual(set(found) & {"investigator", "code-reviewer"}, set())
+
+    def test_the_rules_of_the_role_workflow_after_the_acceptance_run(self) -> None:
+        """The rules the acceptance run of sample sprint 02 led to: one word
+        closes a sprint, a loaded role passes its document's gate, no sprint
+        doc records an approval, the Manager runs the named checks and makes
+        a commit of what a role wrote, and the Architect keeps STATE in step
+        with a PLAN it changes."""
+        def read(*parts: str) -> str:
+            return support.REPOSITORY.joinpath(*parts).read_text(encoding="utf-8")
+
+        def row(text: str, start: str) -> str:
+            found = [line for line in text.splitlines() if line.startswith(start)]
+            self.assertEqual(len(found), 1, start)
+            return found[0]
+
+        # H: one word closes a sprint, and stops only on trouble.
+        skill = read("prd-implementation", "SKILL.md")
+        close = row(skill, "| Closing a sprint:")
+        for part in ("the Ready commit", "the merge to the default branch", "the full suite", "the removal of the merged "
+                     "worktree and branch", "the archive change and its commit", "Said to close it",
+                     "a merge conflict", "a failing suite", "a removal that needs force"):
+            self.assertIn(part, close)
+        apart = row(skill, "| Any push; removing unmerged work |")
+        self.assertIn("neither the commit cadence nor the word to close covers it", apart)
+        self.assertNotIn("Agreed to the offer", skill)
+        self.assertNotIn("committing the archive change", skill)
+        done = read("prd-implementation", "references", "completion.md")
+        whole = row(done, "**The user's word to close the sprint authorizes the whole close**")
+        for part in ("the Ready commit", "the merge to the default branch", "the archive change and its commit",
+                     "It stops only on trouble: a merge conflict, a failing suite, or a removal that would need force",
+                     "any push, removing unmerged work, and closing as code-complete"):
+            self.assertIn(part, whole)
+        self.assertNotIn("**Offer**", done)
+        self.assertNotIn("**Ask for the commit**", done)
+        self.assertIn("The word to close covers this commit", done)
+        conventions = read("prd-implementation", "references", "conventions.md")
+        self.assertIn("**The lessons and backlog finds of a close are one list.**", conventions)
+        # B: a loaded role passes its document's gate, and the Manager takes it.
+        gates = read("roles", "_shared", "gates.md")
+        loaded = row(gates, "- **Loaded role.**")
+        self.assertIn("The role says the gate passed, and after the switch back it stands.", loaded)
+        self.assertIn("With only a summary of them", loaded)
+        self.assertIn("the word to close a sprint covers what its stage file lists", gates)
+        owning = read("roles", "_shared", "gates-owning.md")
+        self.assertIn("Loaded, its gate passes: say so, and what comes next", owning)
+        self.assertNotIn("the Manager holds every gate", owning.lower())
+        # C: an opened gate stands; only a change of substance is a new change.
+        for text in (gates, owning):
+            self.assertIn("is not substance", text)
+            self.assertNotIn("Any later change voids it", text)
+        # D: no sprint doc records an approval.
+        section = conventions.split("## No approval in a doc\n", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("THOUGHTS, PRD, PLAN and TASKS never record an approval or a review", section)
+        self.assertIn("the PRD has none", section)
+        self.assertIn("STATE", section)
+        for stage in ("stage-1-thoughts.md", "stage-2-prd.md"):
+            self.assertIn('"No approval in a doc"', read("prd-implementation", "references", stage))
+        # E and G: the Manager runs the named checks, and commits what a role wrote.
+        manager = read("roles", "manager", "ROLE.md")
+        self.assertIn("When the user asks to check the deferred items, also run each named check it lists yourself",
+                      manager)
+        self.assertIn("one that plainly would change something you do not run, but name to the user", manager)
+        self.assertIn("a commit the user asks for of files a role wrote and reported, each staged and committed by "
+                      "name, never all", manager)
+        self.assertIn("**Create or change a file**", manager)
+        self.assertNotIn("by whoever ran the check", read("prd-implementation", "references", "deferred.md"))
+        # F: the Architect keeps STATE in step with a PLAN it changes.
+        state = read("prd-implementation", "references", "state.md")
+        self.assertIn("One exception, until the Ready commit: whoever changes the PLAN or TASKS outside the build", state)
+        self.assertIn("**STATE.**", read("roles", "architect", "ROLE.md"))
 
     def test_every_stage_file_of_both_process_skills_has_a_row(self) -> None:
         """The table is complete, and a role that may not write owns no
@@ -1604,18 +1675,23 @@ class RepositoryCase(RenderCase):
                 self.assertIn("passes nothing and triggers nothing", text)
                 self.assertIn("only on the user's word", text)
                 # The gate rule the relay leans on: a follow-up ends the quote's standing.
-                self.assertIn("has sent the agent nothing since, not even a follow-up", text)
+                self.assertIn("have sent the agent nothing since, not even a follow-up", text)
                 self.assertNotIn("## Writing hand-backs", text)
-        # How it is done where the user can type to a dispatched agent.
-        self.assertIn("Tell the user how, and that its questions also appear here, to answer in either place:",
+        # Where the user can type to a dispatched agent, that is an option:
+        # the Manager relays the questions either way.
+        self.assertIn("an option you may name; you relay its questions either way. How:",
                       texts["manager", CLAUDE])
         self.assertIn("After that only your follow-up resumes it.", texts["manager", CLAUDE])
         for role in ("product-manager", "architect"):
             self.assertIn("The user answers in your thread or through the Manager's follow-up; either resumes you.",
                           texts[role, CLAUDE])
-            # On Codex no role is dispatched for a dialogue.
+            # On Codex no role is dispatched for a dialogue: the Manager relays.
             self.assertIn("you cannot ask the user anything", texts[role, CODEX])
-        self.assertIn("no role is dispatched for dialogue", texts["manager", CODEX])
+        self.assertIn("every brief says there is no dialogue, and you relay the agent's questions",
+                      texts["manager", CODEX])
+        for provider in (CLAUDE, CODEX):
+            self.assertIn("Never ask the user to load a role", texts["manager", provider])
+            self.assertNotIn("told to load the role", texts["manager", provider])
 
 
 if __name__ == "__main__":

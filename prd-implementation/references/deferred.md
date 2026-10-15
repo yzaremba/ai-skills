@@ -112,7 +112,7 @@ An item's date has passed when today is later than its `Review by:` date. On the
 
 When an item of a sprint is resolved or dropped, **replace the `> Audit` annotation on its PLAN step** in the same change, with the verdict `RESOLVED` or `DROPPED` and the item's number: `> Audit 2026-11-20: RESOLVED: D3, legacy export path removed in a1b2c3d`. The PLAN is usually in `DONE/` by then; the annotation is the lasting record.
 
-Each outcome is one change on the default branch, by whoever ran the check, on the user's decision. Its commit is a separate decision of the user: ask for it.
+Each outcome is one change on the default branch, on the user's decision. Its commit is a separate decision of the user: ask for it.
 
 ## Closed items leave the file
 

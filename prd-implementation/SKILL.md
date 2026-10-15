@@ -17,7 +17,7 @@ A sprint may stand alone or belong to a larger multi-sprint **epic** (the `epic-
 ## Read before you act
 
 - **Before acting in a stage, read that stage's file** from the table below, in full. This file is only the map: the rules are in the stage files, and they are worded to stop mistakes that keep recurring. Do not act on a stage from memory of an earlier read in another session.
-- **Before creating, renaming or editing any sprint doc, read [references/conventions.md](references/conventions.md).** It holds the sprint docs directory, sprint numbering and the index, file naming, where each doc is written, the task lifecycle, TASKS-line discipline, the format limits, "Last updated" hygiene and how questions are put to the user. They apply in every stage.
+- **Before creating, renaming or editing any sprint doc, read [references/conventions.md](references/conventions.md).** It holds the sprint docs directory, sprint numbering and the index, file naming, where each doc is written, the task lifecycle, TASKS-line discipline, the format limits, "Last updated" hygiene, that no doc records an approval, and how questions are put to the user. They apply in every stage.
 - When a gate opens, read the next stage's file before doing anything in it.
 - **Picking up a sprint that is being implemented, read its STATE file first** (`SPRINTNN-STATE-slug.md`), then compare it with git as [references/state.md](references/state.md) says. A mismatch goes to the user; it is never resolved silently.
 
@@ -42,7 +42,7 @@ All files are in `references/` in this skill's directory.
 
 ## Gates
 
-Each gate needs the user's explicit signal. An agent's own statement, and your own judgment that a doc looks ready, do not open a gate. Where roles are installed, the roles' gate rules say when the user's words quoted by a role count. A question put at a gate follows the settings below.
+Each gate needs the user's explicit signal, and no sprint doc records it. An agent's own statement, and your own judgment that a doc looks ready, do not open a gate. A change to a document's substance after its gate opened is a new change, put to the user; a status line, a "Last updated" line or a link is not substance. Where roles are installed, the roles' gate rules say when the user's words said to a role, or quoted by one, count. A question put at a gate follows the settings below.
 
 | Before | The user must have |
 |--------|--------------------|
@@ -50,10 +50,10 @@ Each gate needs the user's explicit signal. An agent's own statement, and your o
 | Writing the PRD | Confirmed that THOUGHTS are ready to turn into requirements |
 | Creating PLAN or TASKS | Said the PRD is final enough to proceed |
 | Writing any code | Given the word to implement, with the implementation choices. That word is the gate. The summary of the choices is printed before any code, and the session proceeds without waiting for a reply: the summary is the user's chance to stop it |
-| Each later commit | Before implementation: said so, for that commit. During implementation: chosen a commit cadence other than "don't commit". The cadence authorizes the build lead's commits on the sprint's branch, the Ready commit of the close included, and the one commit of each member of a parallel group |
+| Each later commit | Before implementation: said so, for that commit. During implementation: chosen a commit cadence other than "don't commit". The cadence authorizes the build lead's commits on the sprint's branch and the one commit of each member of a parallel group |
 | Closing a sprint as code-complete; abandoning or superseding a sprint; resolving, re-dating or dropping a deferred item | Decided it. Each is put to them; none is settled for them |
-| Merging the sprint's branch to the default branch; committing the archive change; any push; removing unmerged work | Authorized that action. Each is a separate decision, and the commit cadence covers none of them |
-| Moving the sprint set to the archive | Agreed to the offer |
+| Closing a sprint: the Ready commit, the merge to the default branch, the full suite there, the removal of the merged worktree and branch, the archive change and its commit | Said to close it, finished or, as decided above, code-complete. That one word covers the whole close, which stops only on trouble: a merge conflict, a failing suite, a removal that needs force |
+| Any push; removing unmerged work | Authorized that action. Each is a separate decision, and neither the commit cadence nor the word to close covers it |
 | Writing a lesson, to the project memory or as a change to the process | Approved that lesson |
 
 ## Who does what

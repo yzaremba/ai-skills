@@ -66,6 +66,7 @@ The ROADMAP's structure, and the steps for starting one of its sprints, are in [
   - **Abandoned or superseded**: `Skipped` with a one-line reason, like a cut sprint under "Scope changes". The row stays, and a sprint that supersedes it gets a row of its own.
   - The Docs link, which points at the sprint's THOUGHTS file from the sprint's start, follows the sprint set into `DONE/`.
 - **"Last updated" hygiene**: `**Last updated:** YYYY-MM-DD — <≤2-line summary of this rev>`. No running history — git log carries that. Same rule for THOUGHTS/PRD headers.
+- **No epic doc records an approval or a review**: no "approved", "awaits approval" or "prepared for review" in THOUGHTS, the charter or the ROADMAP. A gate passes by the user's word, not by the file. The epic status and a row's Status say where the work stands, never a gate.
 
 ## Epic status vocab (ROADMAP header)
 

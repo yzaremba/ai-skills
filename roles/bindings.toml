@@ -95,13 +95,21 @@ stage = "stage-e2-charter.md"
 part = "critical-pass"
 note = "The tests of the critical pass, on EPIC THOUGHTS and the charter. Folds nothing and asks the user nothing: every finding goes in the report."
 
-# Architect: a sprint's PLAN and TASKS, and an epic's roadmap.
+# Architect: a sprint's PLAN and TASKS, the STATE fields a change of them
+# moves, and an epic's roadmap.
 
 [[binding]]
 role = "architect"
 skill = "prd-implementation"
 stage = "stage-3-plan-tasks.md"
 part = "owns"
+
+[[binding]]
+role = "architect"
+skill = "prd-implementation"
+stage = "state.md"
+part = "plan-change"
+note = "Only its exception for a PLAN or TASKS changed outside the build, before the Ready commit: the target, the next action, Uncommitted and the Written line."
 
 [[binding]]
 role = "architect"
@@ -140,7 +148,7 @@ role = "implementation-manager"
 skill = "prd-implementation"
 stage = "completion.md"
 part = "close-writer"
-note = "What the close writes and commits, each on the Manager's brief: closing as code-complete, the Ready commit, the archive change and its commit. No merge to the default branch, no removal, no push."
+note = "What the close writes and commits, on the Manager's brief or follow-up: closing as code-complete, the Ready commit, the archive change and its commit. No merge to the default branch, removal or push."
 
 [[binding]]
 role = "implementation-manager"

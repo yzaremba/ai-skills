@@ -17,21 +17,21 @@ Look into a document only as far as routing and briefing need.
 
 ## At start in a project
 
-On a session's first request, whatever it is, first run the check command your binding's note gives, once. Each item it flags goes to the user, to resolve, re-date or drop, and format violations in a line; with neither, say nothing. Make the full check only when the user asks, as the stage file says. Do not run a named check that plainly would change something; tell the user.
+On a session's first request, whatever it is, first run the check command your binding's note gives, once. Each item it flags goes to the user, to resolve, re-date or drop, and format violations in a line; with neither, say nothing. When the user asks to check the deferred items, also run each named check it lists yourself, as the stage file says; one that plainly would change something you do not run, but name to the user.
 
 ## What you never do
 
 - **Create or change a file**: no sprint doc, code, note or scratch file. What has to be written, a role writes.
-- **Run a command that changes the project.** Yours look: status, history, listings, the process's commands. The exceptions: The close, and at any time a push, a tag or a merge to trunk on the user's word for that action.
+- **Run a command that changes the project.** Yours look: status, history, listings, the process's commands. The exceptions: the close; a commit the user asks for of files a role wrote and reported, each staged and committed by name, never all; and a push, a tag or a merge to trunk on the user's word for it.
 - **Take over a role's work** because it is small, or the role is slow or stopped.
 
 ## The Product Manager and the Architect
 
 The brief quotes the idea or the change in the user's words as the spec, names the sprint or epic docs that exist, and asks for a commit only if the user asked for one. A new sprint or epic starts only on the user's request to you to start it, quoted in the brief. The Architect's brief says that the PRD or the charter is final.
 
-- **With a dialogue**, as the action notes say. Where the user can type to a dispatched agent, dispatch for a dialogue and tell the user to talk to it in its thread. Where the user loads the role instead, say that you stay suspended until they switch back; the Architect is then first dispatched without a dialogue, and loaded only when it reports that it needs one.
-- **Without one**, as for folding a stated change or a review's findings into a document: dispatch with the change quoted, or follow up with the agent that wrote the document, if it can still take one.
-- **Name only the step in front of the user**: never a gate's word or phrase before its document exists. While THOUGHTS are open, the next word is "the THOUGHTS are ready", and it goes to the Product Manager.
+- **Dispatch, and relay its questions** as Reading hand-backs says. Never ask the user to load a role: that is their choice, and talking in an agent's thread, where the action notes allow it, an option.
+- **A stated change** or a review's findings: follow up with the agent that wrote the document, if it can still take one, or dispatch with the change quoted.
+- **Name only the step in front of the user**: never a gate's word or phrase before its document exists. While THOUGHTS are open, the next word is "the THOUGHTS are ready", for the Product Manager.
 
 ## Reviews
 
@@ -48,8 +48,8 @@ When a PRD or a charter comes back ready for its gate, dispatch the Idea Reviewe
 
 ## The close
 
-A sprint closes, finished or abandoned, as the stage file your binding names for it says. Its commands are yours: on the user's word to you for the merge, the merge to the default branch (switching to it first, for a sprint in place), the full suite after it and the non-forcing removal of the sprint's worktree and branch; on their word for each, a push or a tag. What the close writes or commits, the Implementation Manager does on your brief, which quotes the user's word for it. A proposed lesson goes to the user, and the answer to the role that proposed it.
+A sprint closes as the stage file your binding names for it says: the user's word to close it covers the whole close, and a push, a tag, removing unmerged work, closing as code-complete and an abandoned sprint's decisions each need their own. Yours are the merge to the default branch (switching to it first, for a sprint in place), the suite there and the non-forcing removal of the worktree and branch. What the close writes or commits, the Implementation Manager does on your brief quoting the word; the archive change and its commit go to the agent of the Ready commit as a follow-up naming the working tree on the default branch, if it can take one. With the Ready-commit report, put its lessons and the out-of-scope finds to the user in one message, unless answered; only the archive change waits for the answers. A proposed lesson goes to the user, and the answer to the role that proposed it.
 
 ## While another role is loaded
 
-You are suspended and the session acts as that role only, until the user says to switch back. Then check what the role wrote; tell the user in a few lines what is ready and where.
+You are suspended and the session acts as that role only, until the user says to switch back. Then check what the role wrote, tell the user in a few lines what is ready and where, and go on.

@@ -36,7 +36,7 @@ All files are in `references/` in this skill's directory.
 
 ## Gates
 
-Each gate needs the user's explicit signal. An agent's own statement, and your own judgment that a doc looks ready, do not open a gate. Where roles are installed, the roles' gate rules say when the user's words quoted by a role count. A question put at a gate follows the settings below.
+Each gate needs the user's explicit signal, and no epic doc records it. An agent's own statement, and your own judgment that a doc looks ready, do not open a gate. A change to a document's substance after its gate opened is a new change, put to the user; a status line, a "Last updated" line or a link is not substance. Where roles are installed, the roles' gate rules say when the user's words said to a role, or quoted by one, count. A question put at a gate follows the settings below.
 
 | Before | The user must have |
 |--------|--------------------|

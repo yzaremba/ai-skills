@@ -8,6 +8,7 @@ Read [conventions.md](conventions.md) first: the sprint number comes from `SPRIN
   - `Sprint: NN` (match the filename's sprint)
   - `Slug: <kebab-case-slug>` (must match the `<Description>` segment in every filename of the set)
   - `Epic: NN` *(optional)* — include only when this sprint belongs to a multi-sprint epic; this is the up-link to the `epic-implementation` skill. Omit for standalone sprints.
+- No line of the file records an approval or a review ("No approval in a doc" in [conventions.md](conventions.md)).
 - Content below is **intentionally unstructured**: bullets, questions, rough ideas, unordered notes. No need for full sections or IDs.
 - After creating the first file of a new sprint, update the index (see [conventions.md](conventions.md)): overwrite the latest assigned `NN`, and add nothing else.
 - **Where, and the one commit.** The first THOUGHTS file and the index bump are written in the working tree that has the default branch checked out (if none has, ask the user) and committed there as **one local commit**, with the other changes that belong to starting the sprint: the plucked backlog items, their deleted item documents and, for a sprint of an epic, its roadmap row. Commit only those files, by name. The user's signal to start the sprint authorizes exactly that commit, so the number is taken before another session can assign it. Do not push it, and do not take it as leave for any later commit.

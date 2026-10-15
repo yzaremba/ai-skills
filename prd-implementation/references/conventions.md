@@ -54,13 +54,13 @@ Legacy files matching `PRD-*.md` without a sprint prefix may still exist; prefer
 | Doc | Written on | Commit |
 |-----|------------|--------|
 | The start of a sprint: its first THOUGHTS file and the index bump, with the other changes that belong to starting it: the plucked backlog items, the deleted item documents of those items and, for a sprint of an epic, its roadmap row | The default branch | One local commit, which starting the sprint authorizes |
-| Everything later for that sprint: later THOUGHTS edits, more brainstorming included, then PRD, PLAN, TASKS, STATE | The sprint's worktree, or the sprint's branch when it works in place | Each a separate decision of the user; during implementation the commit cadence is that decision |
+| Everything later for that sprint: later THOUGHTS edits, more brainstorming included, then PRD, PLAN, TASKS, STATE | The sprint's worktree, or the sprint's branch when it works in place | Each a separate decision of the user; during implementation the commit cadence is that decision, and at the close the word to close |
 | Files shared between sprints: the backlog (`BACKLOG.md`) with its item documents (`BACKLOG-B<n>-<slug>.md`), the deferred file (`DEFERRED.md`) with the context file its conversion makes (`DEFERRED-context.md`), the epic roadmap, the archive index (`DONE/README.md`), the sprint index | The default branch only, at any time, also while a sprint is active | Each a separate decision of the user |
 
 - **Starting a sprint authorizes exactly that one local commit.** It holds the changes in the table's first row and nothing else: commit only those files, by name. It is made in the working tree that has the default branch checked out; if none has, ask the user. Pushing it, and every later commit, stay separate decisions.
 - **The sprint's worktree or branch is made right after the start commit**, as "The sprint's workspace" below says, and all further work on the sprint's own docs happens there. A session picking the sprint up finds it with `git worktree list` and `git branch --list 'sprint/*'`, or in the check command's report ([deferred.md](deferred.md)), which names each sprint branch, where it is checked out and which of its docs are there.
 - **A shared file is never changed in a sprint worktree.** The copy there is a stale one. Make the change in the working tree that has the default branch checked out; if none has, ask the user.
-- **At close the sprint's own docs come to the default branch.** The merge brings them, on the user's authorization, and the archive change (the move to `DONE/`, the STATE deletion, the rows in the shared files) is then made on the default branch, not in the sprint's worktree: [completion.md](completion.md). An abandoned sprint's docs reach `DONE/` without a merge: [abandon.md](abandon.md).
+- **At close the sprint's own docs come to the default branch.** The close's merge brings them, and the archive change (the move to `DONE/`, the STATE deletion, the rows in the shared files) is then made on the default branch, not in the sprint's worktree: [completion.md](completion.md). An abandoned sprint's docs reach `DONE/` without a merge: [abandon.md](abandon.md).
 - **Sprint docs in a separate repository.** When the sprint docs directory is in another repository than the code, every sprint doc, the shared files included, is committed on that repository's default branch, and the worktree rule above does not apply to docs: no workspace is made for them after the start commit. The code still gets its worktree or branch, chosen and made with the implementation choices ([stage-3-implementation.md](stage-3-implementation.md)), and STATE records it. When the directory is in no git repository at all, nothing of the docs is committed and the branch rules do not apply to them.
 
 ### The sprint's workspace
@@ -120,6 +120,10 @@ These limits are exact, so that they can be checked mechanically.
 - If a prior rev's context is genuinely load-bearing for understanding the current state, it belongs in the relevant PLAN step's body or a `> Bug fix YYYY-MM-DD: …` annotation, not the header.
 - Same rule applies to PLAN, TASKS, and PRD header dates.
 
+## No approval in a doc
+
+THOUGHTS, PRD, PLAN and TASKS never record an approval or a review: no "approved", "awaits approval", "prepared for review" or the like, in a header, a "Last updated" line or anywhere else. A gate passes by the user's word, not by the file. Their only status lines are the PLAN header's ([stage-3-plan-tasks.md](stage-3-plan-tasks.md)) and an abandoned sprint's ([abandon.md](abandon.md)); the PRD has none. STATE, which says where the work stands, is not covered by this.
+
 ## Questions to the user
 
 Whenever this process puts open questions to the user — at a gate, with the material findings of a critical pass, when a stage needs a decision, when stopping on trouble — two settings say how. They come from the same run of `scripts/settings.py` as the sprint docs directory.
@@ -127,4 +131,5 @@ Whenever this process puts open questions to the user — at a gate, with the ma
 - **`process.questions`** — `one-at-a-time` (the default): put one question, wait for the answer, then put the next; a later question may be dropped or changed by an earlier answer. That holds for open questions in every form: the same message does not list the others, as bullets or in prose, and does not give your leaning on each. At most it says how many remain. The one exception is a list the user asked for. `all-together`: put every open question in one message, numbered, so the user can answer them in one reply.
 - **`process.recommend`** — `true` (the default): give your recommendation with each question, and its reason in a line. `false`: give the options without one.
 - **The implementation choices are one question, not several.** [stage-3-implementation.md](stage-3-implementation.md) asks for a single consolidated prompt that holds every choice the user has not yet stated. That stays so under either value of `process.questions`: do not split it into one prompt per choice. `process.recommend` applies to it: when `false`, leave out the *(recommended)* marks.
+- **The lessons and backlog finds of a close are one list.** [completion.md](completion.md) puts them in one message under either value of `process.questions`. `process.recommend` applies to each.
 - How a question physically reaches the user differs by provider: [claude-code.md](claude-code.md) or [codex.md](codex.md).
