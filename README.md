@@ -307,8 +307,9 @@ prompt, tools and model, and runs at the session's own effort: `--effort`, `/eff
 the `effortLevel` setting, and failing those the model's default. So the Manager's effort
 is given beside the role: at launch with `--effort` (`render` prints the command with the
 level the settings resolve, under "entry points"), and as a project default with
-`effortLevel`, below. No session has shown yet that the effort given this way is the one
-the session runs at.
+`effortLevel`, below. A session record on Claude Code 2.1.296 showed a Manager started
+plainly in a project with `effortLevel` set to `medium` run at medium on every turn; that
+`--effort` at launch does the same is read from the documentation and not yet shown.
 
 **Project memory.** The `project-memory` skill keeps a project's lessons: one line each
 in a marked block of the project's `AGENTS.md`, one file each under `memory.dir`
@@ -448,7 +449,9 @@ and each skill's `SKILL.md`.
   `--default-codex-permissions` also selects it. While the user's `config.toml` sets
   `sandbox_mode` no profile is written, because Codex then ignores
   `default_permissions`; setup never changes `sandbox_mode`.
-- **Four agents on Codex by default**, counting the main session;
+- **Four agents on Codex with no limit set**, counting the main session, as seen on
+  Codex CLI 0.160.0; Codex's documentation leaves that default to the client and does
+  not count the main session in the limit it sets.
   `render --apply-codex-settings` sets `agents.max_concurrent_threads_per_session = 8`
   where the file sets no limit.
 - **Codex reads a project's `.codex/config.toml` only in a trusted project.** In an
@@ -471,18 +474,24 @@ and each skill's `SKILL.md`.
 - **The Manager's effort on Claude Code is the session's, not the definition's, as
   documented.** Its definition pins medium, and the session record showed the main
   thread at high. Setup therefore names `--effort` in the launch command and sets
-  `effortLevel` in a project (see "A project"). That follows Claude Code's documentation;
-  no session record has confirmed yet that either then applies. `effortLevel` cannot
-  hold `max`.
-- **Not exercised yet:** an approval of a document said to the role that owns it and
-  taken as passing its gate, on either provider; a loaded role on Codex beyond six turns or
-  across a compaction.
+  `effortLevel` in a project (see "A project"). A session record on 2.1.296 confirmed
+  `effortLevel`; `--effort` at launch follows the documentation and is not yet shown by a
+  record. `effortLevel` cannot hold `max`.
+- **Not exercised yet:** the rules of the change of 2026-10-15, which came after the
+  second sample sprint: a document gate passed in a loaded role and taken as passed by
+  the role loaded next, the one-word close with the archive as a follow-up, and a commit
+  the Manager makes of files a role wrote. A loaded role on Codex in a long dialogue or
+  across a compaction. An approval said to the role that owns a document did pass its
+  gate on both providers (Claude Code 2.1.296, Codex CLI 0.162.1).
 - **Other programs.** The guards on where setup writes and removes hold against the disk
   as a run finds it, not against another program that changes the same directories
   while the run is under way.
 - **Native Windows.** The setup tool's tests pass under a Windows Python, where a link
-  is a directory junction. That Claude Code and Codex on Windows read what is installed
-  through junctions has not been shown yet.
+  is a directory junction. Run natively on Windows, `doctor --prove-discovery` showed
+  Claude Code 2.1.296 and Codex CLI 0.160.0 reading every skill through the junctions,
+  and the generated roles and entry points that `doctor` can prove (gate G7,
+  2026-10-11). Codex's role definitions stay unproven there, as under "Discovery cannot
+  be shown for everything" above.
 
 ## The v1 slide
 

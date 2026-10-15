@@ -10,7 +10,7 @@ Approving the PLAN with its TASKS starts no implementation: that action gate has
 **Every gate:**
 
 - **The word comes after the thing it approves exists.** A word given in advance passes nothing: ask again when the thing exists.
-- **Only the user's words pass a gate.** An agent's statement that something is ready, done or approved passes nothing and triggers nothing, and no document records an approval. Words an agent quotes from the user count only as set out below.
+- **Only the user's words pass a gate.** An agent's statement that something is ready, done or approved passes nothing and triggers nothing, and no document but STATE records an approval. Words an agent quotes from the user count only as set out below.
 - **One word, one gate.** "The PRD is good" passes the PRD gate. It authorizes no push, and no gate's word carries over to the next, but the word to close a sprint covers what its stage file lists.
 - **When in doubt, ask** before anything moves: whether the user's words pass a gate, which one, or whether a condition below holds.
 - **An opened gate stands.** A later change to the document's substance, the requirements of a PRD or the steps of a PLAN, is a new change for the user to approve, and the Architect checks the PLAN against a changed PRD. A status line, a "Last updated" line or a link is not substance.

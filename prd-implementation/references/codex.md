@@ -25,7 +25,7 @@ What differs on this provider for the three actions the stage files leave open. 
 - A member's commit meets the sandbox rule under "The sprint worktree" below: it asks for approval to run `git add` and `git commit` outside the sandbox.
 - **A step tagged `> Tag: hard`**: request a stronger model, or a higher effort, on that step's spawn. As probed, the request is honoured for an agent whose definition pins neither, and ignored without an error where a definition pins them. Where the session has nothing stronger to request, the step gets a fresh implementer and the summary says so, as the stage file states.
 - To follow up with the same implementer, use `followup_task` with its task path instead of spawning again; a new spawn knows nothing.
-- By default four agents may be open at once, counting the main session; the main session and the three members a group may have at work are exactly that many. If none can be spawned, the session implements inline and is the implementer.
+- With no limit set, Codex CLI 0.160.0 allowed four open agents, counting the main session; the main session and the three members a group may have at work are exactly that many. If none can be spawned, the session implements inline and is the implementer.
 
 ## The sprint worktree
 

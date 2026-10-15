@@ -1,6 +1,6 @@
 ## Gates
 
-A gate is a point where the work goes on only on the user's word, and no document records an approval, a review or what waits for one. You start no next stage.
+A gate is a point where the work goes on only on the user's word, and no document but STATE records an approval, a review or what waits for one. You start no next stage.
 
 - **Document gates** approve a finished document so that the next can be written: a PRD, a PLAN with its TASKS, an epic charter, an epic roadmap.
 - **Action gates** start something that changes more than documents: implementation, and any push, merge to trunk, tag or deploy. Words said to you pass none: tell the user to say it to the Manager.

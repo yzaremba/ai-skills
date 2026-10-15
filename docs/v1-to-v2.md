@@ -16,7 +16,8 @@ How to read the tables:
 - **Status** is one of: `carried` (the same words, or the same words with more beside
   them, which the last section lists); `carried, reworded` and what changed;
   `changed by R<id>` and what changed; `dropped under R<id>` and why. The ids are
-  requirements of the sprint that made v2.
+  requirements of the sprint that made v2; a lettered decision, such as decision U, is
+  one of that sprint's PRD decisions.
 - Two rewordings run through every file and are not repeated in each row. `docs/`
   became "the sprint docs directory", a setting whose default is `docs/` (R3.3). A
   reference to a v1 file became a reference to the skill by name (R3.1). A row that
@@ -60,13 +61,13 @@ How to read the tables:
 | Choice 1, target (L114) | [stage-3-implementation.md][p-s3i], "Resolve the choices" | changed by R3.5: a next implementable task that is a member of a parallel group means the whole group |
 | Choice 2, workspace (L115) | [conventions.md][p-conv], "The sprint's workspace"; [stage-3-implementation.md][p-s3i], "Resolve the choices"; [claude-code.md][p-cc], "The sprint worktree" | changed by R3.9: the worktree or branch is made right after the start commit, where the question is put once; the implementation choice states it and asks only a sprint that has none. "Orchestrator" is the build lead; the provider's throwaway worktree is named in the provider note (R3.2) |
 | Choice 3, adversarial pass (L116) | [stage-3-implementation.md][p-s3i], "Resolve the choices" | changed by R3.2: "a separate reviewer" for "a reviewer agent", and where no reviewer can be started the session stops and asks instead of reviewing its own work |
-| Choice 4, commit cadence (L117) | [stage-3-implementation.md][p-s3i], "Resolve the choices" | changed by R3.5 and R3.10: the cadence also authorizes a parallel group's commits and the Ready commit of the close, and "don't commit" makes a group serial |
+| Choice 4, commit cadence (L117) | [stage-3-implementation.md][p-s3i], "Resolve the choices" | changed by R3.5 and decision U: the cadence also authorizes a parallel group's commits, and "don't commit" makes a group serial. The Ready commit of the close is covered by the user's word to close the sprint, under every cadence |
 | Choice 5, implementer (L118) | [stage-3-implementation.md][p-s3i], "Resolve the choices", "Which implementer a step gets" | changed by R3.2: the default is a separate implementer, not the `sprint-coder` agent, and where none can be started the build lead's own session is the implementer |
 | Choice 6, summary first (L119) | [stage-3-implementation.md][p-s3i], "Resolve the choices"; [SKILL.md][p-skill], "Gates" | changed by R3.5: the summary also says which steps run in parallel, or why they run serially. "The final go-ahead checkpoint" is said plainly: the user's word to implement is the gate, and the summary, printed and not waited on as in v1, is their chance to stop it |
 | Loop: per unit, and who commits (L121-123) | [stage-3-implementation.md][p-s3i], "Loop over the in-scope units" | changed by R3.7: a member of a parallel group makes one commit; every other commit is the build lead's, v1's orchestrator (R3.2) |
 | Loop: adversarial before commit, commit prefix, stay observable (L124-126) | [stage-3-implementation.md][p-s3i], "Loop over the in-scope units" | carried |
 | Loop: stop on trouble (L127) | [stage-3-implementation.md][p-s3i], "Loop over the in-scope units" | changed by R3.4: STATE is written before the pause |
-| Completion: when, the offer, the move (L129-134) | [completion.md][p-done], "Archiving" | changed by R3.10, R3.9 and R3.4: archiving follows integration, is one change on the default branch, and deletes STATE |
+| Completion: when, the offer, the move (L129-134) | [completion.md][p-done], "Integration", "Archiving" | changed by R3.10, R3.9, R3.4 and decision U: archiving follows integration, is one change on the default branch, and deletes STATE. There is no offer: the user's word to close the sprint covers the archive change and its commit, and the user may still say to leave the set where it is |
 | `DONE/README.md` format and its guard (L136-150) | [completion.md][p-done], "`DONE/README.md` format" | carried |
 | Feature is a short name (L152) | [completion.md][p-done], "`DONE/README.md` format" | changed by R3.8: `Code-complete` joins the outcome qualifiers |
 | Long cells are fragile (L154) | [completion.md][p-done], "`DONE/README.md` format" | carried |
@@ -145,7 +146,8 @@ The agent's duties are now "The implementer's part" of
 | Settings: the sprint docs directory, and how questions are put to the user | R3.3, R5.3, R5.4 | [SKILL.md][p-skill], "Settings"; [conventions.md][p-conv], "The sprint docs directory", "Questions to the user"; [`scripts/settings.py`][p-set] in each skill |
 | Parallel groups and the `light` and `hard` tags, with a group member's one commit | R3.5, R3.7, decision R | [stage-3-plan-tasks.md][p-s3p], "Marks on a step"; [stage-3-implementation.md][p-s3i], "Which implementer a step gets", "Parallel groups", "As a member of a parallel group" |
 | Exact limits: an annotation 300 characters, a TASKS line 150, and how they are counted | R3.12 | [conventions.md][p-conv], "Format limits" |
-| Deferred items, and closing a sprint as code-complete | R3.8 | [deferred.md][p-def]; [completion.md][p-done], "Closing as code-complete"; [deferred-conversion.md][p-conv2] |
+| Deferred items, items outside a sprint, and closing a sprint as code-complete; the one-time conversion of an old `DEFERRED.md` | R3.8 | [deferred.md][p-def]; [completion.md][p-done], "Closing as code-complete"; [deferred-conversion.md][p-conv2] |
+| One word closes a sprint: the Ready commit, the merge, the suite, the removal of the worktree and branch, the archive change and its commit; no doc records an approval, and an opened gate stands | R3.10, decision U | [SKILL.md][p-skill], "Gates"; [completion.md][p-done], "Integration"; [conventions.md][p-conv], "No approval in a doc" |
 | The backlog item form: one numbered line, an item document, the one-time conversion | R3.13 | [stage-0-backlog.md][p-s0], "The file", "Numbers", "A longer idea"; [backlog-conversion.md][p-conv1] |
 | Integration at completion: merge, removal of the worktree and branch, the roadmap row | R3.10 | [completion.md][p-done], "Integration"; [conventions.md][e-conv], "ROADMAP maintenance" |
 | Abandon and supersede | R3.11 | [abandon.md][p-ab]; [completion.md][e-done], "Closing an epic as `Abandoned`" |
