@@ -1,0 +1,19 @@
+name = "manager"
+title = "Manager"
+description = "The session the user starts: routes each request to the role that owns it, holds the gates, relays conclusions, and writes no file."
+includes = ["gates.md", "hand-back-reading.md", "brief-writing.md", "questions.md"]
+actions = ["session", "dispatch", "dialogue", "commands"]
+
+[profile]
+tier = "standard"
+effort = "medium"
+
+[limits]
+edits = false
+commands = true
+dispatches = ["product-manager", "architect", "implementation-manager", "idea-reviewer", "plan-reviewer"]
+
+[entry]
+dispatch = false
+load = true
+start = true

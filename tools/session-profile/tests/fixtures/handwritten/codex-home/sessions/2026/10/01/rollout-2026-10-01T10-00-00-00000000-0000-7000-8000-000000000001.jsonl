@@ -1,0 +1,6 @@
+{"timestamp":"2026-10-01T10:00:00Z","type":"session_meta","ordinal":0,"payload":{"id":"00000000-0000-7000-8000-000000000001","session_id":"00000000-0000-7000-8000-000000000001","cli_version":"0.160.0","originator":"codex-tui","thread_source":"user","source":"cli","cwd":"fixture-cwd","base_instructions":{"text":"FIXTURE-TRANSCRIPT-TEXT base instructions"},"a_field_added_later":{"nested":[1,2,3]}}}
+{"timestamp":"2026-10-01T10:00:01Z","type":"turn_context","ordinal":1,"payload":{"turn_id":"t1","model":"fixture-model-a","effort":"low","summary":"FIXTURE-TRANSCRIPT-TEXT summary","collaboration_mode":{"mode":"default","settings":{"model":"fixture-model-a","reasoning_effort":"low","developer_instructions":"FIXTURE-TRANSCRIPT-TEXT developer instructions"}}}}
+{"timestamp":"2026-10-01T10:00:02Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"FIXTURE-TRANSCRIPT-TEXT user message"}]}}
+{"timestamp":"2026-10-01T10:00:03Z","type":"a_record_type_added_later","payload":{"model":"must-not-be-read","effort":"must-not-be-read"}}
+{"timestamp":"2026-10-01T10:05:00Z","type":"turn_context","ordinal":9,"payload":{"turn_id":"t2","model":"fixture-model-a","effort":"low"}}
+{"timestamp":"2026-10-01T10:10:00Z","type":"turn_context","ordinal":15,"payload":{"turn_id":"t3","model":"fixture-model-b","effort":"xhigh"}}

@@ -1,0 +1,5 @@
+{"type":"assistant","agentId":"a03","isSidechain":true,"perTurnEffort":null,"message":{"id":"msg_a03_1","role":"assistant","model":"fixture-claude-d","content":[]}}
+{"type":"assistant","agentId":"a03","isSidechain":true,"message":{"id":"msg_a03_2","role":"assistant","content":[]}}
+{"type":"assistant","agentId":"a03","isSidechain":true,"effort":"FIXTURE-TRANSCRIPT-TEXT in an effort field","message":{"id":"msg_a03_3","role":"assistant","model":"FIXTURE-TRANSCRIPT-TEXT in a model field"}}
+{"type":"assistant","agentId":"a03","isSidechain":true,"message":"a message that is not an object"}
+{"type":"assistant"}

@@ -1,0 +1,3 @@
+{"type":"user","agentId":"a01","version":"2.1.289","isSidechain":true,"message":{"role":"user","content":"FIXTURE-TRANSCRIPT-TEXT brief"}}
+{"type":"assistant","agentId":"a01","version":"2.1.289","isSidechain":true,"attributionAgent":"coder","effort":"medium","perTurnEffort":"medium","message":{"id":"msg_a01_1","role":"assistant","model":"fixture-claude-b","content":[{"type":"text","text":"FIXTURE-TRANSCRIPT-TEXT report"}]}}
+{"type":"assistant","agentId":"a01","version":"2.1.289","isSidechain":true,"attributionAgent":"coder","effort":"medium","perTurnEffort":"medium","message":{"id":"msg_a01_2","role":"assistant","model":"fixture-claude-b","content":[]}}

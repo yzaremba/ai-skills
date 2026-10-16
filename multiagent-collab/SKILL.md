@@ -1,6 +1,7 @@
 ---
 name: multiagent-collab
 description: Coordinate an owner and an adversarial reviewer across Codex and Claude using a shared filesystem baton. Use when the user requests paired-agent implementation/review, asks one agent to harden the other's work, or a multiagent-collab watcher assigns this agent the baton. Do not use for ordinary solo work or same-runtime subagents.
+compatibility: claude-code, codex
 ---
 
 # Multi-agent collaboration

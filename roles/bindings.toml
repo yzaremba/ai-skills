@@ -1,0 +1,230 @@
+# The binding table: which role follows which stage file of which process
+# skill. It is the only file that names both a stage and a role. The process
+# skills name no role, and a role's text says "the stage file your binding
+# names".
+#
+# The format is stated in README.md, under "bindings.toml". Every stage file
+# of both skills has a row here; validation fails one that has none. The
+# last rows bind the roles that write lessons to the `project-memory` skill.
+
+schema_version = 1
+
+# Product Manager: the backlog, the one-time conversions of the backlog and
+# of the deferred file, and a sprint from the backlog to its final PRD.
+
+[[binding]]
+role = "product-manager"
+skill = "prd-implementation"
+stage = "stage-0-backlog.md"
+part = "owns"
+
+[[binding]]
+role = "product-manager"
+skill = "prd-implementation"
+stage = "backlog-conversion.md"
+part = "owns"
+
+[[binding]]
+role = "product-manager"
+skill = "prd-implementation"
+stage = "deferred-conversion.md"
+part = "owns"
+
+[[binding]]
+role = "product-manager"
+skill = "prd-implementation"
+stage = "stage-1-thoughts.md"
+part = "owns"
+
+[[binding]]
+role = "product-manager"
+skill = "prd-implementation"
+stage = "stage-2-prd.md"
+part = "owns"
+note = "All of the stage but its critical pass, which is the Idea Reviewer's: you make none of your own."
+
+# Product Manager: an epic from the backlog to its final charter, the start
+# of a sprint its roadmap plans, and the epic's close.
+
+[[binding]]
+role = "product-manager"
+skill = "epic-implementation"
+stage = "stage-e0-backlog.md"
+part = "owns"
+
+[[binding]]
+role = "product-manager"
+skill = "epic-implementation"
+stage = "stage-e1-thoughts.md"
+part = "owns"
+
+[[binding]]
+role = "product-manager"
+skill = "epic-implementation"
+stage = "stage-e2-charter.md"
+part = "owns"
+note = "All of the stage but its critical pass, which is the Idea Reviewer's: you make none of your own."
+
+[[binding]]
+role = "product-manager"
+skill = "epic-implementation"
+stage = "stage-e3-roadmap.md"
+part = "seam"
+note = "The seam, when you start a sprint the roadmap plans: its slug, the row's number, Docs link and status, the header's status and date. Beyond that you change the roadmap only at the epic's close."
+
+[[binding]]
+role = "product-manager"
+skill = "epic-implementation"
+stage = "completion.md"
+part = "owns"
+note = "All of it, the header status and the Skipped rows of an abandoned epic included, but closing the epic's sprints: say which are open, and that the Manager has them closed."
+
+# Idea Reviewer: the critical pass on what the Product Manager wrote.
+
+[[binding]]
+role = "idea-reviewer"
+skill = "prd-implementation"
+stage = "stage-2-prd.md"
+part = "critical-pass"
+note = "The tests of the critical pass, on THOUGHTS and the PRD. Folds nothing and asks the user nothing: every finding goes in the report."
+
+[[binding]]
+role = "idea-reviewer"
+skill = "epic-implementation"
+stage = "stage-e2-charter.md"
+part = "critical-pass"
+note = "The tests of the critical pass, on EPIC THOUGHTS and the charter. Folds nothing and asks the user nothing: every finding goes in the report."
+
+# Architect: a sprint's PLAN and TASKS, the STATE fields a change of them
+# moves, and an epic's roadmap.
+
+[[binding]]
+role = "architect"
+skill = "prd-implementation"
+stage = "stage-3-plan-tasks.md"
+part = "owns"
+
+[[binding]]
+role = "architect"
+skill = "prd-implementation"
+stage = "state.md"
+part = "plan-change"
+note = "Only its exception for a PLAN or TASKS changed outside the build, before the Ready commit: the target, the next action, Uncommitted and the Written line."
+
+[[binding]]
+role = "architect"
+skill = "epic-implementation"
+stage = "stage-e3-roadmap.md"
+part = "decomposes"
+note = "Writes the ROADMAP: rows, slugs, dependencies, and scope changes until the epic's close. The seam, the header's status and a row's number, link and status belong to whoever starts or closes a sprint."
+
+# Plan Reviewer: the PLAN the Architect wrote.
+
+[[binding]]
+role = "plan-reviewer"
+skill = "prd-implementation"
+stage = "stage-3-plan-tasks.md"
+part = "reviews"
+note = "Reads what a PLAN and its TASKS hold and what each mark claims, and checks the PLAN against it. Writes nothing."
+
+# Implementation Manager: a sprint's build with its STATE, and what a close
+# or an abandoned sprint writes.
+
+[[binding]]
+role = "implementation-manager"
+skill = "prd-implementation"
+stage = "stage-3-implementation.md"
+part = "build-lead"
+note = "The build lead's part, but for the choices and their summary: those come resolved in your brief."
+
+[[binding]]
+role = "implementation-manager"
+skill = "prd-implementation"
+stage = "state.md"
+part = "build-lead"
+
+[[binding]]
+role = "implementation-manager"
+skill = "prd-implementation"
+stage = "completion.md"
+part = "close-writer"
+note = "What the close writes and commits, on the Manager's brief or follow-up: closing as code-complete, the Ready commit, the archive change and its commit. No merge to the default branch, removal or push."
+
+[[binding]]
+role = "implementation-manager"
+skill = "prd-implementation"
+stage = "abandon.md"
+part = "close-writer"
+note = "What its steps write and commit, each on the Manager's brief, and what is left in place, for the report. No merge to the default branch, no removal, no push."
+
+[[binding]]
+role = "implementation-manager"
+skill = "prd-implementation"
+stage = "deferred.md"
+part = "writes"
+note = "Writes a new item or what the user decided for one, with the PLAN annotation an item of a sprint takes, on the Manager's brief. Runs no check and decides nothing."
+
+# Coder: both of its definitions, coder and coder-hard.
+
+[[binding]]
+role = "coder"
+skill = "prd-implementation"
+stage = "stage-3-implementation.md"
+part = "implementer"
+note = "The implementer's part of the stage file, as the Coder's own text narrows it."
+
+# Manager: the check of deferred items, the implementation choices, and the
+# commands of a close and of an abandoned sprint.
+
+[[binding]]
+role = "manager"
+skill = "prd-implementation"
+stage = "deferred.md"
+part = "checks"
+note = "The check command is `python scripts/check.py --project <project root>`."
+
+[[binding]]
+role = "manager"
+skill = "prd-implementation"
+stage = "stage-3-implementation.md"
+part = "choices"
+note = "The implementation choices and their summary; no more of the build lead's part."
+
+[[binding]]
+role = "manager"
+skill = "prd-implementation"
+stage = "completion.md"
+part = "close-commands"
+note = "The decisions of the close, put to the user, and its commands."
+
+[[binding]]
+role = "manager"
+skill = "prd-implementation"
+stage = "abandon.md"
+part = "close-commands"
+note = "As at a close."
+
+# Lessons for the project memory: who proposes one and who writes an approved
+# one. The Manager has no row: it puts each proposal to the user, sends the
+# answer back, and writes no file.
+
+[[binding]]
+role = "implementation-manager"
+skill = "project-memory"
+stage = "lifecycle.md"
+part = "lessons"
+note = "Propose lessons, if any, from STATE's candidates and your own only in the report of the brief that writes or deletes the last STATE; a hotfix, none. Write those the user approved, quoted in a brief."
+
+[[binding]]
+role = "product-manager"
+skill = "project-memory"
+stage = "lifecycle.md"
+part = "lessons"
+note = "Propose it when your work is ready: in a `ready for the gate` or `stopped` hand-back or, loaded, to the user. Write it only on the user's approval of it: quoted by the Manager or, loaded, said to you."
+
+[[binding]]
+role = "architect"
+skill = "project-memory"
+stage = "lifecycle.md"
+part = "lessons"
+note = "Propose it when your work is ready: in a `ready for the gate` or `stopped` hand-back or, loaded, to the user. Write it only on the user's approval of it: quoted by the Manager or, loaded, said to you."

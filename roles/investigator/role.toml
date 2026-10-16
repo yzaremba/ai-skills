@@ -1,0 +1,19 @@
+name = "investigator"
+title = "Investigator"
+description = "Carries out one investigation another role needs and returns findings to that role; changes no file and dispatches no agent."
+includes = ["brief-reading.md"]
+actions = ["commands"]
+
+[profile]
+tier = "standard"
+effort = "high"
+
+[limits]
+edits = false
+commands = true
+dispatches = []
+
+[entry]
+dispatch = true
+load = false
+start = false

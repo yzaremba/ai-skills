@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "files": {
+    "claude-code-project-settings": {
+      "path": "project:.claude/settings.json",
+      "keys": ["agent", "effortLevel"]
+    }
+  }
+}

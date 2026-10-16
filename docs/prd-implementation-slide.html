@@ -1,3 +1,8 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PRD Implementation Workflow</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; }
@@ -20,7 +25,7 @@
   }
 
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --ink: #e7eaec;
       --ink-soft: #97a3ab;
       --paper: #12161c;
@@ -72,8 +77,8 @@
     --shadow: 0 1px 2px rgba(18, 22, 28, 0.07), 0 4px 10px rgba(18, 22, 28, 0.05);
   }
 
-  html, body { height: 100%; }
-  body { margin: 0; }
+  html, body { min-height: 100%; }
+  body { margin: 0; background: var(--paper); }
 
   .slide {
     --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -84,12 +89,14 @@
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
-    gap: clamp(14px, 2vh, 24px);
-    padding: clamp(24px, 4vh, 48px) clamp(28px, 4.5vw, 64px);
+    gap: clamp(12px, 1.8vh, 20px);
+    padding: clamp(22px, 3.4vh, 40px) clamp(16px, 4.5vw, 64px);
     background: var(--paper);
     color: var(--ink);
     font-family: var(--font-sans);
   }
+
+  code { font-family: var(--font-mono); font-size: .92em; color: var(--rail-strong); }
 
   /* ---------- header ---------- */
   .head { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
@@ -111,13 +118,13 @@
   }
   .thesis {
     margin: 0;
-    max-width: 66ch;
+    max-width: 72ch;
     font-size: clamp(12.5px, 1.05vw, 15px);
     line-height: 1.45;
     color: var(--ink-soft);
   }
   .thesis em { font-style: normal; font-weight: 700; color: var(--gate-ink); }
-  .head-scope { text-align: right; flex: 0 0 auto; }
+  .head-scope { text-align: right; flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
   .scope-label {
     margin: 0 0 3px;
     font-size: 9.5px;
@@ -143,7 +150,8 @@
   }
   .backlog-title { margin: 0; font-size: 11px; font-weight: 700; color: var(--rail-strong); }
   .backlog-tag { margin: 2px 0 0; font-family: var(--font-mono); font-size: 8.5px; color: var(--ink-soft); }
-  .backlog-note { margin: 0; font-size: 8.5px; text-align: center; line-height: 1.3; color: var(--ink-soft); }
+  .backlog-note { margin: 0; font-size: 8.5px; text-align: center; line-height: 1.35; color: var(--ink-soft); }
+  .backlog-note b { color: var(--rail-strong); }
 
   .tracks-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: clamp(12px, 1.8vh, 20px); }
 
@@ -162,7 +170,8 @@
 
   .stations { position: relative; display: flex; align-items: stretch; }
 
-  .station { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 6px; }
+  .station { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 5px; }
+  .station.wide { flex-grow: 1.3; }
 
   .node {
     width: 18px; height: 18px; margin-bottom: 14px;
@@ -174,11 +183,11 @@
   .card {
     flex: 1; width: 100%; min-height: 132px;
     display: flex; flex-direction: column; justify-content: space-between; gap: 8px;
-    padding: 12px 10px;
+    padding: 12px 9px;
     background: var(--card); border: 1px solid var(--border); border-radius: 8px;
     box-shadow: var(--shadow); position: relative;
   }
-  .card.mini { min-height: 80px; padding: 8px 8px; gap: 5px; box-shadow: none; }
+  .card.mini { min-height: 70px; padding: 8px 8px; gap: 5px; box-shadow: none; }
   .station.roadmap .card.mini { background: var(--tag-bg); }
 
   .card-top { display: flex; flex-direction: column; gap: 4px; }
@@ -195,12 +204,15 @@
   .card h2.with-icon { display: flex; align-items: center; justify-content: center; gap: 6px; }
   .loop-icon { width: 14px; height: 14px; flex: 0 0 auto; color: var(--rail-strong); }
 
-  .desc { margin: 0; font-size: clamp(10.5px, 0.9vw, 12px); line-height: 1.35; color: var(--ink-soft); }
-  .card.mini .desc { font-size: clamp(8px, 0.72vw, 9.5px); }
+  .desc { margin: 0; font-size: clamp(10.5px, 0.86vw, 11.5px); line-height: 1.35; color: var(--ink-soft); }
+  .desc b { color: var(--ink); font-weight: 700; }
+  .card.mini .desc { font-size: clamp(8.5px, 0.72vw, 9.5px); }
+  .desc.steps { font-weight: 600; }
 
   .tag {
-    margin: 0; padding: 2px 7px; font-family: var(--font-mono); font-size: 10.5px;
+    margin: 0; padding: 2px 6px; font-family: var(--font-mono); font-size: 9.5px;
     color: var(--rail-strong); background: var(--tag-bg); border-radius: 4px;
+    overflow-wrap: anywhere;
   }
   .card.mini .tag { font-size: 8.5px; padding: 1px 6px; }
   .station.roadmap .card.mini .tag { background: var(--card); }
@@ -217,33 +229,49 @@
     border: 1px dashed var(--rail); border-radius: 10px;
   }
 
-  .gate { flex: 0 0 auto; width: clamp(28px, 3vw, 44px); display: flex; flex-direction: column; align-items: center; padding-top: 3px; }
-  .gate.mini { width: clamp(20px, 2.2vw, 32px); padding-top: 1px; }
-  .gate-glyph { width: 12px; height: 12px; margin-bottom: 14px; background: var(--gate); box-shadow: var(--shadow); transform: rotate(45deg); }
+  .gate { flex: 0 0 auto; width: clamp(32px, 3.3vw, 48px); display: flex; flex-direction: column; align-items: center; padding-top: 3px; }
+  .gate.mini { width: clamp(24px, 2.6vw, 38px); padding-top: 1px; }
+  .gate-glyph { width: 12px; height: 12px; margin-bottom: 14px; background: var(--gate); box-shadow: var(--shadow); transform: rotate(45deg); flex: 0 0 auto; }
   .gate.mini .gate-glyph { width: 10px; height: 10px; margin-bottom: 10px; box-shadow: none; }
+  .gate-text { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .gate-label { margin: 0; font-size: 8.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--gate-ink); white-space: nowrap; }
   .gate.mini .gate-label { font-size: 7px; }
+  .gate-word { margin: 0; font-size: 8.5px; font-style: italic; color: var(--gate-ink); white-space: nowrap; }
+  .gate.mini .gate-word { font-size: 7.5px; }
 
   .station.done .card { background: var(--done-bg); border-color: var(--done-bg); }
-  .station.done .stage-eyebrow, .station.done .desc { color: var(--done-fg); opacity: .82; }
+  .station.done .stage-eyebrow, .station.done .desc { color: var(--done-fg); opacity: .88; }
+  .station.done .desc b { color: var(--done-fg); }
   .station.done h2 { color: var(--done-fg); }
   .station.done .tag { background: rgba(0, 0, 0, 0.14); color: var(--done-fg); }
+  .station.done .note { color: var(--done-fg); border-top-color: rgba(0, 0, 0, 0.2); }
   .station.done .node { background: var(--done-bg); border-color: var(--done-bg); }
 
-  .rail-caption { margin: 0; text-align: center; font-size: 11.5px; color: var(--ink-soft); }
-  .rail-caption b { color: var(--gate-ink); font-weight: 700; }
+  /* ---------- rules strip (under the rail) ---------- */
+  .rules { display: flex; gap: 16px; margin: 0; padding: 0; list-style: none; }
+  .rule { flex: 1; margin: 0; font-size: 11px; line-height: 1.4; color: var(--ink-soft); }
+  .rule b { color: var(--gate-ink); font-weight: 700; }
+  .rule .gate-glyph { display: inline-block; width: 8px; height: 8px; margin: 0 6px 1px 2px; box-shadow: none; vertical-align: middle; }
 
   /* ---------- footer chips ---------- */
-  .chips { display: flex; gap: 16px; }
+  .chips { display: flex; gap: 14px; }
   .chip {
-    flex: 1; display: flex; flex-direction: column; gap: 3px;
+    flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px;
     padding: 10px 14px; background: var(--card); border: 1px solid var(--border);
     border-radius: 8px; box-shadow: var(--shadow);
   }
   .chip-label { margin: 0; font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); }
-  .chip-main { margin: 0; font-family: var(--font-mono); font-size: clamp(12px, 1.05vw, 14px); font-variant-numeric: tabular-nums; }
+  .chip-main { margin: 0; font-family: var(--font-mono); font-size: clamp(12px, 1.05vw, 14px); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   .chip-main .var { color: var(--gate-ink); font-weight: 800; }
-  .chip-sub { margin: 0; font-size: 10.5px; color: var(--ink-soft); }
+  .chip-sub { margin: 0; font-size: 10.5px; line-height: 1.38; color: var(--ink-soft); }
+
+  .footnote { margin: 0; font-size: 10.5px; color: var(--ink-soft); }
+  .footnote a { color: var(--rail-strong); }
+
+  @media (max-width: 1100px) {
+    .chips { flex-wrap: wrap; }
+    .chip { flex: 1 1 40%; }
+  }
 
   @media (max-width: 760px) {
     .slide { justify-content: flex-start; }
@@ -253,6 +281,7 @@
     .tracks { flex-direction: column; align-items: stretch; gap: 14px; }
     .backlog-col { flex-direction: row; width: auto; justify-content: flex-start; gap: 10px; }
     .backlog-pill { width: auto; flex: 0 0 auto; }
+    .backlog-note { text-align: left; }
 
     .stations { flex-direction: column; align-items: stretch; }
     .line { display: none; }
@@ -260,25 +289,37 @@
     .node { margin-bottom: 0; }
     .card { min-height: 0; }
     .card-bottom { align-items: flex-start; }
-    .gate { flex-direction: row; width: auto; justify-content: flex-start; gap: 8px; padding: 4px 0 4px 9px; }
-    .gate-glyph { margin-bottom: 0; }
+    .card h2.with-icon { justify-content: flex-start; }
+    .note { text-align: left; }
+    .gate, .gate.mini { flex-direction: row; width: auto; justify-content: flex-start; align-items: center; gap: 8px; padding: 4px 0 4px 9px; }
+    .gate-glyph, .gate.mini .gate-glyph { margin-bottom: 0; }
+    .gate-text { flex-direction: row; align-items: baseline; gap: 6px; }
 
+    .rules { flex-direction: column; gap: 6px; }
     .chips { flex-direction: column; }
   }
 </style>
+</head>
+<body>
 
 <div class="slide">
 
   <header class="head">
     <div class="head-main">
-      <p class="eyebrow">Sprint &amp; Epic Doc Workflow</p>
+      <p class="eyebrow">Sprint &amp; Epic Doc Workflow · v2</p>
       <h1>PRD Implementation</h1>
-      <p class="thesis">A sprint ships one feature through gated stages. An epic is the thin, multi-sprint container above it — <em>neither advances without the user's go-ahead.</em></p>
+      <p class="thesis">A sprint ships one feature through gated stages; an epic is the thin, multi-sprint container above it. <em>Each diamond opens only on the user's explicit word</em>, and no doc records it.</p>
     </div>
     <div class="head-scope">
-      <p class="scope-label">Auto-loads on</p>
-      <p class="scope-path">docs/SPRINT*-*.md</p>
-      <p class="scope-path">docs/SPRINT-INDEX.md</p>
+      <div>
+        <p class="scope-label">Skills</p>
+        <p class="scope-path">prd-implementation</p>
+        <p class="scope-path">epic-implementation</p>
+      </div>
+      <div>
+        <p class="scope-label">Runs on</p>
+        <p class="scope-path">Claude Code · Codex</p>
+      </div>
     </div>
   </header>
 
@@ -288,9 +329,9 @@
       <div class="backlog-col">
         <div class="backlog-pill">
           <p class="backlog-title">Backlog</p>
-          <p class="backlog-tag">docs/BACKLOG.md</p>
+          <p class="backlog-tag">BACKLOG.md</p>
         </div>
-        <p class="backlog-note">optional seed for either track</p>
+        <p class="backlog-note">one line per item, <b>B&lt;n&gt;</b>, never reused · plucked items seed a sprint or an epic</p>
       </div>
 
       <div class="tracks-main">
@@ -298,11 +339,13 @@
         <div class="track track-epic">
           <div class="track-head">
             <p class="track-name">Epic</p>
-            <p class="track-sub">multi-sprint container — kept thin</p>
+            <p class="track-sub">multi-sprint container, kept thin · its docs live on the default branch · archived to DONE/ when every row is Done or Skipped, the success criteria are met and the user agrees to the offer</p>
           </div>
           <div class="rail">
             <div class="line line-mini"></div>
             <div class="stations">
+
+              <div class="gate mini"><span class="gate-glyph"></span><span class="gate-text"><span class="gate-label">Gate</span><span class="gate-word">“epic-sized”</span></span></div>
 
               <div class="station mini">
                 <span class="node mini"></span>
@@ -310,31 +353,31 @@
                   <div class="card-top">
                     <p class="stage-eyebrow">Stage E1</p>
                     <h2>Epic Thoughts</h2>
-                    <p class="desc">Vision, rough scope, candidate sprints</p>
+                    <p class="desc">Problem, rough scope, candidate sprints</p>
                   </div>
                   <div class="card-bottom">
-                    <p class="tag">EPICXX-THOUGHTS-slug.md</p>
+                    <p class="tag">EPICNN-THOUGHTS-slug.md</p>
                   </div>
                 </div>
               </div>
 
-              <div class="gate mini"><span class="gate-glyph"></span><span class="gate-label">Gate</span></div>
+              <div class="gate mini"><span class="gate-glyph"></span><span class="gate-text"><span class="gate-label">Gate</span><span class="gate-word">“ready”</span></span></div>
 
               <div class="station mini">
                 <span class="node mini"></span>
                 <div class="card mini">
                   <div class="card-top">
                     <p class="stage-eyebrow">Stage E2</p>
-                    <h2>Epic PRD</h2>
-                    <p class="desc">Charter — success criteria, non-goals</p>
+                    <h2>Epic PRD · charter</h2>
+                    <p class="desc">Success criteria (the epic's done), non-goals · critical pass by default</p>
                   </div>
                   <div class="card-bottom">
-                    <p class="tag">EPICXX-PRD-slug.md</p>
+                    <p class="tag">EPICNN-PRD-slug.md</p>
                   </div>
                 </div>
               </div>
 
-              <div class="gate mini"><span class="gate-glyph"></span><span class="gate-label">Gate</span></div>
+              <div class="gate mini"><span class="gate-glyph"></span><span class="gate-text"><span class="gate-label">Gate</span><span class="gate-word">“final”</span></span></div>
 
               <div class="station mini roadmap">
                 <span class="node mini"></span>
@@ -342,11 +385,11 @@
                   <div class="card-top">
                     <p class="stage-eyebrow">Stage E3</p>
                     <h2>Roadmap</h2>
-                    <p class="desc">Living tracker — one row per sprint</p>
+                    <p class="desc">One row per sprint: Planned → In progress → Done / Skipped</p>
                   </div>
                   <div class="card-bottom">
-                    <p class="tag">EPICXX-ROADMAP-slug.md</p>
-                    <p class="note">↓ each row becomes a Sprint track</p>
+                    <p class="tag">EPICNN-ROADMAP-slug.md</p>
+                    <p class="note">↓ starting a row starts a Sprint</p>
                   </div>
                 </div>
               </div>
@@ -358,18 +401,20 @@
         <div class="track track-sprint">
           <div class="track-head">
             <p class="track-name">Sprint</p>
-            <p class="track-sub">one feature, ~one sprint · or spawned from an Epic Roadmap row</p>
+            <p class="track-sub">one feature · standalone, or a row of an epic's roadmap</p>
           </div>
           <div class="rail">
             <div class="line"></div>
             <div class="stations">
+
+              <div class="gate"><span class="gate-glyph"></span><span class="gate-text"><span class="gate-label">Gate</span><span class="gate-word">“pick”</span></span></div>
 
               <div class="station">
                 <span class="node"></span>
                 <div class="card">
                   <span class="epic-tag">+ Epic: NN</span>
                   <div class="card-top">
-                    <p class="stage-eyebrow">Stage 1</p>
+                    <p class="stage-eyebrow">Stage 1 · Start</p>
                     <h2 class="with-icon">
                       <svg class="loop-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                         <path d="M4 12a8 8 0 0 1 13.66-5.66" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path>
@@ -379,15 +424,15 @@
                       </svg>
                       Thoughts
                     </h2>
-                    <p class="desc">Back-and-forth brainstorm with the agent</p>
+                    <p class="desc"><b>Start commit</b> on the default branch (THOUGHTS, index bump, plucked items), then the sprint's own <b>worktree</b> or branch <code>sprint/NN-slug</code>.</p>
                   </div>
                   <div class="card-bottom">
-                    <p class="tag">SPRINTXX-THOUGHTS-slug.md</p>
+                    <p class="tag">SPRINTNN-THOUGHTS-slug.md</p>
                   </div>
                 </div>
               </div>
 
-              <div class="gate"><span class="gate-glyph"></span><span class="gate-label">Gate</span></div>
+              <div class="gate"><span class="gate-glyph"></span><span class="gate-text"><span class="gate-label">Gate</span><span class="gate-word">“ready”</span></span></div>
 
               <div class="station">
                 <span class="node"></span>
@@ -395,16 +440,16 @@
                   <div class="card-top">
                     <p class="stage-eyebrow">Stage 2</p>
                     <h2>PRD</h2>
-                    <p class="desc">Requirements + Non‑goals</p>
+                    <p class="desc">Requirements + Non‑goals. THOUGHTS is trimmed to its defining points.</p>
                   </div>
                   <div class="card-bottom">
-                    <p class="tag">SPRINTXX-PRD-slug.md</p>
-                    <p class="note">↺ critical pass trims &amp; refines Thoughts</p>
+                    <p class="tag">SPRINTNN-PRD-slug.md</p>
+                    <p class="note">↺ critical pass by default; material findings go to the user</p>
                   </div>
                 </div>
               </div>
 
-              <div class="gate"><span class="gate-glyph"></span><span class="gate-label">Gate</span></div>
+              <div class="gate"><span class="gate-glyph"></span><span class="gate-text"><span class="gate-label">Gate</span><span class="gate-word">“final”</span></span></div>
 
               <div class="station">
                 <span class="node"></span>
@@ -412,42 +457,46 @@
                   <div class="card-top">
                     <p class="stage-eyebrow">Stage 3</p>
                     <h2>Plan + Tasks</h2>
-                    <p class="desc">Phases of numbered steps, P&lt;phase&gt;.&lt;step&gt;</p>
+                    <p class="desc">Phases of steps <code>P1.1</code>, <code>P1.2</code> … Marks: <code>Depends on</code>, <code>Parallel</code>, <code>Tag: light</code> / <code>hard</code>.</p>
                   </div>
                   <div class="card-bottom">
-                    <p class="tag">PLAN / TASKS</p>
+                    <p class="tag">PLAN · TASKS</p>
+                    <p class="note">hard = concurrency, schema or contract change, migration, money path</p>
                   </div>
                 </div>
               </div>
 
-              <div class="gate"><span class="gate-glyph"></span><span class="gate-label">Gate</span></div>
+              <div class="gate"><span class="gate-glyph"></span><span class="gate-text"><span class="gate-label">Gate</span><span class="gate-word">“implement”</span></span></div>
 
               <div class="station">
                 <span class="node"></span>
                 <div class="card">
                   <div class="card-top">
-                    <p class="stage-eyebrow">Stage 3 · Execute</p>
+                    <p class="stage-eyebrow">Stage 3 · Build</p>
                     <h2>Implementation</h2>
-                    <p class="desc">5 quick choices, then code</p>
+                    <p class="desc"><b>5 choices</b>: target, workspace, review, commits, implementer. Then code; review and commits (<code>S7P2</code>) at the cadence.</p>
                   </div>
                   <div class="card-bottom">
-                    <p class="tag">sprint-coder agent</p>
+                    <p class="tag">SPRINTNN-STATE-slug.md</p>
+                    <p class="note">STATE: any session, either provider, picks up from it</p>
                   </div>
                 </div>
               </div>
 
-              <div class="gate"><span class="gate-glyph"></span><span class="gate-label">Gate</span></div>
+              <div class="gate"><span class="gate-glyph"></span><span class="gate-text"><span class="gate-label">Gate</span><span class="gate-word">“close”</span></span></div>
 
-              <div class="station done">
+              <div class="station done wide">
                 <span class="node"></span>
                 <div class="card">
                   <div class="card-top">
-                    <p class="stage-eyebrow">Archived</p>
+                    <p class="stage-eyebrow">Close</p>
                     <h2>Done</h2>
-                    <p class="desc">All tasks [x] → moved to docs/DONE/</p>
+                    <p class="desc">Finished, or <b>code-complete</b>: steps that only wait become D-items.</p>
+                    <p class="desc steps">Ready commit → merge → full suite → remove worktree &amp; branch → archive + commit</p>
                   </div>
                   <div class="card-bottom">
-                    <p class="tag">docs/DONE/</p>
+                    <p class="tag">DONE/</p>
+                    <p class="note">lessons proposed; written only if approved</p>
                   </div>
                 </div>
               </div>
@@ -459,20 +508,43 @@
       </div>
     </div>
 
-    <p class="rail-caption">Every diamond is a gate — the assistant waits for <b>explicit go‑ahead</b> before advancing, in either track.</p>
+    <ul class="rules">
+      <li class="rule"><span class="gate-glyph"></span><b>One word per gate.</b> “close” covers the whole close and stops only on trouble: a conflict, a failing suite, a removal that needs force.</li>
+      <li class="rule"><b>Commits:</b> the start commit; before the build, each commit on request; then the chosen cadence; then the close. Any push, and removing unmerged work, is always a separate decision.</li>
+      <li class="rule"><b>Abandon or supersede</b> at any stage, on the user's decision: open lines skipped, docs archived to DONE/, no work removed.</li>
+    </ul>
   </section>
 
   <footer class="chips">
     <div class="chip">
       <p class="chip-label">File naming</p>
-      <p class="chip-main">docs/SPRINT<span class="var">XX</span>-<span class="var">TYPE</span>-slug.md</p>
-      <p class="chip-sub">TYPE = THOUGHTS · PRD · PLAN · TASKS, one shared slug per sprint</p>
+      <p class="chip-main">SPRINT<span class="var">NN</span>-<span class="var">TYPE</span>-slug.md</p>
+      <p class="chip-sub">TYPE = THOUGHTS · PRD · PLAN · TASKS · STATE (STATE only while building; deleted at close)</p>
+      <p class="chip-sub">Shared, default branch only: SPRINT-INDEX.md · BACKLOG.md · DEFERRED.md · DONE/README.md · the epic roadmap and the files they name</p>
     </div>
     <div class="chip">
-      <p class="chip-label">Task lifecycle</p>
+      <p class="chip-label">Task marks</p>
       <p class="chip-main">[ ] &nbsp;→&nbsp; [~] &nbsp;→&nbsp; [x]</p>
-      <p class="chip-sub">not started → in progress → done · skipped: ~~[x]~~ (reason)</p>
+      <p class="chip-sub">skipped: <code>[x] ~~…~~ (skipped: reason)</code></p>
+      <p class="chip-sub"><code>**[hard]**</code> after the ID when the PLAN step has <code>&gt; Tag: hard</code> · a line ≤ 150 chars</p>
+    </div>
+    <div class="chip">
+      <p class="chip-label">Deferred items</p>
+      <p class="chip-main">DEFERRED.md · D<span class="var">n</span></p>
+      <p class="chip-sub">A step that only waits on time or an outside event: Trigger, Review by, optional named Check</p>
+      <p class="chip-sub">Fired or past its date: resolved, re-dated or dropped, on the user's word</p>
+    </div>
+    <div class="chip">
+      <p class="chip-label">Check command</p>
+      <p class="chip-main">scripts/check.py</p>
+      <p class="chip-sub">Deferred items, format limits, lesson index, sprint workspaces</p>
+      <p class="chip-sub">Reads and reports; runs nothing, changes nothing</p>
     </div>
   </footer>
 
+  <p class="footnote">The process runs with no roles installed. The optional roles framework has its own slide: <a href="roles-framework-slide.html">roles-framework-slide.html</a>.</p>
+
 </div>
+
+</body>
+</html>

@@ -1,0 +1,8 @@
+{"type":"user","uuid":"u1","sessionId":"00000000-0000-4000-8000-0000000000aa","version":"2.1.289","isSidechain":false,"message":{"role":"user","content":"FIXTURE-TRANSCRIPT-TEXT user prompt"}}
+{"type":"assistant","uuid":"a1","sessionId":"00000000-0000-4000-8000-0000000000aa","version":"2.1.289","isSidechain":false,"effort":"high","perTurnEffort":"high","a_field_added_later":{"x":1},"message":{"id":"msg_main_1","role":"assistant","model":"fixture-claude-a","content":[{"type":"thinking","thinking":"FIXTURE-TRANSCRIPT-TEXT thinking"}],"usage":{"input_tokens":1}}}
+{"type":"assistant","uuid":"a2","sessionId":"00000000-0000-4000-8000-0000000000aa","version":"2.1.289","isSidechain":false,"effort":"high","perTurnEffort":"high","message":{"id":"msg_main_1","role":"assistant","model":"fixture-claude-a","content":[{"type":"text","text":"FIXTURE-TRANSCRIPT-TEXT answer"}]}}
+not JSON at all: FIXTURE-TRANSCRIPT-TEXT
+{"type":"an-entry-type-added-later","effort":"must-not-be-read","message":{"model":"must-not-be-read"}}
+{"type":"assistant","uuid":"a3","version":"2.1.289","isApiErrorMessage":true,"message":{"id":"msg_synth","role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"FIXTURE-TRANSCRIPT-TEXT error text"}]}}
+{"type":"assistant","uuid":"a4","version":"2.1.289","effort":"max","perTurnEffort":"max","message":{"id":"msg_main_2","role":"assistant","model":"fixture-claude-a","content":[]}}
+{"type":"last-prompt","lastPrompt":"FIXTURE-TRANSCRIPT-TEXT last prompt","sessionId":"00000000-0000-4000-8000-0000000000aa"}

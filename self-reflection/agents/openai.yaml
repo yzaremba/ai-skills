@@ -1,0 +1,7 @@
+interface:
+  display_name: "Self Reflection"
+  short_description: "Surface only consequential session lessons"
+  default_prompt: "Use $self-reflection to critically reflect on this conversation without filler."
+
+policy:
+  allow_implicit_invocation: false

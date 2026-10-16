@@ -1,0 +1,2 @@
+{"timestamp":"2026-10-02T11:00:00Z","type":"session_meta","payload":{"id":"00000000-0000-7000-8000-000000000009","parent_thread_id":"00000000-0000-7000-8000-0000000000ff","cli_version":"0.160.0","thread_source":"subagent","agent_role":"unrelated_role"}}
+{"timestamp":"2026-10-02T11:00:01Z","type":"turn_context","payload":{"model":"fixture-model-unrelated","effort":"low"}}

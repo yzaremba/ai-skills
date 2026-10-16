@@ -1,0 +1,2 @@
+{"timestamp":"2026-10-02T09:30:00Z","type":"session_meta","payload":{"id":"00000000-0000-7000-8000-000000000004","parent_thread_id":"00000000-0000-7000-8000-000000000002","cli_version":"0.160.0","thread_source":"subagent","agent_role":"coder_hard","agent_path":"/root/coder/helper"}}
+{"timestamp":"2026-10-02T09:30:01Z","type":"turn_context","payload":{"collaboration_mode":{"settings":{"model":"fixture-model-d","reasoning_effort":"high"}}}}

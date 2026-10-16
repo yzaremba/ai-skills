@@ -1,0 +1,8 @@
+{"timestamp":"2026-10-01T10:01:00Z","type":"session_meta","ordinal":0,"payload":{"id":"00000000-0000-7000-8000-000000000002","parent_thread_id":"00000000-0000-7000-8000-000000000001","cli_version":"0.160.0","thread_source":"subagent","agent_role":"coder","agent_path":"/root/coder","agent_nickname":"Ada","source":{"subagent":{"thread_spawn":{"parent_thread_id":"00000000-0000-7000-8000-000000000001","depth":1,"agent_path":"/root/coder","agent_nickname":"Ada","agent_role":"coder"}}},"base_instructions":{"text":"FIXTURE-TRANSCRIPT-TEXT child instructions"}}}
+{"timestamp":"2026-10-01T10:01:01Z","type":"turn_context","payload":{"model":"fixture-model-b","effort":"medium"}}
+this line is not JSON: FIXTURE-TRANSCRIPT-TEXT
+{"timestamp":"2026-10-01T10:01:02Z","type":"turn_context","payload":{"model":"fixture-model-b","eff
+["a", "JSON", "array", "is", "not", "a", "record"]
+
+{"timestamp":"2026-10-01T10:01:03Z","type":"turn_context","payload":"a payload that is not an object"}
+{"timestamp":"2026-10-01T10:01:04Z","type":"turn_context","payload":{"model":"fixture-model-b","effort":"medium"}}

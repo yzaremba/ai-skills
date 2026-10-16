@@ -1,7 +1,8 @@
 ---
 name: json-tools
 description: Inspect, query, and manipulate JSON files with self-contained local scripts. Supports schema discovery, field extraction, row sampling (first/last N), filtering by value/presence/type/structure, flattening, statistics, group-by/cross-tabulation with aggregations, diffs, format transforms (CSV/JSONL), sorting, reversing, merging, and validation. Use when the user references a .json file and wants to do anything with its contents, or asks to find, get, show, list, search, look up, filter, sort, group, aggregate, count, pivot, cross-tabulate, explore, query, summarize, inspect, analyze, transform, compare, or clean records/fields/values in JSON data — including natural-language requests like "give me the top N", "which have X enabled", "most recent", "count by", "group by", "breakdown by", or "find all where".
-license: Apache-2.0 (see ../LICENSE.txt)
+license: Apache-2.0
+compatibility: claude-code, codex
 ---
 
 # JSON Tools
@@ -10,12 +11,12 @@ This skill provides a local, self-contained toolkit for JSON work.
 
 ## Location
 
-- Python scripts are in `json-tools/scripts/` (Python stdlib only).
-- Node.js scripts are in `json-tools/scripts-node/` (Node built-ins only, no npm deps).
+- Python scripts are in `scripts/` in this skill's directory (Python stdlib only).
+- Node.js scripts are in `scripts-node/` in this skill's directory (Node built-ins only, no npm deps).
 
 ## Usage Conventions
 
-- Run from the skill directory or use full paths.
+- Call the scripts by their full path, built from this skill's directory; the data file can be anywhere. The examples below write `scripts/X.py` and `scripts-node/X.mjs` for short: put this skill's directory in front.
 - Every script supports `--help`.
 - Most scripts accept input file path or `-` for stdin.
 - If a temporary file is needed, create it in the OS temp directory (not in the project tree).
@@ -205,7 +206,7 @@ python scripts/validate.py data.json --strict
     - Run: `node -e "console.log('__stdout_ok__')"`
     - If the output contains `__stdout_ok__`, Node.js stdout works — proceed normally.
     - If the output is empty (exit code 0 but no captured text), the execution environment is silently swallowing Node.js stdout. Inform the user and recommend one of:
-      1. Run Node.js commands with `required_permissions: ["all"]` to bypass sandbox restrictions.
+      1. Run Node.js commands outside the sandbox, if the environment allows it.
       2. Have scripts write output to a temp file, then read the file back.
     - Ask the user which approach they prefer before proceeding. Reuse their choice for the rest of the session.
 - Do NOT narrate individual script invocations (e.g., avoid "Let me run stats.py..." or "Running the schema command..."). Do NOT display raw command lines or uninterpreted JSON output to the user. Execute scripts silently and present only the final interpreted results. Include per-command details only when the user asks for verbose output.
