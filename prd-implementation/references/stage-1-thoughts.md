@@ -7,7 +7,8 @@ Read [conventions.md](conventions.md) first: the sprint number comes from `SPRIN
 - Put these lines at the **top** of the file (before freeform notes), then a blank line:
   - `Sprint: NN` (match the filename's sprint)
   - `Slug: <kebab-case-slug>` (must match the `<Description>` segment in every filename of the set)
-  - `Epic: NN` *(optional)* — include only when this sprint belongs to a multi-sprint epic; this is the up-link to the `epic-implementation` skill. Omit for standalone sprints.
+  - `Epic: NN` *(optional)* — include only when this sprint belongs to a multi-sprint epic; this is the up-link to the `epic-implementation` skill, a number and not a link. Omit for standalone sprints.
+- An epic doc, another sprint's doc, a backlog item document or any other doc this file refers to is named by its file name in backticks, never linked ("Links and names" in [conventions.md](conventions.md)). A plucked item is named by its number; its document is deleted with it.
 - No line of the file records an approval or a review ("No approval in a doc" in [conventions.md](conventions.md)).
 - Content below is **intentionally unstructured**: bullets, questions, rough ideas, unordered notes. No need for full sections or IDs.
 - After creating the first file of a new sprint, update the index (see [conventions.md](conventions.md)): overwrite the latest assigned `NN`, and add nothing else.

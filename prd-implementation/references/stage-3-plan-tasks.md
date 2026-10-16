@@ -4,7 +4,7 @@ Read [conventions.md](conventions.md) before creating the files. This stage star
 
 - **Explore the codebase** before writing the plan so steps reference real paths and patterns.
 - Create `SPRINTXX-PLAN-<Description>.md` and `SPRINTXX-TASKS-<Description>.md`, in the sprint's worktree or branch, where the PRD was written.
-- Cross-link **PRD, PLAN, and TASKS** in each file's header (and link back to THOUGHTS where useful for traceability).
+- Cross-link **PRD, PLAN, and TASKS** in each file's header (and link back to THOUGHTS where useful for traceability). These links stay within the sprint's set; an epic doc, another sprint's doc or any other doc is named by its file name in backticks, never linked ("Links and names" in [conventions.md](conventions.md)). A path into the code is written in backticks, from the project root, never as a link.
 
 ## PLAN file structure
 

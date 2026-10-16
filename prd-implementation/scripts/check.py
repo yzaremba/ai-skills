@@ -24,11 +24,12 @@ load code, and its tests assert that from its syntax tree.
 
 What it reads, all as UTF-8:
 
-    DEFERRED.md and BACKLOG.md in the sprint docs directory, and the names
-    of the item documents in the folder BACKLOG/ beside them (the names
-    only); a BACKLOG-B<n>-<slug>.md beside them is a document at its
+    DEFERRED.md, DEFERRED-context.md and BACKLOG.md in the sprint docs
+    directory, and the item documents (*.md) in the folder BACKLOG/ beside
+    them; a BACKLOG-B<n>-<slug>.md beside them is a document at its
     earlier place, reported in one note, to be moved into the folder
-    SPRINTNN-PLAN-*.md and SPRINTNN-TASKS-*.md there; never DONE/
+    SPRINTNN-THOUGHTS-*.md, SPRINTNN-PRD-*.md, SPRINTNN-PLAN-*.md,
+    SPRINTNN-TASKS-*.md and SPRINTNN-STATE-*.md there; never DONE/
     AGENTS.md in the project root, for the lesson index: the block between
     the lines <!-- project-memory:index:start --> and
     <!-- project-memory:index:end -->
@@ -37,7 +38,7 @@ What it reads, all as UTF-8:
     rebase-apply/head-name and BISECT_START beside a detached HEAD,
     worktrees/<name>/gitdir and locked, the names under refs/heads/sprint/
     and packed-refs; and, in each worktree on a sprint branch, the names in
-    its sprint docs directory and that sprint's own PLAN and TASKS
+    its sprint docs directory and that sprint's own docs
 
 Sprint workspaces. Each branch sprint/NN-slug is reported with where it is
 checked out: in place (in the project root); in a worktree; in a worktree
@@ -49,11 +50,12 @@ SPRINTNN-<KIND>-slug.md (THOUGHTS, PRD, PLAN, TASKS, STATE) are in the
 sprint docs directory there: the docs directory's path inside the working
 tree it is in, the deepest, mapped into the other one. A docs directory
 outside every working tree, or in a repository of its own inside one, is
-one for all of them, and nothing is mapped. A worktree's PLAN and TASKS of
-that sprint are checked as those of the docs directory are, and a violation
-there names the file by its full path; its shared files are stale copies
-and are never read. In place, a note says the shared files were read from
-the sprint branch's copies. Nothing of git's index or objects is read, so
+one for all of them, and nothing is mapped. A worktree's docs of that
+sprint are checked as those of the docs directory are, and a violation
+there names the file by its full path; the docs directory's copy of a doc
+checked there, the start commit's, is not reported as well. Its shared
+files are stale copies and are never read. In place, a note says the
+shared files were read from the sprint branch's copies. Nothing of git's index or objects is read, so
 nothing is said of what is committed. A project root with no .git has no
 sprint section; a git file that cannot be used is a note. Of git's files
 only a regular file of a bounded size is read: never a device or a pipe.
@@ -73,9 +75,33 @@ sprint number and slug is beside the TASKS file, a line that disagrees with
 its step is reported (tasks-tag-mismatch); a line whose step ID the PLAN
 does not hold is not compared.
 
+A sprint doc links only within its own set: the THOUGHTS, PRD, PLAN, TASKS
+and STATE of the same sprint number, by bare file name. In each of them,
+outside fenced code blocks and code spans, the target of an inline link or
+of a link reference definition is read, percent escapes decoded, and
+reported when it is outside the set: a doc of another sprint,
+SPRINT<NN>-*.md with another NN in any folder, DONE/ included
+(link-other-sprint); an epic doc, EPIC<NN>-*.md (link-epic-doc); or any
+other relative or absolute target: a doc of the same sprint through a
+folder, a backlog item document, a shared file, a project doc, a path into
+the code, an image, a path on a Windows drive (link-outside-set). Not
+reported: a URL and an anchor in the same file. A footnote ([^1]: ...) is
+no definition, and neither is a label followed by words or by a target
+that is a bare word ([P1.2]: done). The fix is to name a doc (a .md file)
+by its file name in backticks; a README.md or index.md by its path from
+the project root; and any other path in backticks from the project root (a
+worktree's own root for its docs), given when the docs directory is below
+it and the target does not leave it. A file that is never archived with a
+sprint, BACKLOG.md, an item document and DEFERRED-context.md, is checked
+for links to sprint and epic docs only, the first two rules: the links of
+BACKLOG.md to its item documents stay. The archive, DONE/, is not checked.
+Known limits: an HTML anchor (<a href>), a fence inside a nested list item
+and text such as arr[i](x) are read as markdown is read at the first
+column, so the first two are missed and the last may be taken for a link.
+
 A file is read only if, with every link in its path followed, it is still
 inside the directory it was looked for in: the sprint docs directory, a
-worktree's for its PLAN and TASKS, or the project root for AGENTS.md. A
+worktree's for its sprint docs, or the project root for AGENTS.md. A
 git file is read where it is. A link that leads outside is reported and
 not read. The folder BACKLOG/ is listed under the same rule. The docs
 directory itself is taken as named, link or not.
@@ -173,12 +199,32 @@ INDEX_LINE_LIMIT = 150
 DEFERRED_FILE = "DEFERRED.md"
 BACKLOG_FILE = "BACKLOG.md"
 BACKLOG_DIR = "BACKLOG"
+CONTEXT_FILE = "DEFERRED-context.md"
 AGENTS_FILE = "AGENTS.md"
 INDEX_START = "<!-- project-memory:index:start -->"
 INDEX_END = "<!-- project-memory:index:end -->"
 
 PLAN_NAME = re.compile(r"^SPRINT[0-9]{2,}-PLAN-.+\.md$")
 TASKS_NAME = re.compile(r"^SPRINT[0-9]{2,}-TASKS-.+\.md$")
+# A sprint's own doc in the sprint docs directory: its number and its kind.
+SPRINT_DOC_NAME = re.compile(r"^SPRINT([0-9]{2,})-(THOUGHTS|PRD|PLAN|TASKS|STATE)-.+\.md$")
+# The last part of a link's target: a doc of a sprint, or of an epic.
+LINKED_SPRINT_DOC = re.compile(r"^SPRINT([0-9]{2,})-.+\.md$", re.IGNORECASE)
+LINKED_EPIC_DOC = re.compile(r"^EPIC([0-9]{2,})-.+\.md$", re.IGNORECASE)
+# A link's target: after `](` of an inline link, or in a link reference definition.
+INLINE_LINK = re.compile(r"\]\([ \t]*(<[^>]*>|[^\s)]+)")
+# A definition: a label that is no footnote (`[^1]:`), the target, and at
+# most a quoted or parenthesised title after it.
+REFERENCE_DEFINITION = re.compile(
+    r"""^ {0,3}\[(?!\^)[^\]]+\]:[ \t]*(<[^>]*>|\S+)(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?[ \t]*$""")
+# What makes a definition's bare target a path and not a word (`[P1.2]: done`).
+PATH_LIKE = re.compile(r"[./\\#]")
+PERCENT_ESCAPES = re.compile(r"(?:%[0-9A-Fa-f]{2})+")
+# A Windows drive at the start of a target: an absolute path, not a URL's scheme.
+WINDOWS_DRIVE = re.compile(r"^[A-Za-z]:")
+# File names that say nothing on their own: such a doc is named by its path.
+AMBIGUOUS_NAMES = ("readme.md", "index.md")
+BACKTICKS = re.compile(r"`+")
 # An item document at its earlier place, beside BACKLOG.md: BACKLOG-B<n>-<slug>.md, in any case.
 OLD_DOCUMENT_NAME = re.compile(r"^BACKLOG-B[0-9]+-.*\.md$", re.IGNORECASE)
 
@@ -653,6 +699,139 @@ def check_tasks(lines: list[str], add, plan: dict[str, tuple[int, int | None]] |
         elif hard is None and tag is not None:
             add(number, "tasks-tag-mismatch",
                 f"this line has **[hard]**; {step} carries no `> Tag: hard` in the PLAN (line {plan[step][0]})")
+
+
+# --- Links in a sprint's docs -------------------------------------------------
+
+def _without_code_spans(line: str) -> str:
+    """``line`` with each code span put out of the way: a run of backticks
+    opens one, and the next run of as many closes it. A run with no such
+    closer is text."""
+    runs = list(BACKTICKS.finditer(line))
+    kept: list[str] = []
+    position = 0
+    index = 0
+    while index < len(runs):
+        opener = runs[index]
+        closer = next((later for later in range(index + 1, len(runs))
+                       if len(runs[later].group()) == len(opener.group())), None)
+        if closer is None:
+            index += 1
+            continue
+        kept.append(line[position:opener.start()])
+        kept.append(" ")
+        position = runs[closer].end()
+        index = closer + 1
+    kept.append(line[position:])
+    return "".join(kept)
+
+
+def _percent_decoded(text: str) -> str:
+    """``text`` with each run of percent escapes decoded as UTF-8, as a
+    browser reads a link's target (`SPRINT83%20x.md`)."""
+    return PERCENT_ESCAPES.sub(
+        lambda run: bytes.fromhex("".join(run.group().split("%"))).decode("utf-8", "replace"), text)
+
+
+def _from_root(base: tuple[str, ...] | None, path: str) -> str | None:
+    """``path``, a link's target without its anchor, as a path from the
+    project root (a worktree's own root for a worktree's docs), worked out
+    from the parts of the linking file's folder below that root, ``base``,
+    without looking at the disk. None when ``base`` is not known, or the
+    path is absolute, a drive's included, or leads above the root."""
+    if base is None or path.startswith(("/", "\\")) or WINDOWS_DRIVE.match(path):
+        return None
+    parts = list(base)
+    for part in PATH_PARTS.split(path):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not parts:
+                return None
+            parts.pop()
+        else:
+            parts.append(part)
+    return "/".join(parts) or "."
+
+
+def _link_fault(target: str, sprint: int | None, base: tuple[str, ...] | None = None) -> tuple[str, str] | None:
+    """The rule and message for a link to ``target``, or None when the link
+    may stay. ``sprint`` is the number of the sprint whose doc holds the
+    link, or None for a shared file, which is checked for links to sprint
+    and epic docs only. ``base`` is the linking file's folder below the
+    project root, as parts, or None when it is not known."""
+    if target.startswith("<") and target.endswith(">"):
+        target = target[1:-1].strip()
+    if not target or target.startswith("#"):
+        return None
+    if URL_SCHEME.match(target) and not WINDOWS_DRIVE.match(target):
+        return None
+    path = _percent_decoded(re.split(r"[#?]", target, maxsplit=1)[0])
+    parts = [part for part in PATH_PARTS.split(path) if part not in ("", ".")]
+    name = PATH_PARTS.split(path)[-1]
+    fix = f"name it instead: `{name}`"
+    other = LINKED_SPRINT_DOC.match(name)
+    if other and sprint is None:
+        return ("link-other-sprint",
+                f"a link to {target}, a doc of sprint {other.group(1)}: a file that is not archived with that sprint "
+                f"names its docs and never links them, as the link breaks when the sprint is archived; {fix}")
+    if LINKED_EPIC_DOC.match(name) and sprint is None:
+        return ("link-epic-doc",
+                f"a link to {target}, an epic doc: a file that is not archived with the epic names its docs and "
+                f"never links them, as the link breaks when the epic is archived; {fix}")
+    if sprint is None:
+        return None  # a shared file's other links, its item links among them
+    own = SPRINT_DOC_NAME.match(name)
+    if own and int(own.group(1)) == sprint and len(parts) == 1:
+        return None  # the sprint's own set, which sits in one folder and moves as one
+    why = (f"a link to {target}, outside the sprint's set: a sprint doc links only within its own set, and this "
+           "link breaks when the sprint is archived; ")
+    if own and int(own.group(1)) == sprint:
+        return "link-outside-set", why + f"link it by its bare file name, as the set sits in one folder: `{name}`"
+    if other and int(other.group(1)) != sprint:
+        return ("link-other-sprint",
+                f"a link to {target}, a doc of sprint {other.group(1)}: a sprint doc links only within its own set, "
+                f"and this link breaks when either sprint is archived; {fix}")
+    if LINKED_EPIC_DOC.match(name):
+        return ("link-epic-doc",
+                f"a link to {target}, an epic doc: a sprint doc links only within its own set, and this link breaks "
+                f"when the sprint or the epic is archived; {fix}")
+    rooted = _from_root(base, path)
+    if name.casefold() in AMBIGUOUS_NAMES:
+        return "link-outside-set", why + "name it by its path from the project root" + (
+            f": `{rooted}`" if rooted is not None else "")
+    if name.casefold().endswith(".md"):
+        return "link-outside-set", why + fix
+    return "link-outside-set", why + "write the path in backticks instead, from the project root" + (
+        f": `{rooted}`" if rooted is not None else "")
+
+
+def check_links(lines: list[str], sprint: int | None, add, base: tuple[str, ...] | None = None) -> None:
+    """Report each link that leads out of the set of a doc of sprint
+    ``sprint``, or, for a shared file (``sprint`` None), each link to a
+    sprint or epic doc. A fenced code block and a code span hold no link; a
+    target is reported once on its line."""
+    for number, line in _outside_fences(lines):
+        if line is None:
+            continue
+        text = _without_code_spans(line)
+        targets = [match.group(1) for match in INLINE_LINK.finditer(text)]
+        definition = REFERENCE_DEFINITION.match(text)
+        if definition and (definition.group(1).startswith("<") or PATH_LIKE.search(definition.group(1))):
+            targets.append(definition.group(1))
+        for target in dict.fromkeys(targets):
+            fault = _link_fault(target, sprint, base)
+            if fault is not None:
+                add(number, *fault)
+
+
+def _below(directory: Path, root: Path) -> tuple[str, ...] | None:
+    """The parts of ``directory`` below ``root``, or None when it is not
+    below it."""
+    try:
+        return directory.resolve().relative_to(root.resolve()).parts
+    except (OSError, RuntimeError, ValueError):
+        return None
 
 
 # --- BACKLOG.md ---------------------------------------------------------------
@@ -1321,8 +1500,8 @@ def _branch_order(branch: str) -> tuple[int, str]:
 def sprint_workspaces(project: Path, docs: Path, adder, note) -> tuple[str | None, list[dict] | None]:
     """The common git directory, or None when there is none to read, and an
     entry for each sprint branch: where it is checked out, which of the
-    sprint's own docs are there, and, for a worktree, the check of its PLAN
-    and TASKS. The shared files of a worktree are stale copies: never read.
+    sprint's own docs are there, and, for a worktree, the check of those
+    docs. The shared files of a worktree are stale copies: never read.
     The entries are None when the refs are in a form this does not read."""
     found = find_git(project, note)
     if found is None:
@@ -1376,17 +1555,19 @@ def sprint_workspaces(project: Path, docs: Path, adder, note) -> tuple[str | Non
                 continue
             plan = None
             for name, kind in own.items():
-                if name not in listed or kind not in ("PLAN", "TASKS"):
+                if name not in listed:
                     continue
                 file = str(there / name)
                 lines, fault = read_lines(there / name, there)
                 if fault is not None:
                     adder(file)(None, *fault)
-                elif kind == "PLAN":
+                    continue
+                if kind == "PLAN":
                     check_plan(lines, adder(file))
                     plan = plan_steps(lines)
-                else:
+                elif kind == "TASKS":
                     check_tasks(lines, adder(file), plan)
+                check_links(lines, int(number), adder(file), mapped.parts)
     return str(common), entries
 
 
@@ -1431,6 +1612,7 @@ def build_report(project: Path, docs: Path, docs_from: str, settings: dict, toda
         lines = lines_of(BACKLOG_FILE, docs)
         if lines is not None:
             check_backlog(lines, backlog, adder(BACKLOG_FILE), adder(BACKLOG_FILE, notes))
+            check_links(lines, None, adder(BACKLOG_FILE))
         else:
             backlog.pointed = set(documents or ())  # unknown: report no orphan
     for name in sorted(documents or ()):
@@ -1439,18 +1621,28 @@ def build_report(project: Path, docs: Path, docs_from: str, settings: dict, toda
     message = _earlier_place(backlog)
     if message:
         adder(BACKLOG_FILE, notes)(None, "backlog-documents-earlier-place", message)
+    # The other files that are never archived with a sprint: they name its docs.
+    for name in sorted(name for name in documents or () if name.endswith(".md")) + sorted(backlog.earlier) + (
+            [CONTEXT_FILE] if CONTEXT_FILE in names else []):
+        lines = lines_of(name, docs)
+        if lines is not None:
+            check_links(lines, None, adder(name))
     # A PLAN's name sorts before the name of the TASKS of the same sprint.
     plans: dict[str, dict] = {}
+    base = _below(docs, project)
     for name in names:
+        own = SPRINT_DOC_NAME.match(name)
+        if own is None:
+            continue
+        lines = lines_of(name, docs)
+        if lines is None:
+            continue
         if PLAN_NAME.match(name):
-            lines = lines_of(name, docs)
-            if lines is not None:
-                check_plan(lines, adder(name))
-                plans[name] = plan_steps(lines)
+            check_plan(lines, adder(name))
+            plans[name] = plan_steps(lines)
         elif TASKS_NAME.match(name):
-            lines = lines_of(name, docs)
-            if lines is not None:
-                check_tasks(lines, adder(name), plans.get(TASKS_PAIR.sub(r"\1-PLAN-\2", name)))
+            check_tasks(lines, adder(name), plans.get(TASKS_PAIR.sub(r"\1-PLAN-\2", name)))
+        check_links(lines, int(own.group(1)), adder(name), base)
     if _present(project / AGENTS_FILE):
         lines = lines_of(AGENTS_FILE, project)
         if lines is not None:
@@ -1459,6 +1651,14 @@ def build_report(project: Path, docs: Path, docs_from: str, settings: dict, toda
     def note(file: str, rule: str, message: str) -> None:
         notes.append({"file": file, "line": None, "rule": rule, "message": message})
     git, workspaces = sprint_workspaces(project, docs, adder, note)
+    # A sprint doc that was checked in the sprint's worktree is not reported
+    # again from the docs directory: the copy there is the start commit's.
+    checked = set()
+    for entry in workspaces or ():
+        if entry["docs_state"] == "read" and not _same(Path(entry["docs"]), docs):
+            number, slug = SPRINT_BRANCH.match(entry["branch"]).groups()
+            checked.update(f"SPRINT{number}-{kind}-{slug}.md" for kind in entry["found"])
+    violations[:] = [violation for violation in violations if violation["file"] not in checked]
 
     # In the order the files were checked, and by line within a file.
     files = list(dict.fromkeys(violation["file"] for violation in violations))

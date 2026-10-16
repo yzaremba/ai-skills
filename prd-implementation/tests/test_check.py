@@ -638,6 +638,232 @@ class PlanAndTasks(Case):
                          [(1, "tasks-line-too-long"), (1, "tasks-tag-mismatch")])
 
 
+# --- Links in a sprint's docs -------------------------------------------------
+
+OWN = "SPRINT84-THOUGHTS-sharadar-ingest.md"
+
+
+class Links(Case):
+    def found(self, body: str, name: str = OWN) -> list[tuple]:
+        self.write(name, body)
+        return [(line, rule) for file, line, rule in self.rules() if file == name]
+
+    def test_links_within_the_set_are_clean(self):
+        body = ("Sprint: 84\nSlug: sharadar-ingest\n\n"
+                "[PRD](SPRINT84-PRD-sharadar-ingest.md) · [PLAN](SPRINT84-PLAN-sharadar-ingest.md#p12) · "
+                "[TASKS](<SPRINT84-TASKS-sharadar-ingest.md>) · [STATE](./SPRINT84-STATE-sharadar-ingest.md \"now\")\n"
+                "[encoded](SPRINT84%2DPRD-sharadar-ingest.md)\n")
+        self.assertEqual(self.found(body), [])
+        self.assertClean()
+
+    def test_only_a_bare_name_of_the_five_kinds_of_the_same_number_is_in_the_set(self):
+        for target, fix in (
+                ("DONE/SPRINT84-PRD-sharadar-ingest.md", "link it by its bare file name, as the set sits in one "
+                                                         "folder: `SPRINT84-PRD-sharadar-ingest.md`"),
+                ("../docs/SPRINT84-PLAN-sharadar-ingest.md", "link it by its bare file name, as the set sits in one "
+                                                             "folder: `SPRINT84-PLAN-sharadar-ingest.md`"),
+                ("SPRINT84-NOTES-sharadar-ingest.md", "name it instead: `SPRINT84-NOTES-sharadar-ingest.md`"),
+                ("SPRINT84-PRD-x.txt", "write the path in backticks instead, from the project root: "
+                                       "`docs/SPRINT84-PRD-x.txt`")):
+            with self.subTest(target):
+                self.assertEqual(self.found(f"[x]({target})\n"), [(1, "link-outside-set")])
+                self.assertTrue(self.messages(f"[x]({target})\n")[0].endswith(fix))
+
+    def test_a_link_to_a_backlog_item_document(self):
+        for target in ("BACKLOG/B9-offline-journal.md", "BACKLOG-B9-offline.md"):
+            with self.subTest(target):
+                self.assertEqual(self.found(f"See [B9]({target}).\n"), [(1, "link-outside-set")])
+        self.assertTrue(self.messages("[B9](BACKLOG/B9-offline-journal.md)\n")[0].endswith(
+            "name it instead: `B9-offline-journal.md`"))
+
+    def test_percent_escapes_are_decoded_before_the_target_is_classified(self):
+        self.assertEqual(self.found("[x](SPRINT83%2DPLAN-x.md) [y](EPIC03-PRD%20a.md)\n"),
+                         [(1, "link-other-sprint"), (1, "link-epic-doc")])
+        self.assertTrue(self.messages("[x](DONE/SPRINT83-PLAN-caf%C3%A9.md)\n")[0].endswith(
+            "name it instead: `SPRINT83-PLAN-café.md`"))
+
+    def test_a_path_on_a_windows_drive_is_absolute_and_not_a_url(self):
+        drive = "C" + ":"  # put together: no source line holds a drive
+        for target, fix in ((drive + "\\work\\src\\a.py", "write the path in backticks instead, from the project root"),
+                            (drive + "/work/docs/SPRINT83-PLAN-x.md", "name it instead: `SPRINT83-PLAN-x.md`")):
+            with self.subTest(target):
+                messages = self.messages(f"[x]({target})\n")
+                self.assertEqual(len(messages), 1)
+                self.assertTrue(messages[0].endswith(fix), messages[0])
+        self.assertEqual(self.found(f"[x]({drive}\\work\\SPRINT83-PLAN-x.md)\n"), [(1, "link-other-sprint")])
+
+    def test_a_readme_or_an_index_is_named_by_its_path(self):
+        for target, fix in (("DONE/README.md", ": `docs/DONE/README.md`"),
+                            ("../deploy/README.md#setup", ": `deploy/README.md`"),
+                            ("../site/Index.md", ": `site/Index.md`"),
+                            ("/srv/README.md", "")):
+            with self.subTest(target):
+                messages = self.messages(f"[x]({target})\n")
+                self.assertEqual(len(messages), 1)
+                self.assertTrue(messages[0].endswith("name it by its path from the project root" + fix), messages[0])
+
+    def test_what_is_no_link_reference_definition(self):
+        body = "\n".join((
+            "[^1]: See [the docs] for more.", "[^note]: SPRINT83-PLAN-x.md", "[NOTE]: a remark on SPRINT83-PLAN-x.md",
+            "[P1.2]: done", "[x]: SPRINT83-PLAN-x.md and more", "    [x]: SPRINT83-PLAN-x.md",
+        )) + "\n"
+        self.assertEqual(self.found(body), [])
+        body = "\n".join((
+            "[a]: SPRINT83-PLAN-x.md \"title\"", "[b]: <EPIC03-PRD-a.md> (title)", "[c]: ../src/a.py 'title'",
+            "[d]: SPRINT83-PRD-x.md", "[e]: <README>",
+        )) + "\n"
+        self.assertEqual(self.found(body), [(1, "link-other-sprint"), (2, "link-epic-doc"), (3, "link-outside-set"),
+                                            (4, "link-other-sprint"), (5, "link-outside-set")])
+
+    def test_a_link_to_another_sprints_doc(self):
+        for target in ("SPRINT83-PLAN-macro-rates-ingest.md", "DONE/SPRINT83-PLAN-macro-rates-ingest.md",
+                       "./DONE/SPRINT83-PLAN-macro-rates-ingest.md#p3", "../docs/SPRINT83-PLAN-macro-rates-ingest.md",
+                       "<DONE/SPRINT83-PLAN-macro-rates-ingest.md>", "SPRINT83-PLAN-macro-rates-ingest.md 'title'",
+                       "DONE\\SPRINT83-PLAN-macro-rates-ingest.md", "SPRINT85-STATE-x.md", "SPRINT07-PRD-old.md"):
+            with self.subTest(target):
+                self.assertEqual(self.found(f"See [it]({target}) for the plan.\n"), [(1, "link-other-sprint")])
+
+    def test_the_message_names_the_fix(self):
+        self.write(OWN, "Sprint: 84\n\nBuilt on [S83](DONE/SPRINT83-PLAN-macro-rates-ingest.md#p3).\n")
+        code, report = self.run_check()
+        self.assertEqual(code, 1)
+        self.assertEqual(report["violations"], [{
+            "file": OWN, "line": 3, "rule": "link-other-sprint",
+            "message": "a link to DONE/SPRINT83-PLAN-macro-rates-ingest.md#p3, a doc of sprint 83: a sprint doc links "
+                       "only within its own set, and this link breaks when either sprint is archived; "
+                       "name it instead: `SPRINT83-PLAN-macro-rates-ingest.md`"}])
+        text = check.run(self.arguments())[1]
+        self.assertIn(f"\n{OWN}:3: link-other-sprint: a link to DONE/SPRINT83-PLAN-macro-rates-ingest.md#p3, ", text)
+        self.assertTrue(text.endswith("\nResult: action needed\n"))
+
+    def test_a_link_to_an_epic_doc(self):
+        for target in ("EPIC03-PRD-reference-data-layer.md", "EPIC03-ROADMAP-reference-data-layer.md#sprints",
+                       "DONE/EPIC02-THOUGHTS-index-membership.md"):
+            with self.subTest(target):
+                self.assertEqual(self.found(f"Epic: 03\n\n[charter]({target})\n"), [(3, "link-epic-doc")])
+        self.write(OWN, "[charter](EPIC03-PRD-reference-data-layer.md)\n")
+        message = self.run_check()[1]["violations"][0]["message"]
+        self.assertTrue(message.endswith("; name it instead: `EPIC03-PRD-reference-data-layer.md`"), message)
+
+    def test_a_link_to_any_other_doc(self):
+        for target in ("BACKLOG.md", "DEFERRED.md", "SPRINT-INDEX.md", "DONE/README.md", "EPIC-INDEX.md",
+                       "WORKFLOW-secmaster-nightly.md#steps", "../deploy/RESEARCH-ROLLOUT.md", "../README.MD"):
+            with self.subTest(target):
+                self.assertEqual(self.found(f"- [doc]({target})\n"), [(1, "link-outside-set")])
+        self.write(OWN, "[rollout](../deploy/RESEARCH-ROLLOUT.md)\n")
+        message = self.run_check()[1]["violations"][0]["message"]
+        self.assertEqual(message, "a link to ../deploy/RESEARCH-ROLLOUT.md, outside the sprint's set: a sprint doc "
+                                  "links only within its own set, and this link breaks when the sprint is archived; "
+                                  "name it instead: `RESEARCH-ROLLOUT.md`")
+
+    def messages(self, body: str, *extra: str) -> list[str]:
+        self.write(OWN, body)
+        return [v["message"] for v in self.run_check(*extra)[1]["violations"] if v["file"].endswith(OWN)]
+
+    def test_a_link_to_code_or_an_image_gives_the_path_from_the_root(self):
+        cases = {
+            "../secmaster/decisions/sp500-FRC.json": "secmaster/decisions/sp500-FRC.json",
+            "../src/ingest/sharadar.py#L12": "src/ingest/sharadar.py",
+            "img/SPRINT83-chart.png": "docs/img/SPRINT83-chart.png",
+            "./DONE/": "docs/DONE",
+            "..": ".",
+            "..\\tools\\run.ps1": "tools/run.ps1",
+        }
+        for target, rooted in cases.items():
+            with self.subTest(target):
+                self.assertEqual(self.found(f"[x]({target})\n"), [(1, "link-outside-set")])
+                self.assertEqual(self.messages(f"[x]({target})\n"), [
+                    f"a link to {target}, outside the sprint's set: a sprint doc links only within its own set, and "
+                    "this link breaks when the sprint is archived; write the path in backticks instead, from the "
+                    f"project root: `{rooted}`"])
+        above = "/".join(("..", "..", "elsewhere", "a.py"))  # put together: no source line leaves the skill
+        for target in (above, "/etc/hosts"):
+            with self.subTest(target):
+                self.assertEqual(self.messages(f"[x]({target})\n"), [
+                    f"a link to {target}, outside the sprint's set: a sprint doc links only within its own set, and "
+                    "this link breaks when the sprint is archived; write the path in backticks instead, from the "
+                    "project root"])
+
+    def test_no_path_from_the_root_for_docs_outside_the_project(self):
+        outside = self.root / "elsewhere" / "docs"
+        self.write(OWN, "[x](../src/a.py)\n", outside)
+        report = self.run_check("--docs", str(outside))[1]
+        self.assertEqual([(v["file"], v["rule"]) for v in report["violations"]], [(OWN, "link-outside-set")])
+        self.assertTrue(report["violations"][0]["message"].endswith("from the project root"))
+
+    def test_what_is_not_reported(self):
+        body = "\n".join((
+            "[a URL](https://example.com/docs/SPRINT83-PLAN-x.md) and [mail](mailto:a@example.com)",
+            "[an anchor](#non-goals) and [a URL to code](https://github.com/o/r/blob/main/src/a.py)",
+            "Named, as it should be: `SPRINT83-PLAN-macro-rates-ingest.md` and `EPIC03-PRD-reference-data-layer.md`",
+            "In a code span: `[x](SPRINT83-PLAN-x.md)` and ``[y](EPIC03-PRD-y.md)``",
+            "```markdown",
+            "[in a fence](SPRINT83-PLAN-x.md)",
+            "```",
+            "Brackets that are no link: [P1.2] (SPRINT83-PLAN-x.md)",
+        )) + "\n"
+        self.assertEqual(self.found(body), [])
+
+    def test_an_unclosed_backtick_is_text(self):
+        self.assertEqual(self.found("a ` b [x](SPRINT83-PLAN-x.md)\n"), [(1, "link-other-sprint")])
+
+    def test_a_link_reference_definition(self):
+        body = "Built on [the plan][s83].\n\n[s83]: DONE/SPRINT83-PLAN-macro-rates-ingest.md\n   [e]: <EPIC03-PRD-a.md>\n"
+        self.assertEqual(self.found(body), [(3, "link-other-sprint"), (4, "link-epic-doc")])
+
+    def test_a_target_is_reported_once_on_its_line(self):
+        body = ("[a](SPRINT83-PLAN-x.md) [b](SPRINT83-PLAN-x.md) [c](SPRINT83-PRD-x.md)\n"
+                "[d](SPRINT83-PLAN-x.md)\n")
+        self.assertEqual(self.found(body), [(1, "link-other-sprint"), (1, "link-other-sprint"),
+                                            (2, "link-other-sprint")])
+
+    def test_every_kind_of_a_sprints_doc_is_checked(self):
+        line = "[S83](SPRINT83-PLAN-macro-rates-ingest.md)\n"
+        for kind in ("THOUGHTS", "PRD", "PLAN", "TASKS", "STATE"):
+            self.write(f"SPRINT84-{kind}-sharadar-ingest.md", line)
+        self.assertEqual(sorted(self.rules()), sorted(
+            (f"SPRINT84-{kind}-sharadar-ingest.md", 1, "link-other-sprint")
+            for kind in ("THOUGHTS", "PRD", "PLAN", "TASKS", "STATE")))
+
+    def test_the_archive_and_other_docs_are_not_checked(self):
+        line = "[S83](SPRINT83-PLAN-macro-rates-ingest.md) [epic](EPIC03-PRD-a.md) [w](WORKFLOW-a.md)\n"
+        for name in ("DONE/SPRINT84-PRD-sharadar-ingest.md", "DONE/README.md", "EPIC03-ROADMAP-a.md",
+                     "WORKFLOW-a.md", "INCIDENTS.md", "SPRINT84-NOTES-a.md"):
+            self.write(name, line)
+        self.assertClean()
+
+    def test_a_doc_that_cannot_be_read_is_reported_once(self):
+        (self.docs / OWN).write_bytes(b"caf\xe9 [S83](SPRINT83-PLAN-x.md)\n")
+        self.assertEqual(self.rules(), [(OWN, None, "not-utf8")])
+
+    def test_files_never_archived_with_a_sprint_are_checked_for_sprint_and_epic_links(self):
+        links = ("[s](../SPRINT83-PLAN-x.md) [d](../DONE/SPRINT07-PRD-y.md) [e](../EPIC03-PRD-a.md) "
+                 "[w](../WORKFLOW-a.md) [code](../../src/a.py) [item](B4-other.md) [url](https://example.com/x.md)\n")
+        self.write("BACKLOG.md", "Latest assigned: B9\n\n- **B4** Other — [notes](BACKLOG/B4-other.md)\n"
+                   "- **B9** Offline mode, after [S83](SPRINT83-PLAN-x.md) — [notes](BACKLOG/B9-offline.md)\n")
+        self.write("BACKLOG/B4-other.md", "# Other\n")
+        self.write("BACKLOG/B9-offline.md", "# Offline\n\n" + links)
+        self.write("BACKLOG/notes.txt", "[s](../SPRINT83-PLAN-x.md)\n")  # not an item document: not read
+        self.write("DEFERRED-context.md", "## D1 — P3.4\n\nSee [the plan](DONE/SPRINT07-PLAN-y.md).\n")
+        self.assertEqual(self.rules(), [
+            ("BACKLOG.md", 4, "link-other-sprint"),
+            ("BACKLOG/B9-offline.md", 3, "link-other-sprint"), ("BACKLOG/B9-offline.md", 3, "link-other-sprint"),
+            ("BACKLOG/B9-offline.md", 3, "link-epic-doc"),
+            ("DEFERRED-context.md", 3, "link-other-sprint"),
+        ])
+        messages = [v["message"] for v in self.run_check()[1]["violations"]]
+        self.assertEqual(messages[0], "a link to SPRINT83-PLAN-x.md, a doc of sprint 83: a file that is not archived "
+                                      "with that sprint names its docs and never links them, as the link breaks when "
+                                      "the sprint is archived; name it instead: `SPRINT83-PLAN-x.md`")
+        self.assertEqual(messages[3], "a link to ../EPIC03-PRD-a.md, an epic doc: a file that is not archived with "
+                                      "the epic names its docs and never links them, as the link breaks when the "
+                                      "epic is archived; name it instead: `EPIC03-PRD-a.md`")
+
+    def test_an_item_document_at_its_earlier_place_is_checked_too(self):
+        self.write("BACKLOG-B9-offline.md", "[s](SPRINT83-PLAN-x.md)\n")
+        self.assertIn(("BACKLOG-B9-offline.md", 1, "link-other-sprint"), self.rules())
+
+
 # --- DEFERRED.md --------------------------------------------------------------
 
 class Deferred(Case):
@@ -1111,9 +1337,12 @@ class Backlog(Case):
         self.assertEqual(report["violations"][0]["message"], "the link's target is `BACKLOG/B<n>-<slug>.md`")
         # A URL, or a path with no folder of that name, is not a link to an item document.
         for target in ("https://example.com/BACKLOG/B9-offline-journal.md", "https://example.com/BACKLOG-B9-a.md",
-                       "SPRINT07-PRD-backlog-bugs.md", "BACKLOG.md", "notes/backlog.md"):
+                       "WORKFLOW-backlog-bugs.md", "BACKLOG.md", "notes/backlog.md"):
             with self.subTest(target):
                 self.assertEqual(self.found(f"- **B9** Offline mode — [notes]({target})\n"), [])
+        # A sprint's doc is no item document either; the link is reported as one to that sprint.
+        self.assertEqual(self.found("- **B9** Offline mode — [notes](SPRINT07-PRD-backlog-bugs.md)\n"),
+                         [(5, "link-other-sprint")])
         self.assertEqual(self.found("- **B9** Offline mode — [notes](BACKLOG/B9-other.md)\n"),
                          [(5, "backlog-document-missing")])
         _, report = self.run_check()
@@ -2313,6 +2542,41 @@ class SprintWorkspaces(Case):
         # The worktree's TASKS is compared with the worktree's PLAN, not the project root's.
         self.write(plan, "### P1.1 — A step\n", tree / "docs")
         self.assertEqual(self.report()[1]["violations"], [])
+
+    def test_links_in_a_worktrees_own_docs(self):
+        link = "[S86](SPRINT86-PRD-macro-releases-ingest.md) [epic](EPIC03-PRD-a.md) [set](SPRINT87-PRD-b.md)\n"
+        docs = {
+            "SPRINT87-THOUGHTS-b.md": "Sprint: 87\n\n" + link,
+            "SPRINT87-STATE-b.md": "[w](../deploy/RUNBOOK.md) [code](../src/a.py)\n",
+            "SPRINT88-PRD-c.md": link,  # another sprint's copy in this worktree: stale, not read
+            "DONE/SPRINT87-PLAN-b.md": link,
+        }
+        tree = self.worktree("wt", "sprint/87-b", docs)
+        code, report, text = self.report()
+        self.assertEqual(code, 1)
+        thoughts, state = (str(tree / "docs" / name) for name in ("SPRINT87-THOUGHTS-b.md", "SPRINT87-STATE-b.md"))
+        self.assertEqual([(v["file"], v["line"], v["rule"]) for v in report["violations"]], [
+            (thoughts, 3, "link-other-sprint"), (thoughts, 3, "link-epic-doc"), (state, 1, "link-outside-set"),
+            (state, 1, "link-outside-set")])
+        self.assertIn(f"\n{thoughts}:3: link-other-sprint: a link to SPRINT86-PRD-macro-releases-ingest.md, a doc of "
+                      "sprint 86: ", text)
+        # The path from the root is the worktree's: its docs directory is docs/ there too.
+        self.assertTrue(report["violations"][3]["message"].endswith("from the project root: `src/a.py`"))
+        self.assertEqual(report["sprint_workspaces"][0]["found"], ["THOUGHTS", "STATE"])
+
+    def test_a_doc_checked_in_the_worktree_is_not_reported_from_the_docs_directory(self):
+        link = "[S86](SPRINT86-PRD-macro-releases-ingest.md)\n"
+        tree = self.worktree("wt", "sprint/87-b", {"SPRINT87-THOUGHTS-b.md": link})
+        self.write("SPRINT87-THOUGHTS-b.md", link)  # the start commit's copy on the default branch
+        self.write("SPRINT87-PRD-b.md", link)  # not in the worktree: still checked here
+        self.write("SPRINT88-THOUGHTS-c.md", link)  # a sprint with no worktree
+        report = self.report()[1]
+        self.assertEqual([(v["file"], v["rule"]) for v in report["violations"]], [
+            ("SPRINT87-PRD-b.md", "link-other-sprint"), ("SPRINT88-THOUGHTS-c.md", "link-other-sprint"),
+            (str(tree / "docs" / "SPRINT87-THOUGHTS-b.md"), "link-other-sprint")])
+        # A worktree that is gone checks nothing, so the docs directory's copy is reported.
+        shutil.rmtree(tree)
+        self.assertIn("SPRINT87-THOUGHTS-b.md", [v["file"] for v in self.report()[1]["violations"]])
 
     def test_a_worktree_file_that_cannot_be_read_is_a_violation_with_its_path(self):
         tree = self.worktree("wt", "sprint/01-a")

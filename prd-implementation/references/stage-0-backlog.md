@@ -23,7 +23,7 @@ Every line of `BACKLOG.md` that is not blank is one of three things, and nothing
 
 - **An item line** starts at the first column with `- **B<n>** `: a hyphen, one space, the number in bold, one space. `<n>` is a positive whole number written without leading zeros (`B7`, not `B07`).
 - **The priority tag** is optional. When used it comes directly after the number: `**[HIGH]** `, `**[MED]** ` or `**[LOW]** `, followed by one space, and nowhere else on the line.
-- **The text** is what the item is, in a phrase or a sentence. It may hold inline markup and links.
+- **The text** is what the item is, in a phrase or a sentence. It may hold inline markup and links, but a sprint's or an epic's doc is named by its file name in backticks, never linked: the sprint's close moves it ("Links and names" in [conventions.md](conventions.md)). The same holds in an item document.
 - **One line means one line**, of at most 300 characters, counted as "Format limits" in [conventions.md](conventions.md) says. No continuation line, no sub-bullet, no paragraph under an item, no code block. A list line without a number is not an item, and is a violation like any other stray line.
 - **A number appears once** in the file, and none is higher than the pointer line's.
 

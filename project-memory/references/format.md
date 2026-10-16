@@ -63,6 +63,7 @@ One file per lesson, `<memory dir>/<slug>.md`. The slug is short kebab-case and 
 - **All four are stated**: what, why, when it applies, which roles. A lesson that cannot say when it applies is not ready to be written.
 - **One lesson, one file, one screen.** A file that grows a second lesson is split; two files that say one thing are consolidated.
 - **No machine path** in a shared lesson: no home directory, user name or drive letter. Such a lesson is a local one.
+- **A sprint or epic doc is named, never linked**: by its file name in backticks, such as `` `SPRINT83-PLAN-macro-rates-ingest.md` ``. A sprint's close moves its docs into the archive, and a link to them would break.
 - A correction overwrites the text and changes the `Recorded` date. The file keeps no history of itself: `git log` has it.
 
 ## The local folder

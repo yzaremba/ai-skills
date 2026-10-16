@@ -5,7 +5,7 @@ Read [conventions.md](conventions.md) first.
 When **every ROADMAP row** is resolved (`Done` or `Skipped`) and the PRD's success criteria are met:
 
 1. **Offer** to move the epic set (THOUGHTS, PRD, ROADMAP) to `DONE/` in the epic docs directory.
-2. After the user agrees, move them and add a row to the **Epics** table in `DONE/README.md`. Constituent sprints archive on their own schedule per the `prd-implementation` skill; update the ROADMAP's Docs links to be relative to its new `DONE/` location — sprint sets archived alongside it are bare filenames, sprints still in the epic docs directory itself need a `../` prefix.
+2. After the user agrees, move them and add a row to the **Epics** table in `DONE/README.md`. Constituent sprints archive on their own schedule per the `prd-implementation` skill; update the ROADMAP's Docs links to be relative to its new `DONE/` location — sprint sets archived alongside it are bare filenames, sprints still in the epic docs directory itself need a `../` prefix. No other link is updated: the epic's and its sprints' docs name each other and never link ("Links and names" in [conventions.md](conventions.md)).
 3. Ensure `EPIC-INDEX.md` still reflects the highest epic `NN` in use.
 
 All of this is done on the default branch (see "Where each doc is written" in [conventions.md](conventions.md)). Each commit of it, and each push, is a separate decision of the user.

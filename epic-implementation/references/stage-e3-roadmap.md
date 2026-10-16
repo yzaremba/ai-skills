@@ -3,7 +3,7 @@
 Read [conventions.md](conventions.md) before creating or editing the file. This stage starts only after the user has signalled that the charter is final. It stays open for the life of the epic: the ROADMAP changes as sprints are created and land.
 
 - **Explore the codebase** before decomposing so the sprint breakdown references real areas and dependencies.
-- Create `EPICXX-ROADMAP-<Description>.md`. Cross-link THOUGHTS, PRD, ROADMAP in the header. It is written, and later changed, only on the default branch (see "Where each doc is written" in [conventions.md](conventions.md)).
+- Create `EPICXX-ROADMAP-<Description>.md`. Cross-link THOUGHTS, PRD, ROADMAP in the header. Apart from the Docs column below, any other doc the ROADMAP refers to is named by its file name in backticks, never linked ("Links and names" in [conventions.md](conventions.md)). It is written, and later changed, only on the default branch (see "Where each doc is written" in [conventions.md](conventions.md)).
 - The ROADMAP is the epic's **living tracker** — it replaces PLAN+TASKS at this altitude. Update it as sprints are created and land.
 
 ## ROADMAP file structure
@@ -34,7 +34,7 @@ ROADMAP maintenance (rows stay short, scope changes, "Last updated" hygiene) is 
 When the user starts one of the roadmap's sprints:
 
 1. Create the `SPRINTXX-*` set per the `prd-implementation` skill, taking `XX` from `SPRINT-INDEX.md` (global numbering) and **reusing the ROADMAP row's slug verbatim** as the `<Description>`. This is the moment the number is assigned — not before.
-2. Add `Epic: NN` to that sprint's **THOUGHTS header** (alongside `Sprint:` / `Slug:`) — the up-link.
+2. Add `Epic: NN` to that sprint's **THOUGHTS header** (alongside `Sprint:` / `Slug:`) — the up-link, a number and not a link: the sprint's docs name the epic's docs and never link them ("Links and names" in [conventions.md](conventions.md)).
 3. Fill the now-assigned sprint number + Docs link into the ROADMAP row, the link pointing at the sprint's THOUGHTS file, and flip its **Status** as the sprint moves (`Planned → In progress → Done`). Each of these edits is made on the default branch, never in the sprint's worktree; the first, with the status `In progress`, goes into the sprint's start commit. What the row becomes when the sprint closes, also as code-complete or abandoned, is under "ROADMAP maintenance" in [conventions.md](conventions.md).
 
 From there the sprint runs entirely under the `prd-implementation` skill. This skill does **not** duplicate that flow.

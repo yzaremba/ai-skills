@@ -2,7 +2,7 @@
 
 Read [conventions.md](conventions.md) before creating the file. This stage starts only after the user has confirmed that the brainstorm is ready to become a charter.
 
-After confirmation, create `EPICXX-PRD-<Description>.md` from THOUGHTS (and verbal direction). Cross-link THOUGHTS ↔ PRD in headers. The charter stays **high-altitude** — sections:
+After confirmation, create `EPICXX-PRD-<Description>.md` from THOUGHTS (and verbal direction). Cross-link THOUGHTS ↔ PRD in headers. Those links are within the epic's set; a sprint's doc or any other doc the charter refers to is named by its file name in backticks, never linked ("Links and names" in [conventions.md](conventions.md)). The charter stays **high-altitude** — sections:
 
 - **Vision / problem** — why this epic exists and the outcome it drives.
 - **Success criteria** — measurable; this is the epic's **definition of done** (how you know the whole effort is complete).

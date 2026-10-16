@@ -14,7 +14,7 @@ One session may be all three: it then follows the build lead's part and the impl
 
 ### Picking up a sprint in progress
 
-If the sprint has a STATE file (`SPRINTXX-STATE-<slug>.md`), read it before anything else, then compare it with git as [state.md](state.md) says: branch, `HEAD`, uncommitted changes. Put any mismatch to the user; never resolve it silently. When they match, the choices recorded there stand, and work resumes at its "Next action" without asking them again. When the recorded target is exhausted, only the target is asked again; the other recorded choices stand unless the user changes them.
+If the sprint has a STATE file (`SPRINTXX-STATE-<slug>.md`), read it before anything else, then compare it with git as [state.md](state.md) says: branch, `HEAD`, uncommitted changes. Put any mismatch to the user; never resolve it silently. When they match, the choices recorded there stand, and work resumes at its "Next action" without asking them again. When the recorded target is exhausted, only the target is asked again; the other recorded choices stand unless the user changes them. Before the next step, the build lead fixes the violations the check command ([deferred.md](deferred.md)) reports in this sprint's own docs: in the sprint's workspace, never in the default branch's copy, listed under STATE's "Uncommitted" until it is committed at the chosen cadence. A fix that needs judgement, such as the wording of an over-long annotation, follows that doc's rules in [conventions.md](conventions.md).
 
 ### Resolve the choices, then print a summary
 

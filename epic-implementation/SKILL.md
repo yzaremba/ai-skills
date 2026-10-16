@@ -17,7 +17,7 @@ This skill sits **above** the sprint workflow, the `prd-implementation` skill. A
 ## Read before you act
 
 - **Before acting in a stage, read that stage's file** from the table below, in full. This file is only the map: the rules are in the stage files, and they are worded to stop mistakes that keep recurring. Do not act on a stage from memory of an earlier read in another session.
-- **Before creating, renaming or editing any epic doc, read [references/conventions.md](references/conventions.md).** It holds the epic docs directory, the hierarchy, epic numbering and the index, file naming, slug rules, ROADMAP maintenance, the epic status vocab, traceability, "Last updated" hygiene, where each doc is written and how questions are put to the user. They apply in every stage.
+- **Before creating, renaming or editing any epic doc, read [references/conventions.md](references/conventions.md).** It holds the epic docs directory, the hierarchy, epic numbering and the index, file naming, slug rules, which docs are linked and which only named, ROADMAP maintenance, the epic status vocab, traceability, "Last updated" hygiene, where each doc is written and how questions are put to the user. They apply in every stage.
 - When a gate opens, read the next stage's file before doing anything in it.
 - A sprint of an epic is run with the `prd-implementation` skill. Read that skill before creating or editing a sprint doc; this one covers only the epic's own three docs and the ROADMAP row of each sprint.
 

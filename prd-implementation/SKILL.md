@@ -17,7 +17,7 @@ A sprint may stand alone or belong to a larger multi-sprint **epic** (the `epic-
 ## Read before you act
 
 - **Before acting in a stage, read that stage's file** from the table below, in full. This file is only the map: the rules are in the stage files, and they are worded to stop mistakes that keep recurring. Do not act on a stage from memory of an earlier read in another session.
-- **Before creating, renaming or editing any sprint doc, read [references/conventions.md](references/conventions.md).** It holds the sprint docs directory, sprint numbering and the index, file naming, where each doc is written, the task lifecycle, TASKS-line discipline, the format limits, "Last updated" hygiene, that no doc records an approval, and how questions are put to the user. They apply in every stage.
+- **Before creating, renaming or editing any sprint doc, read [references/conventions.md](references/conventions.md).** It holds the sprint docs directory, sprint numbering and the index, file naming, which docs are linked and which only named, where each doc is written, the task lifecycle, TASKS-line discipline, the format limits, "Last updated" hygiene, that no doc records an approval, and how questions are put to the user. They apply in every stage.
 - When a gate opens, read the next stage's file before doing anything in it.
 - **Picking up a sprint that is being implemented, read its STATE file first** (`SPRINTNN-STATE-slug.md`), then compare it with git as [references/state.md](references/state.md) says. A mismatch goes to the user; it is never resolved silently.
 

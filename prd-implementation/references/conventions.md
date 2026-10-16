@@ -49,6 +49,27 @@ Examples, with the default directory: `docs/SPRINT01-THOUGHTS-mobile-layout.md`,
 
 Legacy files matching `PRD-*.md` without a sprint prefix may still exist; prefer the sprint pattern for new work.
 
+## Links and names
+
+Files carry the names of artifacts, not paths to them. A sprint's own docs sit together and move together: the close moves the set into `DONE/` as one, so a link between two of them survives that move. Any other relative link breaks when either side moves. **A file that is not archived together with its target names it and never links it.**
+
+- **A sprint doc links only within its own set**: the THOUGHTS, PRD, PLAN, TASKS and STATE of the same sprint, by bare file name, as in `[PRD](SPRINT07-PRD-mobile-layout.md)`.
+- **Any other doc is named, never linked**: by its file name in backticks, as in `` `SPRINT83-PLAN-macro-rates-ingest.md` ``. That holds for another sprint's doc, active or archived; an epic doc; a backlog item document, which is deleted when its item is plucked; the shared files (`BACKLOG.md`, `DEFERRED.md`, `SPRINT-INDEX.md`, `DONE/README.md`); and the project's other docs, in the sprint docs directory or outside it. A name survives the archive and is found by searching; a path does not. A name that says nothing on its own, `README.md` or `index.md`, is given with its path from the project root, as in `` `docs/DONE/README.md` ``.
+- **Anything else outside the set, such as code, data or an image, is a path in backticks** from the project root, as in `` `src/ingest/sharadar.py` ``, never a link.
+- **Files that are never archived with a sprint name its docs too**: `BACKLOG.md` item text, the item documents in `BACKLOG/`, `DEFERRED.md`, `DEFERRED-context.md` and the lessons of the project memory name a sprint's or an epic's doc and do not link it.
+- **Closing a sprint updates no link in another doc.** A doc that names an archived doc stays right as it is.
+- **The exceptions are shared files, which keep their links**: the epic roadmap's Docs column, which the close points into `DONE/` ([completion.md](completion.md)); the rows of `DONE/README.md`, in the same folder as the archived files; the item links of `BACKLOG.md`, into `BACKLOG/`, which is never archived; and the indexes, where they link.
+- A URL and an anchor in the same file are not relative links, and stay links.
+
+The check command reports these links in an active sprint's THOUGHTS, PRD, PLAN, TASKS or STATE, in the sprint docs directory and in the sprint's worktree:
+- a link to a doc of another sprint (`link-other-sprint`);
+- a link to an epic doc (`link-epic-doc`);
+- any other relative link out of the set (`link-outside-set`).
+
+Each comes with the name or the path to write in its place. In `BACKLOG.md`, the item documents and `DEFERRED-context.md` it reports links to sprint and epic docs; the item links of `BACKLOG.md` stay. It leaves out the archive: a doc in `DONE/` is not rewritten.
+
+**Whoever next works on a sprint fixes the check's violations in that sprint's docs**, in the sprint's workspace (its worktree or branch) and never in the default branch's copy, each doc by its owner: the Product Manager for THOUGHTS and PRD, the build lead for PLAN, TASKS and STATE. That holds for a sprint still in design, with only THOUGHTS or a PRD, as for one being built ([stage-3-implementation.md](stage-3-implementation.md), "Picking up a sprint in progress").
+
 ## Where each doc is written
 
 | Doc | Written on | Commit |

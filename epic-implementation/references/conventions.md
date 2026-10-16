@@ -54,6 +54,17 @@ Because slugs are the durable cross-reference (above), they must not be ambiguou
 - **Convention (not enforced):** keep slugs distinct across the whole repo by **domain-qualifying generic names** — `payments-dashboard`, not bare `dashboard`; `billing-data-model`, not bare `data-model`. Filenames already disambiguate by sprint number (`SPRINT07-…-dashboard.md` ≠ `SPRINT21-…-dashboard.md`), so duplicates never collide on disk — this is purely for human discoverability in the flat epic docs directory.
 - **Carve-out:** only when you must use a genuinely generic slug, do a quick `*-<slug>.md` scan of the epic docs directory first. Distinctive, domain-qualified slugs don't need it.
 
+## Links and names
+
+Files carry the names of artifacts, not paths to them. An epic's own docs sit together and move together: the epic's close moves THOUGHTS, PRD and ROADMAP into `DONE/` as one, and each of its sprints moves its own set there on its own schedule. A link between two docs of one set survives a move; any other relative link breaks when either side moves. **A file that is not archived together with its target names it and never links it.**
+
+- **An epic doc links only within its own set**: the THOUGHTS, PRD and ROADMAP of the same epic, by bare file name.
+- **Any other doc is named, never linked**: by its file name in backticks, as in `` `SPRINT83-PLAN-macro-rates-ingest.md` ``. That holds for a sprint's doc, another epic's doc, a backlog item document, the shared files and the project's other docs. A name survives the archive and is found by searching; a path does not. Anything else, such as code, is a path in backticks from the project root, never a link.
+- **Files that are never archived with an epic name its docs too**: `BACKLOG.md` item text, the item documents in `BACKLOG/`, `DEFERRED.md`, `DEFERRED-context.md` and the lessons of the project memory name an epic's or a sprint's doc and do not link it.
+- **The one exception is the ROADMAP's Docs column**: a link to each sprint's THOUGHTS file, which the sprint's close points into `DONE/` ("ROADMAP maintenance" below) and the epic's close makes relative to the ROADMAP's own new place ([completion.md](completion.md)). The rows of `DONE/README.md`, the item links of `BACKLOG.md` and the indexes, where they link, are shared files and keep their links as well.
+- **Sprint docs follow the same rule** (the conventions of the `prd-implementation` skill, "Links and names"): a sprint names its epic's docs and never links them; its up-link is the number in `Epic: NN`. So closing a sprint or an epic updates no link in another doc but the Docs column.
+- A URL and an anchor in the same file are not relative links, and stay links.
+
 ## ROADMAP maintenance
 
 The ROADMAP's structure, and the steps for starting one of its sprints, are in [stage-e3-roadmap.md](stage-e3-roadmap.md).
@@ -78,7 +89,7 @@ The ROADMAP's structure, and the steps for starting one of its sprints, are in [
 
 ## Traceability (both directions)
 
-- **Up**: every sprint belonging to an epic carries `Epic: NN` in its THOUGHTS header.
+- **Up**: every sprint belonging to an epic carries `Epic: NN` in its THOUGHTS header: a number, not a link ("Links and names" above).
 - **Down**: the ROADMAP table lists every sprint with its status + docs link, the link pointing at the sprint's THOUGHTS file.
 - That pairing is enough — do **not** introduce per-epic subfolders; the flat layout of the epic docs directory keeps the existing globs and tooling working.
 

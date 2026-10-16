@@ -8,7 +8,7 @@ A `DEFERRED.md` written before items had numbers is free-form: a title and prose
 
 ## `DEFERRED-context.md`
 
-Items have no body, so the prose of each entry moves, word for word, to `DEFERRED-context.md` in the sprint docs directory beside `DEFERRED.md`: one section per entry, headed `## D<n> — <old ID>`, or `## D<n>` for an entry that had no ID. It is a plain record of what the old entries said: the check command does not read it, and it has no form of its own. It is not edited after the conversion: its sections stay when their items leave `DEFERRED.md`, and a new item adds no section.
+Items have no body, so the prose of each entry moves, word for word, to `DEFERRED-context.md` in the sprint docs directory beside `DEFERRED.md`: one section per entry, headed `## D<n> — <old ID>`, or `## D<n>` for an entry that had no ID. It is a plain record of what the old entries said, with one change: the conversion writes a reference to a sprint's or an epic's doc as that doc's file name in backticks, never as a link, since the sprint's close moves the doc ("Links and names" in [conventions.md](conventions.md)). The check command reads it for such links only, and it has no form of its own. It is not edited after the conversion, with one exception: a file converted before this rule may get one later edit that turns its links to sprint and epic docs into names, its link text kept. Its sections stay when their items leave `DEFERRED.md`, and a new item adds no section.
 
 ## Procedure
 
