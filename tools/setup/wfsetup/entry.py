@@ -105,8 +105,14 @@ The entry points (provider facts read on 2026-10-05)
                   saved in their own settings, because across files "the
                   highest-precedence settings file ... decides"
                   (.../settings-reference#modelsettings).
-    codex         ``codex --profile <role>``, which reads
-                  ``<role>.config.toml`` in the Codex home
+    codex         ``codex --profile <role> --no-daemon``, which reads
+                  ``<role>.config.toml`` in the Codex home. ``--profile``
+                  already runs the session embedded, without the shared
+                  app-server daemon, and says so in a warning ("--profile
+                  requires embedded mode"); ``--no-daemon`` ("Run without
+                  the shared background server, even if it is already
+                  running", ``codex --help`` of 0.160.0 and 0.163.0) states
+                  that choice and silences the warning
                   (learn.chatgpt.com/docs/config-file/config-advanced:
                   "Create a separate TOML file for each profile"; "In Codex
                   0.134.0 and later, `--profile` no longer reads
@@ -160,7 +166,8 @@ LOADED_SCHEME = "render:loaded-role:6"
 # 3: that section says where the skills are installed.
 # 4: it names each skill's directory once, above that skill's rows.
 # 5: the skills directory is that of the run's homes, and is in the digest.
-PROFILE_SCHEME = "render:codex-profile:5"
+# 6: the notice's start command ends with --no-daemon.
+PROFILE_SCHEME = "render:codex-profile:6"
 
 # The kinds of ``Made``.
 LOADED = "loaded-role"
@@ -204,7 +211,7 @@ ONE_ROLE = "Loading it suspends any other role loaded in this session."
 _ONE_ROLE_SAID = re.compile(r"suspends\s+any\s+other\s+role", re.I)
 
 INVOKE = {CLAUDE_CODE: "/{role}", CODEX: "${role}"}
-START = {CLAUDE_CODE: "claude --agent {role}", CODEX: "codex --profile {role}"}
+START = {CLAUDE_CODE: "claude --agent {role}", CODEX: "codex --profile {role} --no-daemon"}
 # Claude Code alone: as documented, a session's effort is not the definition's (see the module).
 START_EFFORT = " --effort {effort}"
 

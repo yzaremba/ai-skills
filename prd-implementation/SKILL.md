@@ -66,6 +66,8 @@ The text speaks of three parts, and names no agent:
 
 One session may be all three, and the process works that way. When the parts are separate sessions, each keeps to its own part.
 
+A move, rename or deletion of a whole file by the `git mv`, `git rm`, `mv` or `rm` a stage file gives, with creating the folder it names, needs no judgement: on the user's word, a session other than the one that keeps the doc may run it. A doc's text, and any step that needs judgement, stays with whoever keeps the doc.
+
 ## Provider differences
 
 The stage files describe actions and name no tool. How a question is put to the user, how an independent review is run, and how work reaches an implementer differ by provider: read [references/claude-code.md](references/claude-code.md) on Claude Code or [references/codex.md](references/codex.md) on Codex, once, before the first of those actions.

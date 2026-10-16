@@ -309,9 +309,18 @@ Then a session starts as the Manager:
 
 | | Claude Code | Codex |
 |-|-------------|-------|
-| A session started as the Manager | `claude --agent manager --effort medium`; `render` prints the command with the effort your settings give, under "entry points" | `codex --profile manager` |
+| A session started as the Manager | `claude --agent manager --effort medium`; `render` prints the command with the effort your settings give, under "entry points" | `codex --profile manager --no-daemon` |
 | The Manager loaded into a session | `/manager` | `$manager` |
 | Every session in a project starts as the Manager | `init --project DIR --manager-default`, then `render --project DIR` | The same; Codex reads the project's `.codex/config.toml` only in a trusted project |
+
+On Codex `--profile` always runs the session embedded, without the shared app-server
+daemon; `--no-daemon` only states that and silences Codex's warning ("--profile requires
+embedded mode"). The flag was checked on Codex CLI 0.160.0 and 0.163.0. Which to use: the
+profile pins the Manager's model and effort, but its session is not on the daemon that
+`codex remote-control` manages, so `codex agents` does not list it and it has no remote
+control. To keep the daemon and remote control, start `codex` in the project and type
+`$manager`: the loaded Manager names its pinned model and effort, and `/model` switches
+to them.
 
 The Manager routes each request to the role that owns it: [Using it](#using-it) lists the
 nine roles and what each does. `init --no-roles` goes back to the process alone, and
@@ -414,7 +423,7 @@ warns of a version newer than the one checked or older than the oldest supported
 | Provider | Checked on | Oldest supported |
 |----------|------------|------------------|
 | Claude Code | 2.1.296 | 2.1.281 |
-| Codex CLI | 0.162.1 | 0.134.0 |
+| Codex CLI | 0.162.1 | 0.160.0 |
 
 On Claude Code the fast tier is the `haiku` alias, which is Haiku 5.5 with effort levels
 from 2.1.293 on; an older client runs a fast-tier role on Haiku 4.5, which has none.
@@ -576,7 +585,7 @@ says how a project defines one.
 
 | Role | What it does | Claude Code | Codex |
 |------|--------------|-------------|-------|
-| Manager | The session the user starts: routes requests, holds the gates, runs the commands of a sprint's close, writes no file. | `claude --agent manager --effort medium`, or `/manager` in a session | `codex --profile manager`, or `$manager` in a session |
+| Manager | The session the user starts: routes requests, holds the gates, runs the commands of a sprint's close and, on the user's word, a move, rename or deletion of a whole file that a stage file gives as a command, writes no file. | `claude --agent manager --effort medium`, or `/manager` in a session | `codex --profile manager --no-daemon`, or `$manager` in a session |
 | Product Manager | Keeps the backlog and develops one idea with the user into THOUGHTS and a PRD, or an epic's charter. | Dispatched by the Manager, which relays its questions; the user may also type in its thread. Or loaded: `/product-manager` | Dispatched by the Manager, which relays its questions. Or loaded: `$product-manager` |
 | Idea Reviewer | The critical pass on THOUGHTS and a PRD or a charter. Reads, and changes nothing. | Dispatched by the Manager | Dispatched by the Manager |
 | Architect | Turns a final PRD into PLAN and TASKS, and a final charter into the epic's roadmap. | Dispatched by the Manager, which relays its questions; the user may also type in its thread. Or loaded: `/architect` | Dispatched by the Manager, which relays its questions. Or loaded: `$architect` |
@@ -794,11 +803,12 @@ and each skill's `SKILL.md`.
   where the file sets no limit.
 - **Codex reads a project's `.codex/config.toml` only in a trusted project.** In an
   untrusted one the Manager default does nothing on Codex.
-- **Codex writes into the profile file.** Started with `codex --profile manager`,
-  Codex adds to `~/.codex/manager.config.toml` what you do in it: the answer to "trust
-  this project?" as a `[projects."<path>"]` table, flags of its interface. What follows
-  setup's part is yours: `render` carries it over each time it writes the profile,
-  `doctor` does not count it as a hand edit unless it sets one of setup's keys, and
+- **Codex writes into the profile file.** Started with
+  `codex --profile manager --no-daemon`, Codex adds to `~/.codex/manager.config.toml`
+  what you do in it: the answer to "trust this project?" as a `[projects."<path>"]`
+  table, flags of its interface. What follows setup's part is yours: `render` carries
+  it over each time it writes the profile, `doctor` does not count it as a hand edit
+  unless it sets one of setup's keys, and
   `uninstall` takes setup's part out and leaves the file holding the rest. Keys Codex
   writes itself (`projects`, `notice`) pass without a word; any other key there is
   named, and `doctor` warns of one that changes what the role may do, such as

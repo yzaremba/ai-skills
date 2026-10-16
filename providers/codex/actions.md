@@ -4,7 +4,7 @@ Agent names use underscores where role ids use hyphens (`product_manager`, `code
 
 ### Start
 
-- **Start a session as a role.** The user's to do, never yours: `codex --profile manager`, or the project's `.codex/config.toml` in a trusted project, in a session started at the project root.
+- **Start a session as a role.** The user's to do, never yours: `codex --profile manager --no-daemon`, or the project's `.codex/config.toml` in a trusted project, in a session started at the project root. A profile pins model and effort and runs without the shared app-server daemon, which `codex remote-control` manages: such a session is not listed by `codex agents` and has no remote control. To keep them, start `codex` and type `$manager`, the loaded Manager, which names its model and effort for `/model`. The daemon statements were checked on 0.163.0 (`codex --help`, `codex remote-control --help` and the warning), `--no-daemon` also on 0.160.0.
 - **These notes were checked** against Codex CLI 0.160.0: docs, probes and the skeleton run of 2026-10-05; `wait_agent` against the 0.162.1 source.
 
 ### Session
@@ -34,7 +34,7 @@ Agent names use underscores where role ids use hyphens (`product_manager`, `code
 
 ### Commands
 
-- **Run a command.** Your shell tool. A role that may not change files does not change them through the shell either; only this instruction enforces it.
+- **Run a command.** Your shell tool. A role that may not change files does not change them through the shell either, beyond what its role text lists; only this instruction enforces it.
 - **The sandbox** refuses a write to `.git` or beside the workspace by default: request approval to run that command outside it, and report a refusal instead of working around it.
 
 ### Files

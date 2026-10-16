@@ -387,7 +387,7 @@
         <div class="card manager">
           <p class="stage-eyebrow">The session you start</p>
           <h2>Manager</h2>
-          <p class="desc">Routes each request to the role that owns it, holds the gates, relays questions and answers. Runs the deferred-item check and the close's commands. Writes no file.</p>
+          <p class="desc">Routes each request to the role that owns it, holds the gates, relays questions and answers. Runs the deferred-item check, the close's commands and the moves a stage file spells out. Writes no file.</p>
           <div class="prof"><span class="tag">standard · medium</span><span class="tag flag">start · load</span></div>
         </div>
 
@@ -487,7 +487,7 @@
           <li><b>You never have to load a role.</b> Loading the Product Manager or the Architect into your own session (<code>/architect</code>, <code>$architect</code>) is an option; on Claude Code, only in a session not started as the Manager.</li>
           <li><b>One review per document, by another role.</b> The Manager sends a PRD or charter to the Idea Reviewer and a PLAN to the Plan Reviewer before its gate; the IM sends code to the Code Reviewer.</li>
           <li><b>Coders in parallel</b> only where the PLAN marks a group, each in its own worktree, at most <code>roles.max_parallel_coders</code> (3) at once.</li>
-          <li><b>Commits you ask for:</b> the Manager commits the files a role wrote and reported, each by name.</li>
+          <li><b>Commits you ask for:</b> the Manager commits the files it moved or a role wrote and reported, each by name.</li>
           <li><b>STATE carries the sprint.</b> Any session, on either provider, picks a sprint up from its docs and STATE.</li>
           <li><b>Lessons at the close.</b> Proposed with the Ready commit, written to the project memory only when you approve them.</li>
         </ol>
@@ -551,8 +551,8 @@
     <div class="chip">
       <p class="chip-label">Start as the Manager</p>
       <p class="chip-main">claude --agent manager --effort medium</p>
-      <p class="chip-main">codex --profile manager</p>
-      <p class="chip-sub">or the project default <code>roles.manager_default</code>: <code>init --project DIR --manager-default</code>, then <code>render --project DIR</code>; Codex honours it only in a trusted project</p>
+      <p class="chip-main">codex --profile manager --no-daemon</p>
+      <p class="chip-sub">or <code>$manager</code> in a <code>codex</code> session, to keep the shared daemon and remote control; or the project default <code>roles.manager_default</code>: <code>init --project DIR --manager-default</code>, then <code>render --project DIR</code>; Codex honours it only in a trusted project</p>
     </div>
     <div class="chip">
       <p class="chip-label">Settings · later layer wins</p>

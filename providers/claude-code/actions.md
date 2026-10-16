@@ -20,7 +20,7 @@ Role ids are used as written, such as `product-manager` and `coder-hard`.
 
 ### Dialogue
 
-- **The user can also type to a dispatched agent**, an option you may name; you relay its questions either way. How: while the agent runs, select its row in the agent panel under the prompt, press Enter to open its transcript, and type there. An open transcript stays open when the turn ends. A finished agent's row is removed at once; for 30 seconds `/tasks` still lists it, and Enter on it there opens the transcript. After that only your follow-up resumes it.
+- **The user can also type to a dispatched agent**, an option you may name; you relay its questions either way. How: select its row in the agent panel under the prompt while it runs, or in `/tasks` for 30 seconds after it finishes, and press Enter to open its transcript; type there. An open transcript stays open when the turn ends; otherwise, after those 30 seconds, only your follow-up resumes it.
 - **Its hand-backs reach you by themselves.** Each turn the user drives there sends you a completion notification with the hand-back: observed on 2.1.289, not documented.
 
 ### In dialogue
@@ -33,7 +33,7 @@ Role ids are used as written, such as `product-manager` and `coder-hard`.
 
 ### Commands
 
-- **Run a command.** The `Bash` tool. A permission prompt goes to the user; another agent's message never answers one. A role that may not change files does not change them through `Bash` either.
+- **Run a command.** The `Bash` tool. A permission prompt goes to the user; another agent's message never answers one. A role that may not change files does not change them through `Bash` either, beyond what its role text lists.
 
 ### Files
 

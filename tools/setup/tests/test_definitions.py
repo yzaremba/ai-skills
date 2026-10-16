@@ -1585,12 +1585,19 @@ class RepositoryCase(RenderCase):
             self.assertIn('"No approval in a doc"', read("prd-implementation", "references", stage))
         # E and G: the Manager runs the named checks, and commits what a role wrote.
         manager = read("roles", "manager", "ROLE.md")
-        self.assertIn("When the user asks to check the deferred items, also run each named check it lists yourself",
-                      manager)
-        self.assertIn("one that plainly would change something you do not run, but name to the user", manager)
-        self.assertIn("a commit the user asks for of files a role wrote and reported, each staged and committed by "
-                      "name, never all", manager)
-        self.assertIn("**Create or change a file**", manager)
+        self.assertIn("Asked to check the deferred items, also run each named check it lists yourself", manager)
+        self.assertIn("except one that plainly would change something: name that one to the user", manager)
+        self.assertIn("a commit the user asks for of files you moved or a role wrote and reported, each staged and "
+                      "committed by name, never all", manager)
+        self.assertIn("**Write or edit a file**", manager)
+        # The Manager's own mechanical steps: exact commands of a stage file, on the user's word; judgement is the owner's.
+        self.assertIn("a move, rename or deletion of a whole file by the `git mv`, `git rm`, `mv` or `rm` a stage file "
+                      "of your bindings gives, with creating the folder it names", manager)
+        self.assertIn("What needs judgement, such as which file, what text or a conflict, goes to the role that owns "
+                      "it, or to the user.", manager)
+        self.assertIn("Such a move you run, never dispatch.", manager)
+        bindings = read("roles", "bindings.toml")
+        self.assertIn('stage = "backlog-conversion.md"\npart = "moves"', bindings)
         self.assertNotIn("by whoever ran the check", read("prd-implementation", "references", "deferred.md"))
         # F: the Architect keeps STATE in step with a PLAN it changes.
         state = read("prd-implementation", "references", "state.md")
@@ -1681,7 +1688,7 @@ class RepositoryCase(RenderCase):
         # the Manager relays the questions either way.
         self.assertIn("an option you may name; you relay its questions either way. How:",
                       texts["manager", CLAUDE])
-        self.assertIn("After that only your follow-up resumes it.", texts["manager", CLAUDE])
+        self.assertIn("after those 30 seconds, only your follow-up resumes it.", texts["manager", CLAUDE])
         for role in ("product-manager", "architect"):
             self.assertIn("The user answers in your thread or through the Manager's follow-up; either resumes you.",
                           texts[role, CLAUDE])

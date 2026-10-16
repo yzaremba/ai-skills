@@ -173,8 +173,16 @@ stage = "stage-3-implementation.md"
 part = "implementer"
 note = "The implementer's part of the stage file, as the Coder's own text narrows it."
 
-# Manager: the check of deferred items, the implementation choices, and the
-# commands of a close and of an abandoned sprint.
+# Manager: the moves of the backlog's item documents, the check of deferred
+# items, the implementation choices, and the commands of a close and of an
+# abandoned sprint.
+
+[[binding]]
+role = "manager"
+skill = "prd-implementation"
+stage = "backlog-conversion.md"
+part = "moves"
+note = "Steps 1 and 2 of the earlier-place move, on the user's word; steps 3 to 6 (links, check, proposed commit) are the Product Manager's."
 
 [[binding]]
 role = "manager"
@@ -188,7 +196,7 @@ role = "manager"
 skill = "prd-implementation"
 stage = "stage-3-implementation.md"
 part = "choices"
-note = "The implementation choices and their summary; no more of the build lead's part."
+note = "The implementation choices and their summary only."
 
 [[binding]]
 role = "manager"

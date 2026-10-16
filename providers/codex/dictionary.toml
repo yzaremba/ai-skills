@@ -27,9 +27,11 @@ checked_on_date = "2026-10-11"
 # A starting role is given to Codex as a profile file, <name>.config.toml in
 # the Codex home. The configuration page (Profiles) says: "In Codex 0.134.0
 # and later, `--profile` no longer reads `[profiles.profile-name]` from
-# `config.toml`", and has such settings moved into that file. It does not
-# say whether an older client reads the file, so nothing older is supported.
-oldest_supported_version = "0.134.0"
+# `config.toml`", and has such settings moved into that file. The floor is
+# higher still: every Codex action note was checked on 0.160.0, and the
+# start command's `--no-daemon` was seen in `codex --help` of 0.160.0 and
+# 0.163.0; nothing older was run, so nothing older is supported.
+oldest_supported_version = "0.160.0"
 
 [model_list]
 # Prints {"models": [...]}; each entry has `slug`, `visibility`,

@@ -111,10 +111,13 @@ Entry points. A role is given to a session in one of two ways, by "load" and
              taken after all. A role
              whose model takes no effort setting gets the command without
              --effort, and the output says so.
-             Codex: "codex --profile <role>", which reads the generated file
-             <role>.config.toml in the Codex home, a layer over config.toml
-             there. It holds model, model_reasoning_effort and
-             developer_instructions. The user's config.toml is not touched.
+             Codex: "codex --profile <role> --no-daemon", which reads the
+             generated file <role>.config.toml in the Codex home, a layer
+             over config.toml there. That file holds model,
+             model_reasoning_effort and developer_instructions. A profile
+             session runs without the shared background server anyway;
+             --no-daemon says so and silences Codex's warning about it.
+             The user's config.toml is not touched.
              Codex writes into that file, after setup's part: the answer
              to "trust this project?" as a [projects."<path>"] table,
              flags of its interface. render carries whatever follows
