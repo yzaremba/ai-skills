@@ -14,7 +14,7 @@ What differs on this provider for the three actions the stage files leave open. 
 
 - Dispatch a reviewer with `spawn_agent` and `fork_turns` set to `"none"`. The default copies your conversation into the child, which would not be independent. The brief carries what to review (the working tree, or the branch diff against the fork point) and the instruction to refute the change. Give it the code, not your conclusion.
 - A review skill installed in the session may be used instead.
-- `wait_agent` with `timeout_ms` 300000: any agent's report, or the user's input, ends it, so a shorter wait only polls. It returns no content; the result arrives as an agent notification naming the sender's task path.
+- `wait_agent` with `timeout_ms` 3600000, the maximum, never less: any agent's report, or the user's input, ends it, so a shorter wait only polls. It returns no content; the result arrives as an agent notification naming the sender's task path. A wait that ends with no report for you (another agent's, such as an approval review) is simply made again, without a message to the user.
 - If no reviewer can be started (no agent can be spawned, and no review skill is installed), do not review your own work in its place: stop and ask, offering the cadence "none" or a review the user runs themselves.
 
 ## Handing work to an implementer when no roles are installed

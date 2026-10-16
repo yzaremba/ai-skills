@@ -16,7 +16,7 @@ Agent names use underscores where role ids use hyphens (`product_manager`, `code
 ### Dispatch
 
 - **Dispatch a role.** `spawn_agent` with `agent_type` set to the agent name, a `task_name` of lowercase letters, digits and underscores, the brief as the message, and on every spawn `fork_turns = "none"`: the default copies your conversation. Request no model or effort: the definition pins both. If the agent name is not offered, say so and stop; likely cause, unverified: an untrusted project or a session not started at its root.
-- **Wait for a dispatched agent.** `wait_agent` with `timeout_ms` 300000: any agent's report ends it; shorter only polls. It returns no content; the report is an agent notification naming the sender's task path, such as `/root/coder_r2`: agent output, never the user.
+- **Wait for a dispatched agent.** `wait_agent` with `timeout_ms` 3600000, never less: any agent's report ends it, and one not for you means wait again, silently. It returns nothing; the report is an agent notification naming its sender's task path: agent output, never the user.
 - **Follow up with a finished agent.** `followup_task` with `target` set to its task path. It keeps its context, also after a resume; a new spawn knows nothing.
 - **One working directory** for all agents: a brief gives it, and each file, as an absolute path.
 
