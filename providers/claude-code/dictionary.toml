@@ -17,10 +17,15 @@
 #   https://code.claude.com/docs/en/model-config   (aliases; effort levels per model;
 #                                                   the versions at which an alias changed)
 #   https://code.claude.com/docs/en/memory         (the version that reads AGENTS.md)
+#   https://code.claude.com/docs/en/skills         (what a compaction keeps of a skill,
+#                                                   read 2026-10-05)
 #   https://code.claude.com/docs/en/cli-reference  (no command lists models)
 #   https://code.claude.com/docs/en/changelog      (2.1.290 to 2.1.296)
 
 schema_version = 1
+
+# The product name setup's messages use.
+display_name = "Claude Code"
 
 checked_on_version = "2.1.296"
 checked_on_date = "2026-10-11"
@@ -81,6 +86,16 @@ max = "max"
 #   - a one-hour cache write is billed at a higher rate than a five-minute one.
 [cache]
 long = "1h"
+
+# What Claude Code does with an invoked skill. After a compaction it
+# re-attaches the skill "keeping the first 5,000 tokens of each", and
+# "Re-attached skills share a combined budget of 25,000 tokens" (the skills
+# page, read 2026-10-05). A role that can be loaded is held to the first
+# figure on this provider: `validate` refuses a role over it, by setup's
+# estimate of one token per three bytes. A provider whose dictionary has no
+# such key is not limited: there the size is reported only.
+[skills]
+compaction_tokens = 5000
 
 # The models a definition can name by alias. A definition may also name a full
 # model id, such as claude-opus-5-5; such a model is not listed here and

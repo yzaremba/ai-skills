@@ -25,7 +25,7 @@ from fileops_support import POSIX
 from provider_stub import BUNDLED, LIVE, VERSION
 from test_entry import DEFAULT_ON, OVERRIDE, EntryCase
 from test_fileops import Crash
-from wfsetup import doctor, entry, fileops, fsio, homes, render
+from wfsetup import doctor, entry, fileops, fsio, homes, render, validate
 from wfsetup.locations import Locations
 from wfsetup.manifest import Manifest
 
@@ -1083,44 +1083,78 @@ class InterruptedCase(DoctorCase):
         self.assertEqual(self.manifest_file.read_bytes(), before)
 
 
+def limit_loaded_skills(case: DoctorCase, provider: str, tokens: int | None) -> None:
+    """Give ``provider`` the limit ``tokens`` on a loaded role's skill in the
+    test's clone. The sources stay valid: what doctor says of a skill a
+    setting of the user's made longer is seen without validate's rule,
+    which measures with the shipped settings."""
+    support.set_compaction_tokens(case.clone / "providers" / provider / "dictionary.toml", tokens)
+    patch = mock.patch.object(validate, "_check_loaded", lambda run: None)
+    patch.start()
+    case.addCleanup(patch.stop)
+
+
 class LoadedSizeCase(DoctorCase):
     def test_the_fixture_roles_are_short(self) -> None:
         code, findings = self.only("loaded-skill-size")
-        self.assertEqual((code, [found["severity"] for found in findings]), (0, [doctor.OK]))
+        self.assertEqual((code, [found["severity"] for found in findings]), (0, [doctor.OK, doctor.INFO]))
+        self.assertFinding(findings, doctor.OK, "claude-code: ", " loaded-role skills, none estimated over 5,000 tokens")
+        # Codex has no limit: the sizes are said, and nothing is judged.
+        self.assertFinding(findings, doctor.INFO, "codex: no limit on a loaded role's skill",
+                           "names no skills.compaction_tokens", "lead about ", " tokens (", " bytes)")
 
-    def test_a_loaded_role_over_the_limit_is_a_warning(self) -> None:
-        with mock.patch.object(entry, "COMPACTION_TOKENS", 100):
-            code, findings = self.only("loaded-skill-size")
+    def test_a_loaded_role_over_the_limit_is_a_warning_on_claude_code_alone(self) -> None:
+        limit_loaded_skills(self, "claude-code", 100)
+        code, findings = self.only("loaded-skill-size")
         self.assertEqual(code, 0)
-        # Each loaded role on each provider: validate holds both to the figure.
         details = self.details(findings, doctor.WARNING)
-        self.assertEqual(len(details), 2 * len([one for one in details if one.startswith("claude-code: ")]))
         self.assertGreaterEqual(len(details), 2)
-        self.assertFinding(findings, doctor.WARNING, "claude-code: the loaded role lead", "first 100 tokens",
+        self.assertTrue(all(one.startswith("claude-code: ") for one in details), details)
+        self.assertFinding(findings, doctor.WARNING, "claude-code: the loaded role lead",
+                           "after a compaction Claude Code keeps the first 100 tokens",
                            "likely to be cut: the role's binding rows and the action notes",
                            "a setting of yours made this one longer")
-        # On Codex the same figure, said as what it is there.
-        self.assertFinding(findings, doctor.WARNING, "codex: the loaded role lead", "over 100, which is this "
-                           "project's own rule for a loaded role on every provider and no limit of Codex's: "
-                           "nothing is cut there")
-        codex = [one for one in details if one.startswith("codex: ")]
-        self.assertTrue(codex)
-        self.assertFalse([one for one in codex if "compaction" in one])
+        self.assertEqual(self.details(findings, doctor.OK), [])
+        # Codex is over the same figure and has no limit: info, no warning.
+        self.assertFinding(findings, doctor.INFO, "codex: no limit on a loaded role's skill", "lead about ")
 
-    def test_the_users_settings_alone_can_push_a_skill_over_on_codex(self) -> None:
+    def test_the_limit_is_the_dictionarys(self) -> None:
+        limit_loaded_skills(self, "codex", 100)
+        limit_loaded_skills(self, "claude-code", None)
+        code, findings = self.only("loaded-skill-size")
+        self.assertEqual(code, 0)
+        details = self.details(findings, doctor.WARNING)
+        self.assertTrue(details)
+        self.assertTrue(all(one.startswith("codex: ") for one in details), details)
+        self.assertFinding(findings, doctor.INFO, "claude-code: no limit on a loaded role's skill")
+
+    def test_each_provider_with_a_limit_has_its_own_finding(self) -> None:
+        limit_loaded_skills(self, "codex", 7000)
+        code, findings = self.only("loaded-skill-size")
+        self.assertEqual(code, 0)
+        self.assertEqual([found["severity"] for found in findings], [doctor.OK, doctor.OK])
+        self.assertFinding(findings, doctor.OK, "claude-code: ", "none estimated over 5,000 tokens")
+        self.assertFinding(findings, doctor.OK, "codex: ", "none estimated over 7,000 tokens")
+        self.assertFalse([found for found in findings if "5,000, 7,000" in found["detail"]])
+
+    def test_the_users_settings_alone_can_push_a_skill_over_on_claude_code(self) -> None:
         """What validate cannot see: it measures with the shipped settings."""
         made = {(one.provider, one.role): one for one in entry.skills(self.where())
                 if one.name.endswith(entry.SKILL_FILE)}
-        limit = max(one.tokens for one in made.values())
-        with mock.patch.object(entry, "COMPACTION_TOKENS", limit):
-            code, findings = self.only("loaded-skill-size")
-            self.assertEqual((code, self.details(findings, doctor.WARNING)), (0, []))
-            # A model name 300 bytes longer, in the user's settings, for Codex alone.
-            self.write(self.user_file, '[providers.codex.tiers]\nstandard = "gpt-' + "x" * 300 + '"\n')
-            code, findings = self.only("loaded-skill-size")
+        limit_loaded_skills(self, "claude-code", max(one.tokens for one in made.values()))
+        code, findings = self.only("loaded-skill-size")
+        self.assertEqual((code, self.details(findings, doctor.WARNING)), (0, []))
+        # A model name 300 bytes longer, in the user's settings: Claude Code warns.
+        self.write(self.user_file, '[providers.claude-code.tiers]\nstandard = "claude-' + "x" * 300 + '"\n')
+        code, findings = self.only("loaded-skill-size")
         self.assertEqual(code, 0)
         (detail,) = self.details(findings, doctor.WARNING)
-        self.assertTrue(detail.startswith("codex: the loaded role lead is about "), detail)
+        self.assertTrue(detail.startswith("claude-code: the loaded role lead is about "), detail)
+        # The same on Codex is said as a size, never warned.
+        self.write(self.user_file, '[providers.codex.tiers]\nstandard = "gpt-' + "x" * 300 + '"\n')
+        code, findings = self.only("loaded-skill-size")
+        self.assertEqual((code, self.details(findings, doctor.WARNING)), (0, []))
+        self.assertFinding(findings, doctor.INFO, "codex: no limit on a loaded role's skill", "lead about ")
 
 
 class CollaborationCase(DoctorCase):

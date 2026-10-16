@@ -127,15 +127,16 @@ Entry points. A role is given to a session in one of two ways, by "load" and
 A loaded role and a long session. After a compaction Claude Code re-attaches
 an invoked skill "keeping the first 5,000 tokens of each", and "Re-attached
 skills share a combined budget of 25,000 tokens"
-(code.claude.com/docs/en/skills, read 2026-10-05). The size of each loaded
-role is in the output with an estimate of its tokens, one per three bytes,
-which errs high; one that is likely over 5,000 is marked LONG, on either
-provider: the figure is Claude Code's, and the project's own rule for a
-loaded role on Codex, which cuts nothing. It is still written: what would be
-cut is its end, the role's binding rows and the provider's action notes.
-"validate" refuses a shipped role over the figure with the shipped settings,
-so a mark here comes from the user's settings; "doctor" says the same
-(loaded-skill-size).
+(code.claude.com/docs/en/skills, read 2026-10-05); the figure is
+skills.compaction_tokens in providers/claude-code/dictionary.toml. The size
+of each loaded role is in the output with an estimate of its tokens, one per
+three bytes, which errs high; on Claude Code one that is likely over 5,000
+is marked LONG. Codex documents no such cut and its dictionary names no
+figure, so there the size is shown and nothing is marked. A LONG role is
+still written: what would be cut is its end, the role's binding rows and the
+provider's action notes. "validate" refuses a shipped role over the figure
+with the shipped settings, so a mark here comes from the user's settings;
+"doctor" says the same (loaded-skill-size).
 
 The project (--project DIR). Without it nothing is written in any project.
 With it the homes are installed and refreshed exactly as without it, from the

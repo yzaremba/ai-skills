@@ -1373,11 +1373,13 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
                     detail = {"entry": one.kind, "role": one.role}
                     if one.name.endswith(entry.SKILL_FILE):
                         detail.update({"model": one.model, "effort": one.effort, "tokens": one.tokens,
-                                       "over_limit": one.over_limit})
+                                       "limit_tokens": one.limit_tokens, "over_limit": one.over_limit})
                     item = run.file(provider, place, one.name, one.text, one.inputs, detail=detail)
                     if one.name.endswith(entry.SKILL_FILE):
                         _point(run, name, "load", one.role, entry.INVOKE[name].format(role=one.role), item,
-                               model=one.model, effort=one.effort, tokens=one.tokens, over_limit=one.over_limit)
+                               model=one.model, effort=one.effort, tokens=one.tokens,
+                               limit_tokens=one.limit_tokens, over_limit=one.over_limit,
+                               provider_name=one.provider_name)
         if name == definitions.CLAUDE_CODE and _has_place(provider, homes.AGENTS):
             # As documented, a session does not take the effort of the
             # definition it starts as, so the command names it (see ``entry``).
@@ -1896,12 +1898,9 @@ def _point_line(point: dict[str, Any]) -> str:
     if point.get("no_effort"):
         line += f"; no --effort: {point['no_effort']}"
     if point.get("over_limit"):
-        line += "; LONG: " + (
-            f"after a compaction Claude Code keeps the first {entry.COMPACTION_TOKENS:,} tokens of an "
-            "invoked skill, so the end of this one is likely to be cut"
-            if point["provider"] == definitions.CLAUDE_CODE else
-            f"over {entry.COMPACTION_TOKENS:,} tokens, this project's own rule for a loaded role on every "
-            "provider; Codex cuts nothing"
+        line += (
+            f"; LONG: after a compaction {point['provider_name']} keeps the first {point['limit_tokens']:,} tokens of "
+            "an invoked skill, so the end of this one is likely to be cut"
         )
     return line
 

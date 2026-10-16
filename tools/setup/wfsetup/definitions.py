@@ -248,6 +248,11 @@ class Material:
     effort: str | None
     skills: str = ""    # the skills directory the binding rows are written under (``skills_place``)
     cache: str | None = None    # the provider's value for the cache the role names, where it has one
+    # From the provider's dictionary: what it keeps of an invoked skill after
+    # a compaction (None where it documents no such cut), and its name in a
+    # message (``Dictionary.title``).
+    compaction_tokens: int | None = None
+    provider_title: str = ""
 
     @property
     def limits(self) -> dict[str, Any]:
@@ -619,6 +624,7 @@ def materials(where: Locations, providers: Iterable[str] = PROVIDERS, select: An
     # for only: a setting that a provider nobody installed cannot take must
     # not stop the others.
     resolved: dict[tuple[str, str], profiles.Resolved] = {}
+    dictionaries: dict[str, dictionary.Dictionary] = {}
     try:
         entries = {
             key: entry for group in profiles.GROUPS for key, entry in settings.resolve(where, (group,)).items()
@@ -680,6 +686,7 @@ def materials(where: Locations, providers: Iterable[str] = PROVIDERS, select: An
                     provider=name, definition=definition.id, role=role, body=body,  # type: ignore[arg-type]
                     files=read, rows=tuple(mine), model=profile.model, effort=profile.effort,  # type: ignore[arg-type]
                     skills=skills, cache=profile.cache,
+                    compaction_tokens=dictionaries[name].compaction_tokens, provider_title=dictionaries[name].title,
                 ))
     if problems:
         raise SetupError(*problems)

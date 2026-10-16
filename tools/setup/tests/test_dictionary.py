@@ -129,6 +129,15 @@ class RepositoryDictionaryTests(support.ScratchCase):
         # is older, so nothing checks a version for it.
         self.assertGreaterEqual(dictionary.parse_version(claude.oldest_supported_version), (2, 1, 248))
 
+    def test_the_compaction_limit_each_states(self) -> None:
+        # Claude Code keeps the first 5,000 tokens of an invoked skill after
+        # a compaction; Codex documents no such cut, so it has no limit.
+        self.assertEqual(self.all["claude-code"].compaction_tokens, 5000)
+        self.assertIsNone(self.all["codex"].compaction_tokens)
+
+    def test_each_names_its_product(self) -> None:
+        self.assertEqual((self.all["claude-code"].title, self.all["codex"].title), ("Claude Code", "Codex"))
+
     def test_each_has_line_feeds_only_and_a_comment_header(self) -> None:
         for name, file in self.files.items():
             with self.subTest(provider=name):
@@ -284,6 +293,15 @@ class LoadTests(support.CloneCase):
         self.assertFalse(loaded.model("a-plain").takes_effort)
         self.assertIsNone(loaded.accepts("a-unknown", "minimal"))
         self.assertEqual(loaded.settings, {"tiers": loaded.tiers, "efforts": loaded.efforts})
+        self.assertIsNone(loaded.compaction_tokens)
+        # No display name: a message names the provider by its directory.
+        self.assertEqual((loaded.display_name, loaded.title), (None, "acme"))
+
+    def test_a_compaction_limit(self) -> None:
+        self.write(self.dictionary, support.VALID_DICTIONARY + "\n[skills]\ncompaction_tokens = 7\n")
+        self.assertEqual(dictionary.load(self.where(), "acme").compaction_tokens, 7)
+        self.write(self.dictionary, support.VALID_DICTIONARY + "\n[skills]\n")
+        self.assertIsNone(dictionary.load(self.where(), "acme").compaction_tokens)
 
     def test_the_optional_keys_may_be_absent(self) -> None:
         text = support.VALID_DICTIONARY
@@ -421,14 +439,38 @@ class FaultTests(support.CloneCase):
         self.assertIn(old, support.VALID_DICTIONARY)
         return self.problems(support.VALID_DICTIONARY.replace(old, new))
 
+    def test_a_compaction_limit_is_a_positive_integer(self) -> None:
+        for value, fault in (
+            ('"5000"', "expected an integer, got a string"),
+            ("true", "expected an integer, got a boolean"),
+            ("5000.0", "expected an integer, got a float"),
+            ("0", "0 is too small; the least allowed is 1"),
+            ("-3", "-3 is too small; the least allowed is 1"),
+        ):
+            with self.subTest(value):
+                self.assertEqual(
+                    self.problems(support.VALID_DICTIONARY + f"\n[skills]\ncompaction_tokens = {value}\n"),
+                    [f"skills.compaction_tokens: {fault}"],
+                )
+
+    def test_a_display_name_is_a_string(self) -> None:
+        self.assertEqual(
+            self.changed("schema_version = 1\n", "schema_version = 1\ndisplay_name = 7\n"),
+            ["display_name: expected a string, got an integer"],
+        )
+
     def test_an_unknown_key(self) -> None:
         known = (
-            "schema_version, checked_on_version, checked_on_date, oldest_supported_version, model_list, "
-            "tiers, efforts, role_models, cache, models"
+            "schema_version, display_name, checked_on_version, checked_on_date, oldest_supported_version, model_list, "
+            "tiers, efforts, role_models, cache, skills, models"
         )
         self.assertEqual(
             self.problems(support.VALID_DICTIONARY + '\n[cache]\nlong = "1h"\nshort = "5m"\n'),
             ["cache.short: unknown key; known here: long"],
+        )
+        self.assertEqual(
+            self.problems(support.VALID_DICTIONARY + "\n[skills]\nkept_tokens = 5000\n"),
+            ["skills.kept_tokens: unknown key; known here: compaction_tokens"],
         )
         self.assertEqual(
             self.problems(support.VALID_DICTIONARY + "\n[cache]\nlong = 60\n"),

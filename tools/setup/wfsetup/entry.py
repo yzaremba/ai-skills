@@ -62,11 +62,14 @@ The entry points (provider facts read on 2026-10-05)
     rule, where the role's own text does not state it, and the profile),
     and the role's text follows: after a compaction Claude Code keeps "the
     first 5,000 tokens of each" invoked skill, and "Re-attached skills share
-    a combined budget of 25,000 tokens" (.../skills). ``Made.tokens`` is a
-    conservative estimate, one token per ``BYTES_PER_TOKEN`` bytes, and
-    ``Made.over_limit`` says that the skill is over that figure: on Claude
-    Code its end is then likely to be cut. Codex documents no such cut; the
-    figure is kept there as the project's own rule (decision of 2026-10-11).
+    a combined budget of 25,000 tokens" (.../skills). The first figure is
+    data: ``skills.compaction_tokens`` in the provider's dictionary, which
+    ``Made.limit_tokens`` carries. ``Made.tokens`` is a conservative
+    estimate, one token per ``BYTES_PER_TOKEN`` bytes, and
+    ``Made.over_limit`` says that the skill is over the provider's figure:
+    its end is then likely to be cut. Codex documents no such cut, and its
+    dictionary has no figure: there the size is reported and not limited
+    (decision of 2026-10-16, which replaced that of 2026-10-11).
 
   A starting role (``entry.start = true``).
     claude-code   ``claude --agent <role> --effort <level>``, served by the
@@ -155,7 +158,7 @@ from .locations import Locations
 
 # 2: the profile paragraph says that a project may set another profile.
 # 3: the notice is one sentence and the profile paragraph shorter, so that
-#    a loaded role keeps more of ``COMPACTION_TOKENS`` for its own text.
+#    a loaded role keeps more of the compaction limit for its own text.
 # 4: the section "Your bindings" says where the skills are installed.
 # 5: the head is shorter again: the notice names its sources by directory,
 #    and the loaded-role and profile paragraphs lose words, none a rule. The
@@ -190,10 +193,8 @@ BLOCK_NAME = "starting-role"
 BLOCK_KEYS = ("model", "model_reasoning_effort", "developer_instructions")
 PROJECT_AGENTS = {CLAUDE_CODE: ".claude/agents", CODEX: ".codex/agents"}
 
-# What Claude Code keeps of an invoked skill after a compaction, and the
-# budget all of them share (see the module).
-COMPACTION_TOKENS = 5_000
-COMPACTION_BUDGET = 25_000
+# What a provider keeps of an invoked skill after a compaction is in its
+# dictionary (``skills.compaction_tokens``), not here (see the module).
 # English prose runs near four bytes a token; three errs toward "too long".
 BYTES_PER_TOKEN = 3
 
@@ -269,10 +270,22 @@ class Made:
     inputs: str
     model: str | None = None
     effort: str | None = None
+    # The tokens the provider keeps of an invoked skill after a compaction,
+    # from its dictionary; None where it documents no such cut. Set on a
+    # loaded role's ``SKILL.md`` alone, with ``provider_title``, the
+    # provider's name in a message.
+    limit_tokens: int | None = None
+    provider_title: str = ""
 
     @property
     def size(self) -> int:
         return len(self.text.encode("utf-8"))
+
+    @property
+    def provider_name(self) -> str:
+        """The provider as a message names it: its dictionary's display
+        name, else the provider id."""
+        return self.provider_title or self.provider
 
     @property
     def sha256(self) -> str:
@@ -285,11 +298,12 @@ class Made:
 
     @property
     def over_limit(self) -> bool:
-        """Whether the skill of a loaded role is over ``COMPACTION_TOKENS``,
-        on either provider: on Claude Code a compaction is then likely to
-        cut its end, and on Codex the figure is the project's own rule for a
-        loaded role (``validate`` holds the shipped roles to it on both)."""
-        return self.name.endswith(SKILL_FILE) and self.tokens > COMPACTION_TOKENS
+        """Whether the skill of a loaded role is over ``limit_tokens``, so
+        that a compaction is likely to cut its end. Always False on a
+        provider with no limit (``validate`` holds the shipped roles to it
+        where there is one)."""
+        return (self.name.endswith(SKILL_FILE) and self.limit_tokens is not None
+                and self.tokens > self.limit_tokens)
 
 
 # --- Which roles -------------------------------------------------------------------
@@ -351,7 +365,7 @@ def _notice(provider: str, role: str, first: str) -> list[str]:
 def skill_notice(provider: str, role: str) -> str:
     """The notice of a loaded role's skill: as short as it can be, because
     the model reads it with the role and it counts toward
-    ``COMPACTION_TOKENS``. It names the sources by their two directories;
+    the compaction limit. It names the sources by their two directories;
     the role's definition lists each file (``definitions.notice_lines``).
     It holds no two hyphens in a row, so it can stand in an HTML comment."""
     return (
@@ -497,7 +511,8 @@ def skills(where: Locations, providers: Iterable[str] = PROVIDERS, homes_found: 
         role = one.role.name
         made.append(Made(
             one.provider, LOADED, role, f"{role}/{SKILL_FILE}", skill_text(one),
-            one.digest(LOADED_SCHEME, file=SKILL_FILE), one.model, one.effort,
+            one.digest(LOADED_SCHEME, file=SKILL_FILE), one.model, one.effort, one.compaction_tokens,
+            one.provider_title,
         ))
         form = {"scheme": LOADED_SCHEME, "provider": one.provider, "role": role, "title": one.role.title,
                 "file": OPENAI_FILE}

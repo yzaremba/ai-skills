@@ -22,6 +22,9 @@
 
 schema_version = 1
 
+# The product name setup's messages use.
+display_name = "Codex"
+
 checked_on_version = "0.162.1"
 checked_on_date = "2026-10-11"
 # A starting role is given to Codex as a profile file, <name>.config.toml in
@@ -66,6 +69,10 @@ low = "low"
 medium = "medium"
 high = "high"
 max = "max"
+
+# No [skills] compaction_tokens: Codex documents no cut of an invoked skill
+# after a compaction, so a loaded role's skill is not limited here; setup
+# reports its size.
 
 # Every entry of the catalog, in the catalog's order. `visibility` and
 # `default_effort` (the catalog's `default_reasoning_level`) are as listed.

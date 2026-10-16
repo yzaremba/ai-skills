@@ -3,7 +3,10 @@
 A dictionary records what was checked about one provider on one day:
 
     schema_version            1; absent means 1
-    checked_on_version        the provider version the entries were checked on
+    display_name              optional: the provider's product name, as a
+                              message names it ("Claude Code"); absent, the
+                              provider's directory name is used
+    checked_on_version       the provider version the entries were checked on
     checked_on_date           that day, as YYYY-MM-DD
     oldest_supported_version  optional: the oldest provider version supported
     [model_list]              how the provider's own model list is read
@@ -20,6 +23,14 @@ A dictionary records what was checked about one provider on one day:
                               provider's value for a definition; a provider
                               with no such setting has no table, and a role
                               that names a cache then gets nothing written
+    [skills]                  optional: what the provider does with a skill
+        compaction_tokens     optional: how many tokens of an invoked skill
+                              the provider keeps after a compaction. A role
+                              that can be loaded is held to it on this
+                              provider (``validate``, ``doctor``,
+                              ``render``); a provider that documents no
+                              such cut has no key, and there a loaded
+                              role's size is reported and not limited
     [models.<name>]           one table per known model
         efforts               the effort values the model accepts; empty for a
                               model that takes no effort setting
@@ -89,6 +100,7 @@ _MODEL_REQUIRED = ("efforts",)
 # checked apart: a model name may hold a dot, which no settings key does.
 _KEYS: dict[str, schema.Node | None] = {
     schema.VERSION_KEY: None,
+    "display_name": _STRING,
     "checked_on_version": _STRING,
     "checked_on_date": _STRING,
     "oldest_supported_version": _STRING,
@@ -100,6 +112,7 @@ _KEYS: dict[str, schema.Node | None] = {
     }),
     **schema.PROVIDER.keys,
     "cache": Table({name: _STRING for name in schema.CACHES}),
+    "skills": Table({"compaction_tokens": Value("integer", minimum=1)}),
     "models": None,
 }
 _REQUIRED = ("checked_on_version", "checked_on_date", "model_list", "tiers", "efforts", "models")
@@ -150,6 +163,18 @@ class Dictionary:
     # Cache name -> the provider's value. Not a setting: what a definition
     # of this provider can say, which no settings file changes.
     cache: dict[str, str] = field(default_factory=dict)
+    # ``skills.compaction_tokens``: what the provider keeps of an invoked
+    # skill after a compaction, and so the limit on a loaded role's skill
+    # there. None where the provider documents no such cut.
+    compaction_tokens: int | None = None
+    # ``display_name``: the product name a message uses.
+    display_name: str | None = None
+
+    @property
+    def title(self) -> str:
+        """The provider's name in a message: its display name, else the
+        directory name."""
+        return self.display_name or self.provider
 
     def model(self, name: str) -> Model | None:
         """The entry of a model, or None for a model the file does not list
@@ -303,6 +328,8 @@ def check_file(file: Path, provider: str, problems: list[str]) -> Dictionary | N
             for name, entry in data["models"].items()
         },
         cache=dict(data.get("cache", {})),
+        compaction_tokens=data.get("skills", {}).get("compaction_tokens"),
+        display_name=data.get("display_name"),
     )
 
 

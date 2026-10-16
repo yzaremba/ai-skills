@@ -1237,19 +1237,13 @@ def check_interrupted_run(context: Context) -> list[Finding]:
 
 
 def loaded_skill_warning(one: entry.Made) -> str:
-    """What is said of a loaded role's skill that is over the limit. The
-    limit is one figure on both providers and means two things."""
+    """What is said of a loaded role's skill that is over its provider's
+    limit (``skills.compaction_tokens`` in the provider's dictionary)."""
     size = f"{one.provider}: the loaded role {one.role} is about {one.tokens:,} tokens ({one.size:,} bytes)"
-    if one.provider == definitions.CLAUDE_CODE:
-        why = (
-            f"after a compaction Claude Code keeps the first {entry.COMPACTION_TOKENS:,} tokens of an invoked "
-            "skill, so its end is likely to be cut: the role's binding rows and the action notes"
-        )
-    else:
-        why = (
-            f"over {entry.COMPACTION_TOKENS:,}, which is this project's own rule for a loaded role on every "
-            "provider and no limit of Codex's: nothing is cut there"
-        )
+    why = (
+        f"after a compaction {one.provider_name} keeps the first {one.limit_tokens:,} tokens of an invoked "
+        "skill, so its end is likely to be cut: the role's binding rows and the action notes"
+    )
     return (
         f"{size}; {why}. The shipped roles are within it with the shipped settings, so a setting of yours "
         "made this one longer (a longer model name, or a provider home moved by a variable); shorten the "
@@ -1259,7 +1253,8 @@ def loaded_skill_warning(one: entry.Made) -> str:
 
 def check_loaded_skill_size(context: Context) -> list[Finding]:
     """A loaded role whose skill, made with the user's settings, is over
-    the limit ``validate`` holds the shipped roles to, on either provider."""
+    the limit ``validate`` holds the shipped roles to, on a provider whose
+    dictionary has one; on a provider with none, the sizes as info."""
     if not context.sources.ok:
         return [info(NOT_PLANNED)]
     enabled = render.home_roles_setting(context.where)
@@ -1285,8 +1280,22 @@ def check_loaded_skill_size(context: Context) -> list[Finding]:
         made = [one for one in made if one.provider in places and fsio.is_file(places[one.provider] / one.name)]
         if not made:
             return [info("no role is installed as a skill in this home (rendered with --no-roles); nothing to measure")]
-    findings = [warning(loaded_skill_warning(one), one.role) for one in made if one.over_limit]
-    return findings or [fine(f"{len(made)} loaded-role skills, none estimated over {entry.COMPACTION_TOKENS:,} tokens")]
+    findings: list[Finding] = []
+    # One finding per provider: warnings for each skill over its provider's
+    # limit, or one line that none is; and where the provider documents no
+    # cut, no limit, and its sizes are said.
+    for provider in dict.fromkeys(one.provider for one in made):
+        mine = [one for one in made if one.provider == provider]
+        limit = mine[0].limit_tokens
+        if limit is None:
+            sizes = ", ".join(f"{one.role} about {one.tokens:,} tokens ({one.size:,} bytes)" for one in mine)
+            findings.append(info(f"{provider}: no limit on a loaded role's skill (its dictionary names no "
+                                 f"skills.compaction_tokens); {sizes}"))
+            continue
+        over = [warning(loaded_skill_warning(one), one.role) for one in mine if one.over_limit]
+        findings.extend(over or [fine(f"{provider}: {len(mine)} loaded-role skills, none estimated over "
+                                      f"{limit:,} tokens")])
+    return findings
 
 
 def collab_installs(context: Context) -> tuple[dict[str, tuple[Path, list[str]]], list[Path]]:

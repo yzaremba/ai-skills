@@ -88,7 +88,7 @@ RULES: dict[str, str] = {
     "role-include": "an entry of `includes` is not a file in roles/_shared/",
     "role-actions": "an entry of `actions` is not a section of every provider's actions.md",
     "role-size": "ROLE.md with its includes reaches the size limit",
-    "loaded-skill-size": "the skill a loaded role is given on a provider is over the token limit",
+    "loaded-skill-size": "the skill a loaded role is given on a provider is over that provider's token limit",
     "role-dispatch": "an entry of `limits.dispatches` is not a role definition",
     "role-reserved": "a role definition's id is a scalar key of Codex's [agents] table",
     "bindings": "roles/bindings.toml: a key, a name that does not exist, a row given twice, or a skill that is "
@@ -120,12 +120,11 @@ DESCRIPTION_LIMIT = 400
 FIELD_LIMIT = 200          # any other string of a role, a binding or a dictionary
 # A provider's action notes end every definition and every loaded role.
 ACTIONS_LIMIT = 12_000
-# The skill of a role that can be loaded, on every provider, as ``entry``
-# estimates its tokens: what Claude Code keeps of an invoked skill after a
-# compaction, and the user's limit for the other provider as well (decision
-# of 2026-10-11). Read once, here: a test that moves ``entry``'s figure to
-# see ``render`` flag a skill does not move this rule.
-LOADED_SKILL_TOKENS = entry.COMPACTION_TOKENS
+# The skill of a role that can be loaded is limited, as ``entry`` estimates
+# its tokens, on a provider whose dictionary says what it keeps of an
+# invoked skill after a compaction (``skills.compaction_tokens``; Claude
+# Code). A provider whose dictionary does not say has no limit: the size is
+# reported (decision of 2026-10-16).
 # The home the skills are measured with: a place inside the clone that
 # holds no settings file, so the shipped settings alone decide the
 # profile, and a source's validity does not depend on the user's.
@@ -341,13 +340,19 @@ class Skill:
     own_setup: bool
 
 
+# The version of the --json output. 2: "loaded" lost its one "limit_tokens";
+# each provider's entry under it gives its own, null where it has none.
+JSON_SCHEMA_VERSION = 2
+
+
 @dataclass(frozen=True)
 class Report:
     problems: tuple[Problem, ...]
     skills: dict[str, Skill]
     role_sizes: dict[str, int]
-    # By role and provider: the bytes and estimated tokens of its loaded skill.
-    loaded_sizes: dict[str, dict[str, dict[str, int]]] = dataclasses.field(default_factory=dict)
+    # By role and provider: the bytes and estimated tokens of its loaded skill,
+    # and the provider's limit (None where it has none).
+    loaded_sizes: dict[str, dict[str, dict[str, int | None]]] = dataclasses.field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -358,7 +363,7 @@ class Report:
 
     def as_json(self) -> dict[str, Any]:
         return {
-            "schema_version": 1,
+            "schema_version": JSON_SCHEMA_VERSION,
             "ok": self.ok,
             "problems": [problem.as_json() for problem in self.problems],
             "skills": {
@@ -366,7 +371,7 @@ class Report:
                 for name, skill in self.skills.items()
             },
             "roles": {name: {"bytes": size, "limit": roles.TEXT_LIMIT} for name, size in self.role_sizes.items()},
-            "loaded": {"limit_tokens": LOADED_SKILL_TOKENS, "roles": self.loaded_sizes},
+            "loaded": {"roles": self.loaded_sizes},
         }
 
 
@@ -423,7 +428,7 @@ class _Run:
         self.skills: dict[str, _Source] = {}
         self.report_skills: dict[str, Skill] = {}
         self.sizes: dict[str, int] = {}
-        self.loaded: dict[str, dict[str, dict[str, int]]] = {}
+        self.loaded: dict[str, dict[str, dict[str, int | None]]] = {}
         self.defaults: dict[str, Any] | None = None
         self.installed: list[Path] = []   # every file of an installed unit
         self._bytes: dict[Path, bytes | None] = {}
@@ -1255,13 +1260,17 @@ def _check_loaded(run: _Run) -> None:
     for one in made:
         if not one.name.endswith(entry.SKILL_FILE):
             continue
-        run.loaded.setdefault(one.role, {})[one.provider] = {"bytes": one.size, "tokens": one.tokens}
-        if one.tokens > LOADED_SKILL_TOKENS:
+        run.loaded.setdefault(one.role, {})[one.provider] = {
+            "bytes": one.size, "tokens": one.tokens, "limit_tokens": one.limit_tokens,
+        }
+        if one.over_limit:
             run.add(
                 where.roles_dir / one.role / roles.TEXT_FILE, "loaded-skill-size",
                 f"loaded as a skill on {one.provider} the role is about {one.tokens:,} tokens ({one.size:,} bytes, at "
-                f"{entry.BYTES_PER_TOKEN} bytes a token); at most {LOADED_SKILL_TOKENS:,}, which is what Claude Code "
-                "keeps of an invoked skill after a compaction. Cut the role's text, its includes or its actions",
+                f"{entry.BYTES_PER_TOKEN} bytes a token); at most {one.limit_tokens:,}, which is what "
+                f"{one.provider_name} keeps of an invoked skill after a compaction (skills.compaction_tokens in "
+                f"providers/{one.provider}/{dictionary.DICTIONARY_FILE}). Cut the role's text, its includes or its "
+                "actions",
             )
 
 

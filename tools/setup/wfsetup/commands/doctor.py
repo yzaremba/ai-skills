@@ -150,7 +150,8 @@ The checks, in the order they run:
                          it is left alone.
     loaded-skill-size    a loaded role whose skill is estimated over what
                          Claude Code keeps of a skill after a compaction: a
-                         warning.
+                         warning. Codex documents no such cut and its
+                         dictionary names no figure: its sizes are info.
     instruction-files    with --project DIR, whether both providers load
                          DIR/AGENTS.md, where the lesson index of the
                          project-memory skill is; without it, info.

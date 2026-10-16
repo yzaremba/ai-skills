@@ -26,7 +26,7 @@ from unittest import mock
 import support
 from crash_support import gone_pid
 from fileops_support import POSIX, SYMLINKS, OpsCase
-from test_doctor import DoctorCase
+from test_doctor import DoctorCase, limit_loaded_skills
 from test_migrate import MigrateCase
 from test_uninstall import USER_SETTINGS, UninstallCase
 from wfsetup import blocks, doctor, entry, fileops, fsio, lock, manifest as records, render
@@ -1082,8 +1082,8 @@ class LoadedSizeAfterNoRolesTests(DoctorCase):
     def test_a_home_rendered_without_roles_has_nothing_to_measure(self) -> None:
         code, out, err = support.run("render", "--no-roles", "--home", str(self.home))
         self.assertEqual((code, err), (0, ""), out)
-        with mock.patch.object(entry, "COMPACTION_TOKENS", 100):
-            code, findings = self.only("loaded-skill-size")
+        limit_loaded_skills(self, "claude-code", 100)
+        code, findings = self.only("loaded-skill-size")
         self.assertEqual(code, 0)
         self.assertEqual(self.details(findings, doctor.WARNING), [])
         (detail,) = self.details(findings, doctor.INFO)
@@ -1092,10 +1092,10 @@ class LoadedSizeAfterNoRolesTests(DoctorCase):
     def test_a_home_rendered_with_roles_is_still_warned(self) -> None:
         code, out, err = support.run("render", "--home", str(self.home))
         self.assertEqual((code, err), (0, ""), out)
-        with mock.patch.object(entry, "COMPACTION_TOKENS", 100):
-            code, findings = self.only("loaded-skill-size")
-        # Two loaded roles, on each of the two providers.
-        self.assertEqual(len(self.details(findings, doctor.WARNING)), 4)
+        limit_loaded_skills(self, "claude-code", 100)
+        code, findings = self.only("loaded-skill-size")
+        # Two loaded roles, on Claude Code: Codex has no limit.
+        self.assertEqual(len(self.details(findings, doctor.WARNING)), 2)
 
 
 if __name__ == "__main__":

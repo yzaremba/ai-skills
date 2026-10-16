@@ -43,7 +43,8 @@ HARD_SUFFIX = "-hard"
 # ``ROLE.md`` with its includes stays under this many bytes: a dispatched
 # role shares its budget with the project's instruction files
 # (roles/README.md, "Size"). A role that can be loaded has a limit of its
-# own, on the whole skill it is given: ``validate.LOADED_SKILL_TOKENS``.
+# own, on the whole skill it is given, on a provider whose dictionary sets
+# ``skills.compaction_tokens`` (``entry.Made.limit_tokens``).
 TEXT_LIMIT = 12_000
 
 _STRING = Value("string")

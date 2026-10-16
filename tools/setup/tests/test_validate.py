@@ -1245,8 +1245,9 @@ class RoleTests(TreeCase):
 
 
 class LoadedSkillSizeTests(TreeCase):
-    """A role that can be loaded gives a skill of at most
-    ``validate.LOADED_SKILL_TOKENS`` on every provider."""
+    """A role that can be loaded gives a skill of at most its provider's
+    ``skills.compaction_tokens``, on a provider whose dictionary has one:
+    Claude Code's fixture does, Codex's does not."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -1287,12 +1288,14 @@ class LoadedSkillSizeTests(TreeCase):
         self.assertTrue(report.ok, report.lines())
         made = self.skills()
         self.assertEqual(set(made), {("lead", "claude-code"), ("lead", "codex")})
+        limits = {"claude-code": 5000, "codex": None}
         self.assertEqual(report.loaded_sizes, {"lead": {
-            provider: {"bytes": made[("lead", provider)].size, "tokens": made[("lead", provider)].tokens}
+            provider: {"bytes": made[("lead", provider)].size, "tokens": made[("lead", provider)].tokens,
+                       "limit_tokens": limits[provider]}
             for provider in ("claude-code", "codex")
         }})
-        self.assertEqual(report.as_json()["loaded"], {"limit_tokens": 5000, "roles": report.loaded_sizes})
-        self.assertEqual(validate.LOADED_SKILL_TOKENS, entry.COMPACTION_TOKENS)
+        self.assertEqual(report.as_json()["loaded"], {"roles": report.loaded_sizes})
+        self.assertEqual({provider: made[("lead", provider)].limit_tokens for provider in limits}, limits)
 
     def test_a_role_that_is_not_loaded_is_not_measured(self) -> None:
         self.put("providers/codex/actions.md", "## Notes\n\n" + "x" * 11_000 + "\n")
@@ -1302,19 +1305,37 @@ class LoadedSkillSizeTests(TreeCase):
         self.assertTrue(report.ok, report.lines())
         self.assertNotIn("worker", report.loaded_sizes)
 
-    def test_the_limit_is_the_last_size_allowed_on_either_provider(self) -> None:
-        for provider in ("claude-code", "codex"):
-            with self.subTest(provider):
-                self.fill(provider, validate.LOADED_SKILL_TOKENS)
-                self.assertClean()
-                self.fill(provider, validate.LOADED_SKILL_TOKENS + 1)
-                size = self.skills()[("lead", provider)].size
-                self.assertEqual(self.check().lines(), [
-                    f"roles/lead/ROLE.md: [loaded-skill-size] loaded as a skill on {provider} the role is about 5,001 "
-                    f"tokens ({size:,} bytes, at 3 bytes a token); at most 5,000, which is what Claude Code keeps of an "
-                    "invoked skill after a compaction. Cut the role's text, its includes or its actions"
-                ])
-                self.fill(provider, validate.LOADED_SKILL_TOKENS)
+    def test_the_limit_is_the_last_size_allowed_on_claude_code(self) -> None:
+        self.fill("claude-code", 5000)
+        self.assertClean()
+        self.fill("claude-code", 5001)
+        size = self.skills()[("lead", "claude-code")].size
+        self.assertEqual(self.check().lines(), [
+            f"roles/lead/ROLE.md: [loaded-skill-size] loaded as a skill on claude-code the role is about 5,001 "
+            f"tokens ({size:,} bytes, at 3 bytes a token); at most 5,000, which is what Claude Code keeps of an "
+            "invoked skill after a compaction (skills.compaction_tokens in providers/claude-code/dictionary.toml). "
+            "Cut the role's text, its includes or its actions"
+        ])
+
+    def test_codex_has_no_limit_and_its_size_is_reported(self) -> None:
+        self.fill("codex", 5001)
+        report = self.check()
+        self.assertEqual(report.lines(), [])
+        one = self.skills()[("lead", "codex")]
+        self.assertFalse(one.over_limit)
+        self.assertEqual(report.as_json()["loaded"]["roles"]["lead"]["codex"],
+                         {"bytes": one.size, "tokens": 5001, "limit_tokens": None})
+
+    def test_the_limit_is_the_dictionarys_and_no_providers_name(self) -> None:
+        self.fill("codex", 5001)
+        support.set_compaction_tokens(self.clone / "providers/codex/dictionary.toml", 5000)
+        self.assertEqual(self.found(), [("roles/lead/ROLE.md", "loaded-skill-size")])
+        self.assertIn("on codex the role is about 5,001 tokens", self.check().lines()[0])
+        self.fill("claude-code", 5001)
+        support.set_compaction_tokens(self.clone / "providers/codex/dictionary.toml", None)
+        support.set_compaction_tokens(self.clone / "providers/claude-code/dictionary.toml", None)
+        self.assertClean()
+        self.assertEqual(self.check().loaded_sizes["lead"]["claude-code"]["limit_tokens"], None)
 
     def test_what_the_role_is_given_counts_and_what_it_is_not_given_does_not(self) -> None:
         # The role's own text, an include and the provider's notes all count.
@@ -1326,7 +1347,10 @@ class LoadedSkillSizeTests(TreeCase):
         notes = "## Notes\n\n### Dispatch\n\n- Spawn.\n\n### Commit\n\n" + "z" * 4_000 + "\n"
         for provider in ("claude-code", "codex"):
             self.put(f"providers/{provider}/actions.md", notes)
-        self.assertEqual(self.found(), [("roles/lead/ROLE.md", "loaded-skill-size")] * 2)
+        # Over on both providers, refused on Claude Code alone.
+        self.assertTrue(all(one.tokens > 5000 for one in self.skills().values()))
+        self.assertEqual(self.found(), [("roles/lead/ROLE.md", "loaded-skill-size")])
+        self.assertIn("on claude-code", self.check().lines()[0])
         # A section the role does not name is not in its skill.
         file = self.clone / "roles" / "lead" / "role.toml"
         file.write_text(file.read_text(encoding="utf-8").replace(
@@ -1346,10 +1370,6 @@ class LoadedSkillSizeTests(TreeCase):
         self.write(self.user_file, "this is not TOML =\n")
         self.assertEqual(self.check().loaded_sizes, before)
         self.assertClean()
-
-    def test_the_rule_does_not_move_with_the_figure_render_flags_by(self) -> None:
-        with mock.patch.object(entry, "COMPACTION_TOKENS", 10):
-            self.assertClean()
 
     def test_sources_no_skill_can_be_made_from_are_another_rules_to_report(self) -> None:
         (self.clone / "providers" / "codex" / "dictionary.toml").write_bytes(b"schema_version = 1\n")
@@ -1811,7 +1831,7 @@ class AllAtOnceTests(TreeCase):
         code, out, err = support.run("validate", "--json", "--home", str(self.home))
         self.assertEqual((code, err), (1, ""))
         report = json.loads(out)
-        self.assertEqual(report["schema_version"], 1)
+        self.assertEqual(report["schema_version"], 2)
         self.assertFalse(report["ok"])
         self.assertEqual([(p["file"], p["rule"]) for p in report["problems"]], self.EXPECTED)
         self.assertEqual(set(report["problems"][0]), {"file", "line", "key", "rule", "message"})

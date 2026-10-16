@@ -780,16 +780,17 @@ and each skill's `SKILL.md`.
   command makes, is taken to be skipped the same way. Every other Claude Code session
   loads the rule through the link.
 - **A loaded role in a long Claude Code session.** After a compaction Claude Code keeps
-  the first 5,000 tokens of an invoked skill. The three roles that can be loaded (Manager,
-  Product Manager, Architect) are kept within that on both providers, by an estimate of
-  one token per three bytes, which errs high: `validate` refuses a role whose loaded
-  skill is over 5,000 tokens on either provider, measured with the shipped settings, and
-  `validate --json` gives each size. `doctor` (the check `loaded-skill-size`) measures
-  with your settings, which can make a skill longer, as a long model name does, and
-  warns on either provider; `render` then marks the role LONG. On Claude Code what would
-  be cut is the end, the role's binding rows and the provider's action notes. On Codex
-  the figure is this project's own rule and nothing is cut. A clean install with the
-  shipped settings ends with no such warning.
+  the first 5,000 tokens of an invoked skill, a figure its dictionary states
+  (`skills.compaction_tokens`). The three roles that can be loaded (Manager, Product
+  Manager, Architect) are kept within that on Claude Code, by an estimate of one token
+  per three bytes, which errs high: `validate` refuses a role whose loaded skill is over
+  5,000 tokens there, measured with the shipped settings, and `validate --json` gives
+  each size on each provider. `doctor` (the check `loaded-skill-size`) measures with
+  your settings, which can make a skill longer, as a long model name does, and warns;
+  `render` then marks the role LONG. What would be cut is the end, the role's binding
+  rows and the provider's action notes. Codex documents no such cut: there the size is
+  reported, by `validate --json`, `render` and `doctor`, and not limited. A clean
+  install with the shipped settings ends with no such warning.
 - **Git on Codex.** The default sandbox keeps `.git` read-only, so a commit or a
   worktree needs approval command by command, or a permission profile (beta in Codex).
   `render --apply-codex-settings` defines one, `workflow`, and with

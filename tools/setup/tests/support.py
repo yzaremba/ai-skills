@@ -74,6 +74,7 @@ allow_unshared_clone = false
 
 FIXTURE_DICTIONARIES = {
     "claude-code": '''schema_version = 1
+display_name = "Claude Code"
 checked_on_version = "2.1.289"
 checked_on_date = "2026-10-05"
 oldest_supported_version = "2.1.281"
@@ -93,6 +94,9 @@ medium = "medium"
 high = "high"
 max = "max"
 
+[skills]
+compaction_tokens = 5000
+
 [models.haiku]
 efforts = []
 
@@ -106,6 +110,7 @@ efforts = ["low", "medium", "high", "xhigh", "max"]
 efforts = ["low", "medium", "high", "xhigh", "max"]
 ''',
     "codex": '''schema_version = 1
+display_name = "Codex"
 checked_on_version = "0.160.0"
 checked_on_date = "2026-10-05"
 
@@ -267,6 +272,20 @@ visibility = "hide"
 [models.a-plain]
 efforts = []
 '''
+
+COMPACTION_LINE = "\n[skills]\ncompaction_tokens = {}\n"
+
+
+def set_compaction_tokens(file: Path, tokens: int | None) -> None:
+    """Give the dictionary at ``file`` the limit ``tokens`` on a loaded
+    role's skill, or none: its ``[skills]`` table, as the fixtures write
+    it, is taken out, and the new one, if any, goes at the end."""
+    import re
+
+    text = re.sub(r"\n\[skills\]\ncompaction_tokens = [0-9]+\n", "\n", file.read_text(encoding="utf-8"))
+    if tokens is not None:
+        text = text.rstrip("\n") + "\n" + COMPACTION_LINE.format(tokens)
+    file.write_text(text, encoding="utf-8", newline="\n")
 
 
 def run(*argv: str) -> tuple[int, str, str]:

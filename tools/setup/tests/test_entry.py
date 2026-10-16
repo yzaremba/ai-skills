@@ -370,25 +370,45 @@ class LoadedRoleCase(EntryCase):
         with mock.patch.object(roles, "TEXT_LIMIT", 100_000):
             self.assertIn("roles/lead/ROLE.md: [loaded-skill-size] loaded as a skill on claude-code",
                           self.refused_by_validation())
-        with mock.patch.object(roles, "TEXT_LIMIT", 100_000), mock.patch.object(validate, "LOADED_SKILL_TOKENS", 100_000):
+        with mock.patch.object(roles, "TEXT_LIMIT", 100_000), mock.patch.object(validate, "_check_loaded", lambda run: None):
             code, report, err = self.report()
             self.assertEqual((code, err), (0, ""))
             out = self.ok()
         points = {(point["provider"], point["kind"], point["role"]): point for point in report["entry_points"]}
-        self.assertGreater(points[(CLAUDE, "load", "lead")]["tokens"], entry.COMPACTION_TOKENS)
+        self.assertGreater(points[(CLAUDE, "load", "lead")]["tokens"], 5000)
+        self.assertEqual(points[(CLAUDE, "load", "lead")]["limit_tokens"], 5000)
         self.assertTrue(points[(CLAUDE, "load", "lead")]["over_limit"])
         self.assertFalse(points[(CLAUDE, "load", "quick")]["over_limit"])
-        # The figure is Claude Code's, and the project's own rule on Codex.
-        self.assertTrue(points[(CODEX, "load", "lead")]["over_limit"])
+        # Codex has no limit: the size is shown, nothing is marked.
+        self.assertGreater(points[(CODEX, "load", "lead")]["tokens"], 5000)
+        self.assertEqual(points[(CODEX, "load", "lead")]["limit_tokens"], None)
+        self.assertFalse(points[(CODEX, "load", "lead")]["over_limit"])
         flagged = [line for line in out.splitlines() if "LONG" in line]
-        self.assertEqual(len(flagged), 2)
+        self.assertEqual(len(flagged), 1)
         self.assertIn("claude-code: load lead into a session", flagged[0])
-        self.assertIn("keeps the first 5,000 tokens of an invoked skill", flagged[0])
-        self.assertIn("codex: load lead into a session", flagged[1])
-        self.assertIn("LONG: over 5,000 tokens, this project's own rule for a loaded role on every provider; "
-                      "Codex cuts nothing", flagged[1])
-        self.assertNotIn("compaction", flagged[1])
+        self.assertIn("; LONG: after a compaction Claude Code keeps the first 5,000 tokens of an invoked skill, so "
+                      "the end of this one is likely to be cut", flagged[0])
+        (codex,) = [line for line in out.splitlines() if line.startswith("  codex: load lead into a session")]
+        self.assertIn(f"about {points[(CODEX, 'load', 'lead')]['tokens']:,} tokens", codex)
         self.assertIn(b"Rule 399", (self.claude_skills / "lead" / "SKILL.md").read_bytes())
+
+    def test_a_codex_dictionary_that_sets_a_limit_marks_codex_long(self) -> None:
+        """The limit is the dictionary's: given one, Codex is marked as
+        Claude Code is, and named by its display name."""
+        support.set_compaction_tokens(self.clone / "providers/codex/dictionary.toml", 100)
+        support.set_compaction_tokens(self.clone / "providers/claude-code/dictionary.toml", None)
+        with mock.patch.object(validate, "_check_loaded", lambda run: None):
+            code, report, err = self.report()
+            self.assertEqual((code, err), (0, ""))
+            out = self.ok()
+        points = {(point["provider"], point["kind"], point["role"]): point for point in report["entry_points"]}
+        self.assertEqual(points[(CODEX, "load", "lead")]["limit_tokens"], 100)
+        self.assertTrue(points[(CODEX, "load", "lead")]["over_limit"])
+        self.assertFalse(points[(CLAUDE, "load", "lead")]["over_limit"])
+        flagged = [line for line in out.splitlines() if "LONG" in line]
+        self.assertEqual(len(flagged), 2)  # lead and quick, on Codex alone
+        self.assertTrue(all(line.startswith("  codex: load ") for line in flagged), flagged)
+        self.assertIn("; LONG: after a compaction Codex keeps the first 100 tokens of an invoked skill", flagged[0])
 
     def test_help_states_the_entry_points_the_project_and_the_limit(self) -> None:
         code, out, _ = support.run("render", "--help")
@@ -399,7 +419,7 @@ class LoadedRoleCase(EntryCase):
             "takes the prompt, tools and model of the definition it starts as and not its effort",
             "That is read from the documentation: no session has shown it yet",
             "one an earlier run set is left as it is, with a note",
-            "marked LONG, on either provider",
+            "on Claude Code one that is likely over 5,000 is marked LONG", "there the size is shown and nothing is marked",
             '"effortLevel": "<level>" beside it, the role\'s effort, under the same rules',
             "takes low, medium, high and xhigh and not max",
             "it is not set and the output says why",
