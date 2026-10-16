@@ -118,7 +118,6 @@ WFSETUP_TEST_FULL=1 python -B -m unittest discover -s tools/setup/tests -p "test
 Lessons of this project, one line each. Before work a line applies to, read its file.
 
 <!-- project-memory:index:start -->
-- [Recheck a cited provider source](docs/memory/recheck-provider-source-when-coding.md): coding against a provider fact; reread its source that day
 - [A subagent spawn costs ~40K tokens](docs/memory/subagent-spawn-cost.md): before spawning for small work or writing role text; prefer a follow-up
 - [Acceptance as a user](docs/memory/acceptance-as-a-user.md): planning or running an acceptance run; drive it as a user, friction is a finding
 - Local lessons, private or of this machine: read `docs/memory/local/INDEX.md` if it exists.
