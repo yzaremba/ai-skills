@@ -21,6 +21,7 @@ tools/      setup/            workflow_setup.py  wfsetup/  defaults.toml  tests/
 docs/       agent-roles-framework.md  v1-to-v2.md
             prd-implementation-slide.html  roles-framework-slide.html   the two slides,
                                                                         each with its -preview.png
+            memory/  this repository's lessons, indexed under "Project memory" below
 ```
 
 ## One directory per logical unit
@@ -111,3 +112,14 @@ WFSETUP_TEST_FULL=1 python -B -m unittest discover -s tools/setup/tests -p "test
   exception to "a skill reaches no path outside its own": a skill's script may read
   the setup tool and its shipped defaults (`tools/setup/`) beside the skill when they
   are there, and must work without them.
+
+## Project memory
+
+Lessons of this project, one line each. Before work a line applies to, read its file.
+
+<!-- project-memory:index:start -->
+- [Recheck a cited provider source](docs/memory/recheck-provider-source-when-coding.md): coding against a provider fact; reread its source that day
+- [A subagent spawn costs ~40K tokens](docs/memory/subagent-spawn-cost.md): before spawning for small work or writing role text; prefer a follow-up
+- [Acceptance as a user](docs/memory/acceptance-as-a-user.md): planning or running an acceptance run; drive it as a user, friction is a finding
+- Local lessons, private or of this machine: read `docs/memory/local/INDEX.md` if it exists.
+<!-- project-memory:index:end -->
