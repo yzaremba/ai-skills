@@ -23,7 +23,7 @@ import provider_stub
 import support
 from fileops_support import SYMLINKS, snapshot
 from provider_stub import BUNDLED, LIVE
-from wfsetup import commands, fileops, modellist, settings, tomlio
+from wfsetup import commands, fileops, homes, modellist, settings, tomlio
 from wfsetup.commands import init
 from wfsetup.locations import Locations
 from wfsetup.manifest import Roots
@@ -49,7 +49,7 @@ ALL_MAPPINGS = [
     for argument in (flag, f"{provider}:{name}={value}")
 ]
 ALL_SETTINGS = [
-    "--docs-dir", "docs", "--questions", "one-at-a-time", "--recommend", "--no-manager-default",
+    "--docs-dir", "docs", "--questions", "one-at-a-time", "--recommend", "--roles", "--no-manager-default",
     "--no-high-stakes", "--max-parallel-coders", "3", "--memory-dir", "docs/memory",
 ]
 
@@ -275,6 +275,116 @@ class FlagTests(InitCase):
         self.assertIn("providers.codex.role_models.reviewer: no role definition has the id reviewer", out)
 
 
+UNSHARED_WHY = "inside WSL, where the Windows side's links cannot lead"
+
+
+class RememberedChoiceTests(InitCase):
+    """``--roles`` / ``--no-roles`` and ``--allow-unshared-clone``: the two
+    choices `render` and `doctor` would otherwise need on every run."""
+
+    def unshared(self, shared: bool | None = False) -> None:
+        """The clone as one the other side cannot read (a scratch home is
+        never asked, so the standing is given by hand)."""
+        why = UNSHARED_WHY if shared is False else "not asked: a scratch home (--home)"
+        standing = homes.CloneStanding(self.clone, self.clone, shared, why)
+        patch = mock.patch.object(homes, "clone_standing", return_value=standing)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_no_roles_is_written_once_and_roles_takes_it_out(self) -> None:
+        out = self.ok("--yes", "--no-roles")
+        self.assertEqual(self.data()["roles"], {"enabled": False})
+        self.assertIn("  roles.enabled = false  (in this file)", out.splitlines())
+        out = self.ok("--yes", "--roles")
+        self.assertNotIn("roles", self.data())  # equal to the layer below: taken out
+        self.assertIn("  roles.enabled: false -> (taken out; the value is then true from the shipped layer)", out)
+
+    def test_a_project_may_turn_its_roles_off(self) -> None:
+        self.ok("--yes", "--no-roles", project=True)
+        self.assertEqual(self.data(self.project_file)["roles"], {"enabled": False})
+        self.assertFalse(self.user_file.exists())
+
+    def test_the_clone_question_is_not_asked_where_it_does_not_apply(self) -> None:
+        out = self.ok("--yes")
+        self.assertNotIn("setup", self.data())
+        self.assertIn("  setup.allow_unshared_clone = false  (shipped; not written; not asked: the clone needs no "
+                      "such permission here (a scratch home (--home)))", out.splitlines())
+        # No terminal and no --yes: every other question is answered, and this one is not asked.
+        self.ok(*ALL_MAPPINGS, *ALL_SETTINGS, "--yes")
+        code, out, err = self.init(*ALL_MAPPINGS, *ALL_SETTINGS)
+        self.assertNotIn("allow_unshared_clone", err)
+
+    def test_where_it_applies_it_is_asked_and_proposes_a_shared_clone(self) -> None:
+        self.unshared()
+        asked = self.answers(*[""] * 13, "y")
+        out = self.ok()
+        prompts = [call.args[0] for call in asked.call_args_list]
+        self.assertEqual(len(prompts), 14)
+        self.assertEqual(prompts[12], "setup.allow_unshared_clone [false] (--allow-unshared-clone or "
+                                      "--no-allow-unshared-clone): ")
+        self.assertIn(f"the clone {self.clone} is {UNSHARED_WHY}: render and doctor refuse it unless "
+                      "--allow-unshared-clone is given on each run, or setup.allow_unshared_clone is true", out)
+        self.assertIn("does not install from this clone (", out)
+        self.assertNotIn("nothing on the other side", out)
+        self.assertNotIn("setup", self.data())
+        # Answered true, it is written; the next proposal is what the file holds.
+        self.answers(*[""] * 12, "y", "y")
+        self.ok()
+        self.assertEqual(self.data()["setup"], {"allow_unshared_clone": True})
+        asked = self.answers(*[""] * 13)
+        self.ok("--dry-run")
+        self.assertEqual(asked.call_args_list[12].args[0], "setup.allow_unshared_clone [true] "
+                         "(--allow-unshared-clone or --no-allow-unshared-clone): ")
+
+    def test_where_it_applies_yes_keeps_the_safe_proposal_and_the_flag_answers(self) -> None:
+        self.unshared()
+        self.ok("--yes")
+        self.assertNotIn("setup", self.data())
+        err = self.refused(*ALL_MAPPINGS, *ALL_SETTINGS)
+        self.assertIn("error: setup.allow_unshared_clone: not answered", err)
+        self.assertIn("Give --allow-unshared-clone or --no-allow-unshared-clone, or --yes", err)
+        self.ok("--yes", "--allow-unshared-clone")
+        self.assertEqual(self.data()["setup"], {"allow_unshared_clone": True})
+        self.ok("--yes")  # the value in effect is proposed, and kept
+        self.assertEqual(self.data()["setup"], {"allow_unshared_clone": True})
+        self.ok("--yes", "--no-allow-unshared-clone")
+        self.assertNotIn("setup", self.data())
+
+    def test_the_flag_sets_it_where_it_is_not_asked(self) -> None:
+        self.ok("--yes", "--allow-unshared-clone")
+        self.assertEqual(self.data()["setup"], {"allow_unshared_clone": True})
+        out = self.ok("--yes")  # not asked here, and the file's value stays
+        self.assertEqual(self.data()["setup"], {"allow_unshared_clone": True})
+        self.assertIn("  setup.allow_unshared_clone = true  (in this file; not asked: the clone needs no such "
+                      "permission here (a scratch home (--home)))", out.splitlines())
+
+    def test_a_project_neither_asks_nor_takes_it(self) -> None:
+        self.unshared()
+        err = self.refused("--yes", "--allow-unshared-clone", project=True)
+        self.assertEqual(err, "error: --allow-unshared-clone: setup.allow_unshared_clone is read from the user's file "
+                              "alone (~/.agents/workflow.toml): it is a fact of this machine, not of a project. Give "
+                              "it to `init` without --project\n")
+        err = self.refused("--yes", "--no-allow-unshared-clone", project=True)
+        self.assertTrue(err.startswith("error: --no-allow-unshared-clone: setup.allow_unshared_clone is read"), err)
+        out = self.ok("--yes", project=True)
+        self.assertNotIn("allow_unshared_clone", out)
+        self.assertFalse(self.project_file.exists() and "setup" in self.data(self.project_file))
+        # A project's file that holds the group is a fault init does not write over.
+        self.write(self.project_file, "[setup]\nallow_unshared_clone = true\n")
+        err = self.refused("--yes", project=True)
+        self.assertIn(f"{self.project_file}: setup: read from the user's settings file alone", err)
+        self.assertIn("init changes nothing while a settings file has a fault", err)
+
+    def test_render_and_doctor_read_what_init_wrote(self) -> None:
+        self.ok("--yes", "--no-roles", "--allow-unshared-clone")
+        entries = settings.resolve(Locations(home=self.home, clone=self.clone), ("roles", "setup"))
+        self.assertEqual((entries["roles.enabled"].value, entries["roles.enabled"].layer), (False, "user"))
+        found = entries["setup.allow_unshared_clone"]
+        self.assertEqual((found.value, found.layer, found.file), (True, "user", self.user_file))
+        allowance = homes.clone_allowance(Locations(home=self.home, clone=self.clone))
+        self.assertEqual((allowance.allowed, allowance.by), (True, homes.BY_SETTING))
+
+
 class NoTerminalTests(InitCase):
     def test_without_yes_a_question_with_no_flag_is_an_error_naming_the_flag(self) -> None:
         err = self.refused()
@@ -327,20 +437,23 @@ class NoTerminalTests(InitCase):
 
 class TerminalTests(InitCase):
     def test_enter_accepts_every_proposal_and_y_writes(self) -> None:
-        asked = self.answers(*[""] * 11, "y")
+        asked = self.answers(*[""] * 12, "y")
         self.ok()
         self.assertEqual(self.data(), {"schema_version": 1, "providers": PINNED})
         prompts = [call.args[0] for call in asked.call_args_list]
-        self.assertEqual(len(prompts), 12)
+        self.assertEqual(len(prompts), 13)
         self.assertIn("(--tier claude-code:...)", prompts[0])
         self.assertIn("(--effort claude-code:...)", prompts[1])
         self.assertIn("(--tier codex:...)", prompts[2])
         self.assertEqual(prompts[4], 'process.docs_dir ["docs"] (--docs-dir): ')
         self.assertEqual(prompts[6], "process.recommend [true] (--recommend or --no-recommend): ")
-        self.assertEqual(prompts[11], "Write these settings? [y/N] (--yes): ")
+        self.assertEqual(prompts[7], "roles.enabled [true] (--roles or --no-roles): ")
+        self.assertEqual(prompts[12], "Write these settings? [y/N] (--yes): ")
+        # A scratch home: the clone's question does not apply, and is not asked.
+        self.assertFalse(any("allow_unshared_clone" in prompt for prompt in prompts))
 
     def test_anything_but_yes_writes_nothing(self) -> None:
-        self.answers(*[""] * 11, "")
+        self.answers(*[""] * 12, "")
         before = self.tree()
         code, out, err = self.init()
         self.assertEqual((code, err), (1, ""))
@@ -348,9 +461,9 @@ class TerminalTests(InitCase):
         self.assertEqual(self.tree(), before)
 
     def test_a_flag_is_not_asked_again_and_yes_asks_nothing(self) -> None:
-        asked = self.answers(*[""] * 9, "yes")
+        asked = self.answers(*[""] * 10, "yes")
         self.ok("--docs-dir", "sprints", *ALL_MAPPINGS[:8])
-        self.assertEqual(asked.call_count, 10)
+        self.assertEqual(asked.call_count, 11)
         self.assertEqual(self.data()["process"], {"docs_dir": "sprints"})
         asked = self.answers()
         self.ok("--yes", "--docs-dir", "other")
@@ -359,10 +472,10 @@ class TerminalTests(InitCase):
     def test_answers_change_the_values(self) -> None:
         asked = self.answers(
             "deep=fable", "", "deep=gpt-6-astra fast=gpt-6-sol", "max=ultra",
-            "sprints", "all-together", "n", "y", "", "4", "", "y",
+            "sprints", "all-together", "n", "", "y", "", "4", "", "y",
         )
         out = self.ok()
-        self.assertEqual(asked.call_count, 12)
+        self.assertEqual(asked.call_count, 13)
         data = self.data()
         self.assertEqual(data["providers"]["claude-code"]["tiers"]["deep"], "fable")
         self.assertEqual(data["providers"]["codex"]["tiers"], {**CODEX_TIERS, "deep": "gpt-6-astra", "fast": "gpt-6-sol"})
@@ -377,10 +490,10 @@ class TerminalTests(InitCase):
     def test_a_bad_answer_is_asked_again(self) -> None:
         asked = self.answers(
             "deep", "huge=opus", "", "", "", "",
-            "", "sometimes", "", "", "", "", "none", "2", "", "y",
+            "", "sometimes", "", "", "", "", "", "none", "2", "", "y",
         )
         out = self.ok()
-        self.assertEqual(asked.call_count, 16)
+        self.assertEqual(asked.call_count, 17)
         self.assertIn("  deep: expected tier=MODEL\n", out)
         self.assertIn("  answer: providers.claude-code.tiers.huge: unknown key; known here: fast, standard, deep, frontier\n", out)
         self.assertIn('  answer: process.questions: "sometimes" is not allowed; allowed values: one-at-a-time, all-together\n', out)
@@ -389,9 +502,9 @@ class TerminalTests(InitCase):
 
     def test_a_missing_model_must_be_replaced_at_the_prompt(self) -> None:
         self.stub.answer(LIVE, provider_stub.fixture(MISSING))
-        asked = self.answers("", "", "", "frontier=gpt-9", "frontier=gpt-6-sol", *[""] * 8, "y")
+        asked = self.answers("", "", "", "frontier=gpt-9", "frontier=gpt-6-sol", *[""] * 9, "y")
         out = self.ok()
-        self.assertEqual(asked.call_count, 14)
+        self.assertEqual(asked.call_count, 15)
         self.assertIn('providers.codex.tiers.frontier: the model "gpt-6-astra" is not in codex\'s own list', out)
         self.assertIn('providers.codex.tiers.frontier: the model "gpt-9" is not in codex\'s own list', out)
         self.assertEqual(self.data()["providers"]["codex"]["tiers"]["frontier"], "gpt-6-sol")
@@ -404,10 +517,10 @@ class TerminalTests(InitCase):
         )
 
     def test_a_dry_run_asks_the_questions_and_not_the_confirmation(self) -> None:
-        asked = self.answers(*[""] * 11)
+        asked = self.answers(*[""] * 12)
         before = self.tree()
         out = self.ok("--dry-run")
-        self.assertEqual(asked.call_count, 11)
+        self.assertEqual(asked.call_count, 12)
         self.assertIn("dry run: nothing was written", out)
         self.assertEqual(self.tree(), before)
 
@@ -465,7 +578,7 @@ class ModelListTests(InitCase):
 
     def test_a_new_model_is_offered_at_the_prompt_and_a_hidden_one_is_not(self) -> None:
         self.stub.answer(LIVE, provider_stub.fixture(NEW))
-        self.answers("", "", "deep=gpt-7-nova", *[""] * 8, "y")
+        self.answers("", "", "deep=gpt-7-nova", *[""] * 9, "y")
         out = self.ok()
         self.assertIn(
             "  models: gpt-7-nova (new: not in the dictionary), gpt-6.1-sol, gpt-6-astra, gpt-6-sol, "

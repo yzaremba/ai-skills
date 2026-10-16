@@ -67,8 +67,8 @@ roles.
 
 #### Linux, macOS, or WSL alone
 
-On WSL with the clone inside WSL's own file system, add `--allow-unshared-clone` to
-`render` and `doctor`: see "WSL used alone" below the commands.
+On WSL with the clone inside WSL's own file system, allow that clone once, before
+`render`: see "WSL used alone" below the commands.
 
 ```bash
 git clone https://github.com/yzaremba/ai-skills.git ~/workspace/ai-skills
@@ -94,17 +94,25 @@ python3 tools/setup/workflow_setup.py doctor
   of their own into their homes.
 - **WSL used alone.** Setup sees WSL as one side of a Windows machine and, by default,
   refuses a clone that the Windows side cannot read, which is any clone inside WSL's own
-  file system. Where nothing on the Windows side uses these skills, give
-  `--allow-unshared-clone` to `render` and to `doctor`, on every run (`doctor` then
-  reports the clone as a warning, not an error):
+  file system. Where nothing on the Windows side uses these skills, allow it once: `init`
+  asks, on such a clone, and `--allow-unshared-clone` answers. It writes
+  `setup.allow_unshared_clone = true` in `~/.agents/workflow.toml` (the line can also be
+  written by hand, under `[setup]`), and `render` and `doctor` then accept the clone on
+  every run; `render` says which setting allowed it, and `doctor` reports the clone as
+  information, not as an error:
 
   ```bash
-  python3 tools/setup/workflow_setup.py render --allow-unshared-clone --dry-run
-  python3 tools/setup/workflow_setup.py render --allow-unshared-clone
-  python3 tools/setup/workflow_setup.py doctor --allow-unshared-clone
+  python3 tools/setup/workflow_setup.py init --allow-unshared-clone --dry-run
+  python3 tools/setup/workflow_setup.py init --allow-unshared-clone
+  python3 tools/setup/workflow_setup.py render --dry-run
+  python3 tools/setup/workflow_setup.py render
+  python3 tools/setup/workflow_setup.py doctor
   ```
 
-  A clone on a Windows drive (`/mnt/c/...`) needs no option: that is
+  `init` asks its other questions as well; away from a terminal add `--yes`, which accepts
+  what it proposes for them. For a single run instead, give `--allow-unshared-clone` to
+  `render` or `doctor` (`doctor` then reports a warning). A clone on a Windows drive
+  (`/mnt/c/...`) needs neither: that is
   [Windows and WSL together](#windows-and-wsl-together).
 - **macOS is not tested.** The setup tool has no code of its own for macOS: it takes it
   as any POSIX system, with symbolic links and the homes `~/.claude`, `~/.codex` and
@@ -216,27 +224,40 @@ python3 tools/setup/workflow_setup.py doctor
   that side can read, such as a clone inside WSL's file system. Without it, as
   `render --help` puts it, "every home links to one shared clone". With two clones each
   side links to its own: a pull in one does not reach the other, keeping both at the same
-  commit is yours to do, and the side whose clone the other cannot read gives the option
-  to `render` and to `doctor` on every run.
+  commit is yours to do, and the side whose clone the other cannot read allows it once,
+  with `init --allow-unshared-clone` on that side (or the option on each run), as in
+  "WSL used alone" above.
 
 #### The process alone, without roles
 
 `prd-implementation` needs no role, nor do `epic-implementation` and `project-memory`. To
-install the skills and the rule and no role (with `py -3` on Windows, and with
-`--allow-unshared-clone` where your case above gives it):
+install the skills and the rule and no role, say so once, then render (with `py -3` on
+Windows, and with the clone allowed where your case above needs it):
 
 ```bash
-python3 tools/setup/workflow_setup.py render --no-roles --dry-run
-python3 tools/setup/workflow_setup.py render --no-roles
+python3 tools/setup/workflow_setup.py init --no-roles --dry-run
+python3 tools/setup/workflow_setup.py init --no-roles
+python3 tools/setup/workflow_setup.py render --dry-run
+python3 tools/setup/workflow_setup.py render
 python3 tools/setup/workflow_setup.py doctor
 ```
 
 - **What you get.** Every skill linked for each provider it names (`usage-cost` is for
-  Claude Code only), and the rule on Claude Code, as above. In the words of
-  `render --help`: "--no-roles installs the process alone: no role definition and no entry
-  point is generated, in a home or a project." Give `--no-roles` on every later `render`
-  too: a run without it generates the roles. A run with it removes the roles an earlier
-  run generated, and keeps one that was edited by hand.
+  Claude Code only), and the rule on Claude Code, as above. `init --no-roles` writes
+  `roles.enabled = false` in `~/.agents/workflow.toml` (or write that line yourself, under
+  `[roles]`), and every later `render` installs the process alone: no role definition and
+  no entry point, in a home or a project. Its output says the roles are off and which file
+  turned them off. A run removes the roles an earlier run generated, and keeps one that
+  was edited by hand. `init` asks its other questions as well; away from a terminal add
+  `--yes`.
+- **A project rendered with roles before.** A `render` without `--project` writes nothing
+  in a project, and setup keeps no list of the projects it rendered. Such a project keeps
+  its starting role (`"agent"` in `.claude/settings.json` and setup's block in
+  `.codex/config.toml`), which names a definition the home no longer has: run
+  `render --project DIR` for each one to take it out. `render` and `doctor` say so while
+  the roles are off.
+- **For a single run.** `render --no-roles` does the same for that run alone, whatever
+  the setting says; the next `render` without it follows the setting again.
 - **How you use it.** In any session in the project, the skill loads when a request
   matches its description ("start a sprint", "write the PRD", "implement P1.2") or a sprint
   doc is read or edited, or when it is named: `/prd-implementation` on Claude Code,
@@ -279,9 +300,12 @@ python3 tools/setup/workflow_setup.py doctor
 
 #### Adding roles later
 
-Run `render` without `--no-roles` (with `--allow-unshared-clone` where your case gives it).
-It generates the role definitions and the entry points beside the skills already linked.
-`init`, before it, sets which model each tier means. Then a session starts as the Manager:
+Turn the roles on with `init --roles`, which takes `roles.enabled = false` out of
+`~/.agents/workflow.toml` (or set it to `true` there yourself), then run `render`. It
+generates the role definitions and the entry points beside the skills already linked.
+The same `init` run sets which model each tier means. There is no `render` option that
+turns the roles on against the setting: what one run generated, the next would remove.
+Then a session starts as the Manager:
 
 | | Claude Code | Codex |
 |-|-------------|-------|
@@ -290,7 +314,10 @@ It generates the role definitions and the entry points beside the skills already
 | Every session in a project starts as the Manager | `init --project DIR --manager-default`, then `render --project DIR` | The same; Codex reads the project's `.codex/config.toml` only in a trusted project |
 
 The Manager routes each request to the role that owns it: [Using it](#using-it) lists the
-nine roles and what each does. `render --no-roles` goes back to the process alone. On
+nine roles and what each does. `init --no-roles` goes back to the process alone, and
+`render --no-roles` for one run; then run `render --project DIR` for each project
+rendered with roles, to take out its starting role. A project can turn its own roles off with
+`init --project DIR --no-roles`; it gets roles only where the home has them. On
 Codex, see `render --apply-codex-settings` in the Linux steps: with roles, a parallel group
 needs more agents than Codex allows with no limit set.
 
@@ -402,9 +429,11 @@ puts back what was there. A project has its own backups, install record and lock
 
 **The clone.** Every home links into the clone, so the clone stays where it is. On a
 machine with a Windows side and a WSL side, `render` refuses a clone that both sides
-cannot read, unless `--allow-unshared-clone` is given, and `doctor` reports such a clone
-as an error, or as a warning with that option. On a Linux with no Windows side the
-question is not asked. Native Windows takes a clone on a local drive, where a junction can
+cannot read, unless the setting `setup.allow_unshared_clone = true` in
+`~/.agents/workflow.toml` allows it on every run (`init --allow-unshared-clone` writes
+it), or `--allow-unshared-clone` for one run. `doctor` reports such a clone as an error,
+as information where the setting allows it, and as a warning with the option. On a Linux
+with no Windows side the question is not asked. Native Windows takes a clone on a local drive, where a junction can
 lead. [Windows and WSL together](#windows-and-wsl-together) has the shared clone, and
 [Linux, macOS, or WSL alone](#linux-macos-or-wsl-alone) the option for WSL used alone.
 
@@ -435,14 +464,19 @@ python tools/setup/workflow_setup.py doctor
   too. `--yes` does not rewrite a settings file written or edited by hand; that takes
   `--rewrite-settings` as well. For Codex it checks the mapping against
   `codex debug models`, also with `--dry-run`: a program of the provider's, which may
-  write state of its own into the provider's home.
+  write state of its own into the provider's home. Two of its questions are choices
+  `render` would otherwise need an option for on every run: whether the roles are
+  installed (`--roles`, `--no-roles`), and, asked only where this side's clone is one the
+  other side cannot read, whether to accept it (`--allow-unshared-clone`; proposed: no).
 - `render` links each skill into the skills directory of each provider it names
   (`~/.claude/skills`, and `~/.agents/skills` for Codex), links the rule into
   `~/.claude/rules`, and generates the role definitions and the entry points of a
   session. One conflict (a file, a directory or a foreign link where a link would go)
   stops the run before anything is written. Exit code 3 means the rest was done and
   something was skipped or kept that an option would change; the output names each.
-  `render --no-roles` installs the skills and the rule without any role.
+  With `roles.enabled = false` (`init --no-roles`) every `render` installs the skills and
+  the rule without any role; `render --no-roles` does so for one run. A project rendered
+  with roles before keeps its starting role until `render --project DIR` takes it out.
 - `doctor` checks the sources, what setup wrote and the providers, and writes nothing.
   Exit code 1 means an error. It starts provider programs (`--version`, the model list,
   offline discovery commands) and the collaboration skill's own doctor; a provider's
@@ -466,9 +500,10 @@ copy it cannot read until it is moved away.
 - **Generated files change at the next `render`**: the role definitions, the loaded-role
   skills, the Codex profile file, and what a project got. They are made from the role
   sources and the settings. Until then the `drift` check of `doctor` reports each one as
-  a warning. Run `render` after a pull, with the options of your install
-  (`--no-roles`, `--allow-unshared-clone`), and on each side where Windows and WSL share
-  the clone; with nothing to change it plans nothing and says so.
+  a warning. Run `render` after a pull, on each side where Windows and WSL share the
+  clone; with nothing to change it plans nothing and says so. The process alone and a
+  clone only one side reads are settings (`roles.enabled`, `setup.allow_unshared_clone`)
+  that every run reads, so no option needs repeating.
 - **The models stay as confirmed.** The tier and effort mapping in
   `~/.agents/workflow.toml` does not follow a new dictionary; it changes when `init` is
   run again. Without that file the mapping is the shipped dictionaries', and a new
@@ -530,9 +565,9 @@ v1 rule went.
 **The process.** Both providers load a skill when a request matches its description:
 "start a sprint", "write the PRD", "plan an epic". A skill can also be named:
 `/prd-implementation` on Claude Code, `$prd-implementation` on Codex. `self-reflection`
-runs only when named. The process names no role and needs none: `render --no-roles`
-installs it alone, as [The process alone, without roles](#the-process-alone-without-roles)
-says.
+runs only when named. The process names no role and needs none: with
+`roles.enabled = false` `render` installs it alone, as
+[The process alone, without roles](#the-process-alone-without-roles) says.
 
 **Roles.** A role is an agent with its own instructions, a pinned model tier and effort,
 and limits. Nine are shipped. A specialist (operations, data research, a release) is a
@@ -693,6 +728,19 @@ python tools/setup/workflow_setup.py show roles --project DIR
 
 `show` prints each effective setting and the layer it came from; `show roles` adds the
 model and effort each role definition runs with on each provider.
+
+Two settings are read by setup itself, and each stands for an option `render` would
+otherwise need on every run; the option still works for a single run:
+
+| Setting | Default | Read from | What it does |
+|---------|---------|-----------|--------------|
+| `roles.enabled` | `true` | The user's file for the homes; a project's files, over the user's, for that project | `false` installs the process alone, as `render --no-roles` does for one run. A project gets roles only where the home has them; one rendered with roles before keeps its starting role until `render --project DIR`. `init --roles` / `--no-roles` sets it. |
+| `setup.allow_unshared_clone` | `false` | The user's file alone: a project's file that holds `[setup]` is an error | `true` lets `render` and `doctor` accept a clone that only this side of a Windows and WSL machine reads, as `--allow-unshared-clone` does for one run: only where the other side does not install from this clone (WSL used alone, or a clone for each side). `init --allow-unshared-clone` sets it. |
+
+Both are newer than the first version 2 tools: an older clone's setup tool, and the
+`check.py` of an older `prd-implementation`, refuse a user file that holds `roles.enabled`
+or `[setup]` as an unknown key, so update every clone that reads `~/.agents/workflow.toml`
+before writing either.
 
 On Claude Code the definitions of the Product Manager, the Architect, the
 Implementation Manager and the Idea and Plan Reviewers also name the one-hour prompt

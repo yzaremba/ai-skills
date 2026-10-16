@@ -12,6 +12,10 @@ A layer whose file does not exist is simply absent. A file that is there
 and cannot be read is an error, and so is a link in its place whose target
 is missing, and a ``.agents`` that is not a directory.
 
+A group of ``schema.USER_ONLY`` (``[setup]``) is read from the user's file
+alone: in a project's file it is a fault, reported whenever that group is
+asked for with the project's layers.
+
 ``resolve`` is asked for groups and touches nothing else: of each file it
 checks the version and the top-level key names, then validates and merges
 only the groups asked for. A fault inside ``[providers.x]`` therefore cannot
@@ -29,6 +33,10 @@ from .errors import SetupError
 from .locations import Locations
 
 LAYERS = ("shipped", "user", "project", "local")
+# The layers of a project's files. A group of ``schema.USER_ONLY`` found in
+# one of them is a fault: it would silently do nothing there.
+PROJECT_LAYERS = ("project", "local")
+USER_FILE = ".agents/workflow.toml"
 
 
 @dataclass(frozen=True)
@@ -122,6 +130,12 @@ def resolve(
             if group not in document.data:
                 continue
             content = document.data[group]
+            if group in schema.USER_ONLY and document.layer in PROJECT_LAYERS:
+                problems.append(
+                    f"{document.file}: {group}: read from the user's settings file alone "
+                    f"(~/{USER_FILE}): it holds facts of this machine, not of a project. Move it there"
+                )
+                continue
             before = len(problems)
             schema.validate(group, content, document.file, problems)
             if len(problems) > before:

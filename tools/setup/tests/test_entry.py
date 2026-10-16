@@ -711,6 +711,168 @@ class NoRolesCase(EntryCase):
         self.assertIn("6 kept", report["summary"])
 
 
+ROLES_OFF = "[roles]\nenabled = false\n"
+ROLES_ON = "[roles]\nenabled = true\n"
+
+
+class RolesSettingCase(EntryCase):
+    """``roles.enabled``: off by the setting is off by ``--no-roles``, run
+    after run, and the output says which it was."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write(self.project_file, DEFAULT_ON + OVERRIDE)
+
+    def test_off_by_the_setting_plans_exactly_what_the_option_plans(self) -> None:
+        self.with_project()
+        before = tree(self.root)
+        code, by_option, err = self.report(*self.project_arg, "--no-roles", "--dry-run")
+        self.assertEqual((code, err), (0, ""))
+        self.write(self.user_file, ROLES_OFF)
+        code, by_setting, err = self.report(*self.project_arg, "--dry-run")
+        self.assertEqual((code, err), (0, ""))
+        for key in ("plan", "stale", "counts", "summary", "definitions", "entry_points", "notes", "errors"):
+            with self.subTest(key=key):
+                self.assertEqual(by_setting[key], by_option[key])
+        self.assertTrue(by_option["plan"])
+        self.assertEqual(by_option["roles"], {"enabled": False, "off_by": "option", "setting": None})
+        self.assertEqual(by_setting["roles"], {
+            "enabled": False, "off_by": "setting",
+            "setting": {"value": False, "layer": "user", "file": str(self.user_file)},
+        })
+        self.assertEqual(by_option["project"]["roles"]["off_by"], "option")
+        self.assertEqual(by_setting["project"]["roles"]["off_by"], "home")
+        self.user_file.unlink()
+        self.assertEqual(tree(self.root), before)
+
+    def test_the_output_says_why_the_roles_are_off(self) -> None:
+        on = self.render(*self.project_arg, "--dry-run")[1].splitlines()
+        self.assertFalse([line for line in on if line.startswith("roles:") or line.startswith("  roles:")])
+        out = self.render(*self.project_arg, "--no-roles", "--dry-run")[1].splitlines()
+        self.assertEqual(out[2], "roles: off for this run (--no-roles): the process alone; no role definition or "
+                                 "entry point is generated")
+        self.write(self.user_file, ROLES_OFF)
+        out = self.render(*self.project_arg, "--dry-run")[1].splitlines()
+        self.assertEqual(out[2], f"roles: off by the setting roles.enabled = false in {self.user_file} (user layer): "
+                                 "the process alone; no role definition or entry point is generated. Set it to true "
+                                 "(`init --roles`) to generate them")
+        self.assertIn("  roles: off for the home, so nothing of the roles is generated for the project either", out)
+
+    def test_off_by_the_setting_removes_what_was_generated_and_on_again_brings_it_back(self) -> None:
+        self.with_project()
+        self.write(self.user_file, ROLES_OFF)
+        code, report, err = self.report(*self.project_arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.home_files(), {})
+        self.assertEqual(report["counts"]["file_remove"], 22)
+        self.assertEqual(report["counts"]["default_remove"], 3)
+        self.assertEqual({item["status"] for item in report["stale"]}, {render.REMOVE})
+        self.assertLinked(self.claude_skills / "alpha", self.clone / "alpha")
+        # Run after run, with no option: nothing comes back.
+        before = tree(self.root)
+        code, report, _ = self.report(*self.project_arg)
+        self.assertEqual((code, report["plan"], report["stale"]), (0, [], []))
+        self.assertEqual(tree(self.root), before)
+        self.write(self.user_file, ROLES_ON)
+        self.with_project()
+        self.assertEqual(set(self.home_files()), HOME_FILES)
+        self.assertEqual(json.loads(self.text(SETTINGS, self.project)), BOTH_KEYS)
+
+    def test_a_home_only_run_says_what_earlier_projects_keep(self) -> None:
+        self.with_project()
+        project_before = tree(self.project)
+        self.write(self.user_file, ROLES_OFF)
+        for argv in ((), ("--no-roles",)):
+            with self.subTest(argv=argv):
+                out = self.ok(*argv).splitlines()
+                self.assertEqual(tree(self.project), project_before)  # a run without --project writes none
+                self.assertEqual(json.loads(self.text(SETTINGS, self.project)), BOTH_KEYS)
+                index = [n for n, line in enumerate(out) if line.startswith("roles: off")][0]
+                self.assertEqual(out[index + 1], f"  {render.PROJECTS_LEFT}")
+                self.assertIn("Run `render --project DIR` for each such project to take them out", out[index + 1])
+                self.assertIn('"agent" in .claude/settings.json', out[index + 1])
+        # Named, the project drops them.
+        self.with_project()
+        self.assertNotIn(SETTINGS, self.project_files())
+        self.assertEqual(self.project_files(), {})
+
+    def test_off_by_the_setting_keeps_a_file_edited_by_hand(self) -> None:
+        self.ok()
+        mine = self.claude_agents / "lead.md"
+        mine.write_bytes(mine.read_bytes() + b"\nMy own line.\n")
+        edited = mine.read_bytes()
+        self.write(self.user_file, ROLES_OFF)
+        code, report, err = self.report()
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(mine.read_bytes(), edited)
+        kept = [item["key"] for item in report["stale"] if item["status"] == render.KEPT]
+        self.assertEqual(kept, ["home:.claude/agents/lead.md"])
+        self.assertIn("1 kept", report["summary"])
+
+    def test_the_option_wins_over_the_setting_and_nothing_turns_the_roles_on_against_it(self) -> None:
+        self.write(self.user_file, ROLES_ON)
+        self.ok("--no-roles")
+        self.assertEqual(self.home_files(), {})
+        # A run with the option reads no roles setting: a fault there does not stop it.
+        self.write(self.user_file, '[roles]\nenabled = "no"\n')
+        self.ok("--no-roles")
+        self.write(self.user_file, ROLES_OFF)
+        code, _, err = self.render("--roles")
+        self.assertEqual(code, 2)
+        self.assertIn("unrecognized arguments: --roles", err)
+        self.assertEqual(self.home_files(), {})
+
+    def test_a_fault_in_the_setting_stops_the_run(self) -> None:
+        self.write(self.user_file, '[roles]\nenabled = "no"\n')
+        err = self.refused()
+        self.assertIn(f"{self.user_file}: roles.enabled: expected a boolean, got a string", err)
+
+    def test_a_project_may_turn_its_roles_off_and_on(self) -> None:
+        self.with_project()
+        home_before = self.home_files()
+        self.write(self.project_file, "[roles]\nmanager_default = true\nenabled = false\n" + OVERRIDE)
+        code, report, err = self.report(*self.project_arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.home_files(), home_before)  # the home keeps its roles
+        self.assertEqual(self.project_files(), {})
+        self.assertEqual(report["counts"]["default_remove"], 3)
+        self.assertEqual(report["roles"]["enabled"], True)
+        self.assertEqual(report["project"]["roles"], {
+            "enabled": False, "off_by": "setting",
+            "setting": {"value": False, "layer": "project", "file": str(self.project_file)},
+        })
+        self.assertIsNone(report["project"]["manager_default"])
+        out = self.with_project().splitlines()
+        self.assertIn(f"  roles: off for the project by the setting roles.enabled = false in {self.project_file} "
+                      "(project layer): nothing of the roles is generated for it", out)
+        self.assertNotIn("  nothing is generated for it: its settings change no role definition", out)
+        # The local file wins over the project's.
+        self.write(self.local_file, ROLES_ON)
+        self.with_project()
+        self.assertEqual(json.loads(self.text(SETTINGS, self.project)), BOTH_KEYS)
+        self.assertEqual(self.home_files(), home_before)
+
+    def test_a_project_gets_no_roles_where_the_home_has_none(self) -> None:
+        self.write(self.user_file, ROLES_OFF)
+        self.write(self.project_file, "[roles]\nmanager_default = true\nenabled = true\n" + OVERRIDE)
+        project_before = tree(self.project)
+        code, report, err = self.report(*self.project_arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.home_files(), {})
+        self.assertEqual(self.project_files(), {})
+        self.assertNotIn(SETTINGS, tree(self.project))
+        self.assertEqual(report["project"]["roles"]["off_by"], "home")
+        self.assertEqual(report["project"]["roles"]["setting"]["layer"], "project")
+        out = self.render(*self.project_arg, "--dry-run")[1].splitlines()
+        self.assertIn(
+            "  roles: off for the home, so nothing of the roles is generated for the project either "
+            f"(roles.enabled = true in {self.project_file} asks for them, and what a project gets is built on the "
+            "home's role definitions)",
+            out,
+        )
+        self.assertTrue(set(tree(self.project)) >= set(project_before))
+
+
 class LinkedSkillDirectoryCase(EntryCase):
     """The owner replaced setup's skill directory of a loaded role by a link
     to a directory of theirs, with an empty ``agents`` in it: nothing of
@@ -878,6 +1040,9 @@ class ProjectDefinitionsCase(EntryCase):
         self.assertEqual(report["project"], {
             "path": str(self.project), "manager_default": False, "starting_role": None, "items": [],
             "loaded_roles": [], "session_effort": None,
+            "roles": {"enabled": True, "off_by": None, "setting": {
+                "value": True, "layer": "shipped", "file": str(self.clone / "tools" / "setup" / "defaults.toml"),
+            }},
         })
         out = self.with_project()
         self.assertIn(f"project: {self.project}", out.splitlines())

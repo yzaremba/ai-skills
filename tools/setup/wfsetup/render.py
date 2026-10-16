@@ -125,6 +125,15 @@ Stale files
     so the definitions of an earlier run are stale under it and go the same
     way: the homes then hold the process alone.
 
+Whether the roles are generated (``roles``)
+    ``--no-roles`` turns them off for the run, in the home and the project.
+    Without it the setting ``roles.enabled`` decides: for the home from the
+    user-level settings, for the project from the project's (its files over
+    the user's). A project gets roles only where the home has them: its
+    definitions replace some of the home's, and its starting role is a
+    definition of the home's. Off by the setting is exactly off by the
+    option, and the report says which it was.
+
 What ``Run.link`` decides for one link, in this order
     skipped      the name is a skill with a setup of its own (R1.2), whatever
                  is at the path;
@@ -181,7 +190,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from . import blocks, carried, definitions, entry, fileops, fsio, homes, jsonkeys, paths
+from . import blocks, carried, definitions, entry, fileops, fsio, homes, jsonkeys, paths, settings
 from . import codexsettings
 from . import migrate
 from .errors import EXIT_ERROR, SetupError
@@ -224,7 +233,13 @@ GENERATED_PREFIX = "render:"
 FOLLOW_OPTION = "--follow-config-symlinks"
 OVERWRITE_OPTION = "--overwrite-edited"
 NO_ROLES_OPTION = "--no-roles"
+ROLES_KEY = "roles.enabled"
 MIGRATE_OPTION = "--migrate-v1"
+# Why the roles are off, in ``Roles``: the option of this run, the setting,
+# or (for a project) the home's roles being off.
+OFF_BY_OPTION = "option"
+OFF_BY_SETTING = "setting"
+OFF_BY_HOME = "home"
 # The migration part is ``migrate``, in ``PARTS``. False only in a setup
 # without it: the hint below then says that the option is not there.
 MIGRATION_AVAILABLE = True
@@ -323,6 +338,7 @@ class Run:
         self._clones: dict[str, str | None] = {}
         self._emptied: list[Path] = []
         self._ignore_always = False
+        self._roles: Roles | None = None           # whether the roles are generated; see ``roles``
         self.notes: list[str] = []                 # what a part says beside its items; printed as notes
 
     # --- For the parts ---------------------------------------------------------
@@ -1084,8 +1100,131 @@ def configure_roles(parser: Any) -> None:
     parser.add_argument(
         NO_ROLES_OPTION,
         action="store_true",
-        help="install the process alone: generate no role definition. A definition an earlier run "
-        "generated is then removed, unless it was edited by hand since",
+        help="install the process alone for this run: generate no role definition and no entry point. A "
+        "definition an earlier run generated is then removed, unless it was edited by hand since. The setting "
+        f"{ROLES_KEY} = false (`init {NO_ROLES_OPTION}`, or the settings file) does the same on every run",
+    )
+
+
+@dataclass(frozen=True)
+class Roles:
+    """Whether the roles are generated for the home and for the project
+    (None without one), and why not: ``OFF_BY_OPTION``, ``OFF_BY_SETTING``,
+    ``OFF_BY_HOME`` (a project only), or None where they are. ``home_setting``
+    and ``project_setting`` are the effective ``roles.enabled`` of each,
+    where a layer gives it."""
+
+    home: bool
+    home_off_by: str | None
+    home_setting: settings.Entry | None
+    project: bool | None = None
+    project_off_by: str | None = None
+    project_setting: settings.Entry | None = None
+
+
+def roles(run: Run) -> Roles:
+    """Whether the roles are generated in this run; see the module. Read
+    once, and a ``SetupError`` where the roles group of a settings file has
+    a fault."""
+    if run._roles is None:
+        run._roles = _roles(run)
+    return run._roles
+
+
+def _enabled(entry: settings.Entry | None) -> bool:
+    return entry is None or entry.value is not False
+
+
+def _roles(run: Run) -> Roles:
+    project = run.homes.project
+    if run.option("no_roles", False):
+        # The option wins, and no settings file is read for it: a run with
+        # it reads the roles group no more than it did before the setting.
+        if project is None:
+            return Roles(False, OFF_BY_OPTION, None)
+        return Roles(False, OFF_BY_OPTION, None, False, OFF_BY_OPTION, None)
+    home_setting = settings.resolve(_locations(run, None), ("roles",)).get(ROLES_KEY)
+    project_setting = None
+    if project is not None:
+        project_setting = settings.resolve(_locations(run, project), ("roles",)).get(ROLES_KEY)
+    home = _enabled(home_setting)
+    home_off_by = None if home else OFF_BY_SETTING
+    if project is None:
+        return Roles(home, home_off_by, home_setting)
+    if not home:
+        # The project's own setting may say true: it gets nothing all the
+        # same, since what it gets is built on the home's definitions.
+        return Roles(home, home_off_by, home_setting, False, OFF_BY_HOME, project_setting)
+    if not _enabled(project_setting):
+        return Roles(home, home_off_by, home_setting, False, OFF_BY_SETTING, project_setting)
+    return Roles(home, home_off_by, home_setting, True, None, project_setting)
+
+
+def _setting_json(entry: settings.Entry | None) -> dict[str, Any] | None:
+    return None if entry is None else {"value": entry.value, "layer": entry.layer, "file": str(entry.file)}
+
+
+def roles_report(choice: Roles | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """The home's and the project's part of the report."""
+    if choice is None:
+        return None, None
+    home = {"enabled": choice.home, "off_by": choice.home_off_by, "setting": _setting_json(choice.home_setting)}
+    if choice.project is None:
+        return home, None
+    return home, {
+        "enabled": choice.project, "off_by": choice.project_off_by, "setting": _setting_json(choice.project_setting),
+    }
+
+
+# Said wherever the home's roles are off: a project is written only by a run
+# that names it, and the home's record lists no project (``manifest``).
+PROJECTS_LEFT = (
+    "a project rendered with roles keeps what render wrote there: the starting role that "
+    f"{entry.MANAGER_DEFAULT_KEY} set (\"{entry.AGENT_KEY}\" in {entry.CLAUDE_SETTINGS} and setup's block in "
+    f"{entry.CODEX_CONFIG}), which names a definition this home no longer has, and its own definitions. Run "
+    "`render --project DIR` for each such project to take them out; setup keeps no list of the projects it "
+    "rendered, since each project's record is in the project"
+)
+
+
+def home_roles_setting(where: Locations) -> settings.Entry | None:
+    """The effective ``roles.enabled`` of a home: the user-level settings
+    alone. None where no layer gives it (on)."""
+    return settings.resolve(definitions.user_level(where), ("roles",)).get(ROLES_KEY)
+
+
+def roles_line(found: dict[str, Any] | None) -> str | None:
+    """The line that says the home's roles are off, and why; None where
+    they are on."""
+    if found is None or found["enabled"]:
+        return None
+    alone = "the process alone; no role definition or entry point is generated"
+    if found["off_by"] == OFF_BY_OPTION:
+        return f"roles: off for this run ({NO_ROLES_OPTION}): {alone}"
+    setting = found.get("setting") or {}
+    return (
+        f"roles: off by the setting {ROLES_KEY} = false in {setting.get('file')} ({setting.get('layer')} layer): "
+        f"{alone}. Set it to true (`init --roles`) to generate them"
+    )
+
+
+def project_roles_line(found: dict[str, Any] | None) -> str | None:
+    """The line that says a project's roles are off, and why; None where
+    they are on, or off by the option (the home's line says so)."""
+    if found is None or found["enabled"] or found["off_by"] == OFF_BY_OPTION:
+        return None
+    setting = found.get("setting") or {}
+    if found["off_by"] == OFF_BY_HOME:
+        line = "roles: off for the home, so nothing of the roles is generated for the project either"
+        if setting.get("value") is True and setting.get("layer") in settings.PROJECT_LAYERS:
+            line += (
+                f" ({ROLES_KEY} = true in {setting.get('file')} asks for them, and what a project gets is built on "
+                "the home's role definitions)"
+            )
+        return line
+    return (
+        f"roles: off for the project by the setting {ROLES_KEY} = false in {setting.get('file')} "
+        f"({setting.get('layer')} layer): nothing of the roles is generated for it"
     )
 
 
@@ -1100,9 +1239,14 @@ def _locations(run: Run, project: Path | None) -> Locations:
 def fill_roles(run: Run) -> None:
     """The role definitions of each installed provider, into its agents
     place (R6.2). They are made from the user-level settings: a project's
-    settings never reach a home's files. ``--no-roles`` asks for none, and
-    the stale sweep then removes those of an earlier run."""
-    if run.option("no_roles", False):
+    settings never reach a home's files. ``--no-roles``, or ``roles.enabled``
+    false, asks for none, and the stale sweep then removes those of an
+    earlier run."""
+    try:
+        if not roles(run).home:
+            return
+    except SetupError as exc:
+        run.fail(*exc.lines)
         return
     providers = [
         provider for provider in run.homes.installed()
@@ -1146,7 +1290,8 @@ def fill_entry(run: Run) -> None:
     """How a session becomes a role (R4.4, R4.5), for each installed
     provider, and what the project gets; see ``entry`` and the module.
     ``--no-roles`` asks for none of it, and what an earlier run made is then
-    stale: the files go with the sweep, the key and the block here."""
+    stale: the files go with the sweep, the key and the block here. So does
+    ``roles.enabled`` false, for the home or for the project alone."""
     project = run.homes.project
     home = _locations(run, None)
     where = _locations(run, project)
@@ -1155,9 +1300,16 @@ def fill_entry(run: Run) -> None:
     wanted_key = wanted_effort = wanted_block = False
     if run.errors:
         return  # the roles part said why; the same sources would say it here again
-    if not run.option("no_roles", False):
+    try:
+        choice = roles(run)
+    except SetupError as exc:
+        run.fail(*exc.lines)
+        return
+    if choice.home:
         try:
-            wanted_key, wanted_effort, wanted_block = _fill_entry(run, home, where, providers, names)
+            wanted_key, wanted_effort, wanted_block = _fill_entry(
+                run, home, where, providers, names, project_roles=bool(choice.project),
+            )
         except SetupError as exc:
             run.fail(*exc.lines)
             return
@@ -1173,10 +1325,11 @@ def fill_entry(run: Run) -> None:
 
 
 def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[homes.Provider],
-                names: list[str]) -> tuple[bool, bool, bool]:
+                names: list[str], project_roles: bool = True) -> tuple[bool, bool, bool]:
     """Returns whether the project's ``agent`` key, its ``effortLevel`` key
-    and its Codex block are wanted."""
-    project = run.homes.project
+    and its Codex block are wanted. With ``project_roles`` false the home's
+    entry points are made and nothing of the project."""
+    project = run.homes.project if project_roles else None
     made = [*entry.skills(home, names, run.homes), *entry.profiles(home, names, run.homes)]
     loaded = sorted({one.role for one in made if one.kind == entry.LOADED})
 
@@ -1400,11 +1553,23 @@ PARTS: tuple[Part, ...] = (
 
 # --- The run --------------------------------------------------------------------
 
+def unshared_clone(standing: homes.CloneStanding, allowance: homes.CloneAllowance) -> dict[str, Any] | None:
+    """What the report says of a clone only this side reads that was
+    allowed (``homes.clone_allowance``); None for any other clone."""
+    if standing.shared is not False or not allowance.allowed:
+        return None
+    return {
+        "why": standing.why, "allowed_by": allowance.by, "said": allowance.describe(),
+        "setting": _setting_json(allowance.setting),
+    }
+
+
 def execute(found: homes.Homes, sources: Sources, options: Any = None, *, dry_run: bool = False,
             follow: bool = False, overwrite_edited: bool = False, parts: tuple[Part, ...] | None = None,
-            stamp: str | None = None) -> Outcome:
+            stamp: str | None = None, unshared_clone: dict[str, Any] | None = None) -> Outcome:
     """Fill one plan from the parts, then show it (``dry_run``) or apply it.
-    The sources are valid and the clone was checked before this is called."""
+    The sources are valid and the clone was checked before this is called;
+    ``unshared_clone`` is what that check allowed (see ``unshared_clone``)."""
     recovered: fileops.Result | None = None
     if not dry_run:
         # What an interrupted run left is settled before anything looks at
@@ -1433,7 +1598,9 @@ def execute(found: homes.Homes, sources: Sources, options: Any = None, *, dry_ru
     needs_flag = sum(1 for item in everything if item.status in (NEEDS_FLAG, EDITED)) + migrate.left(run)
     needs_flag += len(result.edited) if result is not None else 0
     code = EXIT_ERROR if errors else EXIT_NEEDS_FLAG if needs_flag else 0
-    return Outcome(_report(run, result, errors, dry_run, code), code, errors)
+    report = _report(run, result, errors, dry_run, code)
+    report["unshared_clone"] = unshared_clone
+    return Outcome(report, code, errors)
 
 
 def _count(items: list[Item], *statuses: str, kind: str | None = None) -> int:
@@ -1499,10 +1666,12 @@ def _report(run: Run, result: fileops.Result | None, errors: list[str], dry_run:
         }
         for item in run.items if item.kind == FILE and "definition" in item.detail
     ]
+    home_roles, project_roles = roles_report(run._roles)
     project = None
     if found.project is not None:
         project = {
             "path": str(found.project),
+            "roles": project_roles,
             "manager_default": run.project_facts.get("manager_default"),
             "starting_role": run.project_facts.get("starting_role"),
             "session_effort": run.project_facts.get("session_effort"),
@@ -1521,6 +1690,8 @@ def _report(run: Run, result: fileops.Result | None, errors: list[str], dry_run:
         "side": found.host.side,
         "home": str(found.home),
         "clone": str(found.clone),
+        "unshared_clone": None,
+        "roles": home_roles,
         "providers": providers,
         "definitions": generated,
         "entry_points": list(run.points),
@@ -1611,6 +1782,13 @@ def report_lines(report: dict[str, Any]) -> list[str]:
     if report["dry_run"]:
         lines.append("dry run: nothing is changed")
     lines.append(f"clone: {report['clone']}")
+    unshared = report.get("unshared_clone")
+    if unshared:
+        lines.append(f"  only this side reads it ({unshared['why']}); {unshared['said']}")
+    off = roles_line(report.get("roles"))
+    if off is not None:
+        lines.append(off)
+        lines.append(f"  {PROJECTS_LEFT}")
     for provider in report["providers"]:
         if not provider["installed"]:
             lines.append(
@@ -1638,6 +1816,9 @@ def report_lines(report: dict[str, Any]) -> list[str]:
     project = report.get("project")
     if project is not None:
         lines.append(f"project: {project['path']}")
+        off = project_roles_line(project.get("roles"))
+        if off is not None:
+            lines.append(f"  {off}")
         if project["manager_default"] is not None:
             role = project["starting_role"]
             lines.append(
@@ -1645,7 +1826,7 @@ def report_lines(report: dict[str, Any]) -> list[str]:
                 + (f"true; a session in the project starts as {role}" if project["manager_default"] else
                    "false; no starting role is set for the project")
             )
-        if not project["items"]:
+        if not project["items"] and off is None:
             lines.append("  nothing is generated for it: its settings change no role definition")
         for item in project["items"]:
             lines.append(f"  {item['name']}: {_shown(item)}")

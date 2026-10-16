@@ -490,6 +490,42 @@ class MissingCase(DoctorCase):
         self.assertQuiet(findings)
         self.assertFinding(findings, doctor.INFO, "no role definition or entry point is installed", "--no-roles")
 
+    def test_roles_off_by_the_setting_are_info_and_nothing_of_them_is_missing(self) -> None:
+        self.write(self.user_file, "[roles]\nenabled = false\n")
+        self.ok()
+        self.assertEqual(self.home_files(), {})
+        code, findings = self.only("missing")
+        self.assertEqual(code, 0)
+        self.assertQuiet(findings)
+        self.assertFinding(findings, doctor.INFO, f"roles: off by the setting roles.enabled = false in {self.user_file} "
+                           "(user layer)")
+        self.assertFalse([detail for detail in self.details(findings, doctor.INFO) if "would write" in detail])
+        # What earlier projects got is not in this home's record: said for every one of them.
+        self.assertFinding(findings, doctor.INFO, "A project rendered with roles keeps what render wrote there",
+                           "Run `render --project DIR` for each such project", "setup keeps no list")
+        code, findings = self.only("loaded-skill-size")
+        self.assertEqual(code, 0)
+        self.assertFinding(findings, doctor.INFO, f"roles.enabled = false in {self.user_file}", "nothing to measure")
+        # Rendered with roles, then turned off: drift says what render would remove.
+        self.user_file.unlink()
+        self.ok()
+        self.write(self.user_file, "[roles]\nenabled = false\n")
+        code, findings = self.only("drift")
+        self.assertEqual(code, 0)
+        self.assertFinding(findings, doctor.WARNING, "home:.claude/agents/lead.md", "run render")
+        code, findings = self.only("missing")
+        self.assertEqual(code, 0)
+        self.assertQuiet(findings)
+
+    def test_a_project_that_turns_its_roles_off_is_info(self) -> None:
+        self.write(self.project_file, "[roles]\nmanager_default = true\nenabled = false\n")
+        self.with_project()
+        code, findings = self.only("missing", *self.project_arg)
+        self.assertEqual(code, 0)
+        self.assertQuiet(findings)
+        self.assertFinding(findings, doctor.INFO, "roles: off for the project by the setting roles.enabled = false",
+                           str(self.project_file))
+
     def test_a_project_never_rendered_is_info(self) -> None:
         self.rendered()
         self.write(self.project_file, DEFAULT_ON + OVERRIDE)
@@ -600,6 +636,20 @@ class DuplicateCase(DoctorCase):
         self.assertFinding(findings, doctor.WARNING, "codex: the skill beta",
                            str(self.project / ".agents" / "skills" / "beta"))
 
+    def test_a_loaded_roles_name_is_no_skill_of_setups_while_the_roles_are_off(self) -> None:
+        self.write(self.user_file, "[roles]\nenabled = false\n")
+        self.rendered()
+        self.keep(self.project / ".claude" / "skills" / "lead" / "SKILL.md")  # a project's own skill "lead"
+        self.keep(self.codex / "skills" / "quick" / "SKILL.md")
+        code, findings = self.only("duplicate-skills", *self.project_arg)
+        self.assertEqual(code, 0)
+        self.assertQuiet(findings)
+        # With the roles on, the same names are setup's again.
+        self.user_file.unlink()
+        code, findings = self.only("duplicate-skills", *self.project_arg)
+        self.assertFinding(findings, doctor.WARNING, "claude-code: the skill lead")
+        self.assertFinding(findings, doctor.WARNING, "codex: the skill quick")
+
 
 class OtherCloneCase(DoctorCase):
     def other_clone(self) -> Path:
@@ -682,6 +732,41 @@ class CloneVerdictCase(DoctorCase):
         (found,) = self.verdict(("/mnt/c",), allow=True)
         self.assertEqual(found.severity, doctor.WARNING)
         self.assertIn("allowed for this run", found.detail)
+
+    @unittest.skipUnless(POSIX, "a WSL host is made by hand from POSIX paths")
+    def test_the_setting_makes_a_clone_one_side_reads_info(self) -> None:
+        self.write(self.user_file, "[setup]\nallow_unshared_clone = true\n")
+        for allow in (False, True):  # with the option too, the setting is what is named
+            with self.subTest(allow=allow):
+                (found,) = self.verdict(("/mnt/c",), allow=allow)
+                self.assertEqual(found.severity, doctor.INFO)
+                self.assertIn("inside WSL", found.detail)
+                self.assertIn(f"allowed by the setting setup.allow_unshared_clone = true in {self.user_file} "
+                              "(user layer): this side installs from its own clone", found.detail)
+        self.write(self.user_file, "[setup]\nallow_unshared_clone = false\n")
+        (found,) = self.verdict(("/mnt/c",))
+        self.assertEqual(found.severity, doctor.ERROR)
+        self.assertIn("or set setup.allow_unshared_clone = true in ~/.agents/workflow.toml", found.detail)
+
+    @unittest.skipUnless(POSIX, "a WSL host is made by hand from POSIX paths")
+    def test_a_setting_that_is_not_needed_is_said(self) -> None:
+        self.write(self.user_file, "[setup]\nallow_unshared_clone = true\n")
+        shared, unneeded = self.verdict((str(self.root),))
+        self.assertEqual((shared.severity, unneeded.severity), (doctor.OK, doctor.INFO))
+        self.assertIn(f"setup.allow_unshared_clone = true in {self.user_file} (user layer): not needed for this "
+                      "clone", unneeded.detail)
+        code, findings = self.only("clone")  # a scratch home: not asked, and the setting said
+        self.assertEqual(code, 0)
+        self.assertFinding(findings, doctor.INFO, "not asked: a scratch home")
+        self.assertFinding(findings, doctor.INFO, "setup.allow_unshared_clone = true",
+                           "not used here, where the question is not asked")
+
+    def test_a_projects_file_that_holds_the_setting_is_an_error(self) -> None:
+        self.write(self.project_file, "[setup]\nallow_unshared_clone = true\n")
+        code, findings = self.only("clone", *self.project_arg)
+        self.assertEqual(code, 1)
+        self.assertFinding(findings, doctor.ERROR, "the check clone could not be made", str(self.project_file),
+                           "setup: read from the user's settings file alone")
 
 
 class ModelsCase(DoctorCase):

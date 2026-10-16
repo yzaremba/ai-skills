@@ -729,5 +729,95 @@ class PartsCase(RenderCase):
         self.assertEqual(tree(self.root), before)
 
 
+UNSHARED_WHY = "inside WSL, where the Windows side's links cannot lead"
+
+
+class UnsharedCloneSettingCase(RenderCase):
+    """``setup.allow_unshared_clone``: decided once in the user's file, it
+    allows what ``--allow-unshared-clone`` allows for one run. A scratch
+    home is never asked, so the clone's standing is given by hand."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.standing = homes.CloneStanding(self.clone, self.clone, False, UNSHARED_WHY)
+        patch = mock.patch.object(homes, "clone_standing", side_effect=lambda found: self.standing)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_without_the_option_or_the_setting_the_clone_is_refused(self) -> None:
+        before = tree(self.root)
+        code, out, err = self.render("--dry-run")
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn(f"{self.clone}: the clone setup runs from is {UNSHARED_WHY}", err)
+        self.assertIn("or give --allow-unshared-clone to install from this clone for this side alone, for this run",
+                      err)
+        self.assertIn("or set setup.allow_unshared_clone = true in ~/.agents/workflow.toml "
+                      "(`init --allow-unshared-clone`) to allow it on every run", err)
+        self.assertEqual(tree(self.root), before)
+        self.write(self.user_file, "[setup]\nallow_unshared_clone = false\n")
+        self.assertEqual(self.render()[0], 2)
+        self.assertNothingAt(self.claude_skills)
+
+    def test_the_option_allows_it_for_the_run_and_says_so(self) -> None:
+        code, out, err = self.render("--dry-run", "--allow-unshared-clone")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out.splitlines()[1:3], [
+            f"clone: {self.clone}",
+            f"  only this side reads it ({UNSHARED_WHY}); allowed for this run by --allow-unshared-clone",
+        ])
+
+    def test_the_setting_allows_it_on_every_run_and_says_so(self) -> None:
+        self.write(self.user_file, "[setup]\nallow_unshared_clone = true\n")
+        for _ in range(2):
+            code, out, err = self.render()
+            self.assertIn(code, (0, 3), err)
+            self.assertEqual(err, "")
+            self.assertIn(
+                f"  only this side reads it ({UNSHARED_WHY}); allowed by the setting setup.allow_unshared_clone = "
+                f"true in {self.user_file} (user layer)",
+                out.splitlines(),
+            )
+        self.assertLinked(self.claude_skills / "alpha", self.clone / "alpha")
+        code, report, _ = self.report("--dry-run", "--allow-unshared-clone")
+        self.assertEqual(report["unshared_clone"], {
+            "why": UNSHARED_WHY, "allowed_by": "setting",
+            "said": f"allowed by the setting setup.allow_unshared_clone = true in {self.user_file} (user layer)",
+            "setting": {"value": True, "layer": "user", "file": str(self.user_file)},
+        })
+
+    def test_a_clone_both_sides_read_says_nothing_of_it(self) -> None:
+        self.standing = homes.CloneStanding(self.clone, self.clone, True, "on a Windows drive, which both sides read")
+        self.write(self.user_file, "[setup]\nallow_unshared_clone = true\n")
+        code, report, _ = self.report("--dry-run")
+        self.assertEqual(code, 0)
+        self.assertIsNone(report["unshared_clone"])
+        self.assertFalse([line for line in render.report_lines(report) if "only this side" in line])
+
+    def test_a_projects_file_may_not_allow_it(self) -> None:
+        self.write(self.project_file, "[setup]\nallow_unshared_clone = true\n")
+        before = tree(self.root)
+        code, out, err = self.render("--dry-run", "--project", str(self.project))
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn(f"{self.project_file}: setup: read from the user's settings file alone", err)
+        # Without the project its files are not read.
+        self.assertEqual(self.render("--dry-run", "--allow-unshared-clone")[0], 0)
+        self.assertEqual(tree(self.root), before)
+
+    def test_the_help_of_each_command_names_the_settings(self) -> None:
+        for command, words in (
+            ("render", ("roles.enabled = false", "setup.allow_unshared_clone = true", "`init --no-roles`",
+                        "There is no\noption that turns the roles on")),
+            ("doctor", ("setup.allow_unshared_clone = true",)),
+            ("init", ("--roles / --no-roles", "roles.enabled", "--allow-unshared-clone / --no-...",
+                      "setup.allow_unshared_clone")),
+        ):
+            code, out, _ = support.run(command, "--help")
+            self.assertEqual(code, 0)
+            flat = " ".join(out.split())
+            for word in words:
+                with self.subTest(command=command, word=word):
+                    self.assertIn(" ".join(word.split()), flat)
+
+
 if __name__ == "__main__":
     unittest.main()

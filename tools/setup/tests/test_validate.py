@@ -51,6 +51,7 @@ BUILT_IN = {
     "process.questions": "one-at-a-time",
     "process.recommend": True,
     "memory.dir": "docs/memory",
+    "roles.enabled": True,
     "roles.manager_default": False,
     "roles.high_stakes": False,
     "roles.max_parallel_coders": 3,

@@ -97,7 +97,7 @@ TABLE = [
     Case("an unknown quoted key under [process]", {PROJECT: '[process]\n"docs dir" = "docs"\n'}, PROJECT,
          ('process."docs dir"', "unknown key")),
     Case("an unknown top-level key", {LOCAL: 'docs_dir = "docs"\n'}, LOCAL,
-         ("docs_dir: unknown key; known here: schema_version, process, roles, memory, providers",)),
+         ("docs_dir: unknown key; known here: schema_version, process, roles, memory, providers, setup",)),
     Case("an unknown top-level table", {USER: '[proces]\ndocs_dir = "docs"\n'}, USER, ("proces: unknown key",)),
     Case("a wrong type: an integer for a string", {PROJECT: "[process]\ndocs_dir = 3\n"}, PROJECT,
          ("process.docs_dir: expected a string, got an integer",)),

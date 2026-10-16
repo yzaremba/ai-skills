@@ -49,7 +49,16 @@ The checks, in the order they run:
                          the record does not list: a warning, and info on a
                          home (or a project) that was never rendered, and
                          for the generated files of a home rendered with
-                         --no-roles. Something at a path where render would
+                         --no-roles. The roles turned off by the setting
+                         roles.enabled = false, for the home or for the
+                         project, are an info line that names the file:
+                         nothing of them is then missing, and what an
+                         earlier run generated is reported by drift as
+                         render would no longer make it. With the home's
+                         roles off, an info line also says that each
+                         project rendered with roles keeps its starting
+                         role until `render --project DIR` takes it out.
+                         Something at a path where render would
                          install, which setup did not make: an error, since
                          render stops on it.
     links                a link the record lists that is missing, is no
@@ -74,8 +83,15 @@ The checks, in the order they run:
                          not run.
     clone                whether both sides of the machine can read the clone
                          this runs from: an error where they cannot, a
-                         warning with --allow-unshared-clone; not asked with
-                         --home or on a Linux with no Windows side.
+                         warning with --allow-unshared-clone, info where the
+                         setting setup.allow_unshared_clone = true in
+                         ~/.agents/workflow.toml allows it (decided once,
+                         for every run; the line names the file); not asked
+                         with --home or on a Linux with no Windows side. A
+                         setting that allows it where it is not needed is
+                         info as well. A project's file that holds [setup]
+                         is an error: the group is read from the user's
+                         file alone.
     models               each installed provider's own model list beside its
                          mapping: a mapped model that is not in the list, or
                          an effort a definition resolves to that the list

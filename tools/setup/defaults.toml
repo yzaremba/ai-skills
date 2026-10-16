@@ -8,9 +8,9 @@
 # value and the layer it came from.
 #
 # Each group is read only by what it names: the process skills read [process],
-# the roles read [roles] and [providers.<name>], the memory skill reads [memory].
-# The shipped [providers.<name>] sections are not here: they come from
-# providers/<name>/dictionary.toml.
+# the roles read [roles] and [providers.<name>], the memory skill reads [memory],
+# the setup tool reads [setup]. The shipped [providers.<name>] sections are not
+# here: they come from providers/<name>/dictionary.toml.
 
 schema_version = 1
 
@@ -25,6 +25,12 @@ questions = "one-at-a-time"
 recommend = true
 
 [roles]
+# Whether `render` generates the role definitions and the entry points of a
+# session. false installs the process alone, as `render --no-roles` does for
+# one run: what an earlier run generated is removed, and true brings it back.
+# For a home it is read from ~/.agents/workflow.toml; a project may turn it
+# off for itself, and gets roles only where the home has them.
+enabled = true
 # Whether a session in the project starts as the Manager.
 manager_default = false
 # Marks the work as high-stakes: a role with a high-stakes tier uses it,
@@ -44,3 +50,14 @@ max_parallel_coders = 3
 # it. Setup takes the value as given; the memory skill stops on an absolute
 # path or one that leads outside the project.
 dir = "docs/memory"
+
+[setup]
+# Read from ~/.agents/workflow.toml alone: a project's file may not hold this
+# group. It is a fact of this machine.
+#
+# On a machine with a Windows side and a WSL side, `render` and `doctor`
+# refuse a clone that only one side can read: every home links to one shared
+# clone. true allows such a clone on every run, as --allow-unshared-clone does
+# for one: only where the other side does not install from this clone (one
+# side used alone, or a clone for each side).
+allow_unshared_clone = false

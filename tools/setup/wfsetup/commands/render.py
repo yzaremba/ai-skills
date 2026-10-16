@@ -11,8 +11,10 @@ and with --project what a project gets.
 
 In this order: the clone's sources are checked ("validate"), and any problem
 stops the run; on a machine with a Windows side and a WSL side the clone must
-be one both can read, unless --allow-unshared-clone is given (not asked with
---home); then one plan is made, printed, and applied. With --dry-run it is
+be one both can read, unless --allow-unshared-clone is given for this run or
+the setting setup.allow_unshared_clone = true is in ~/.agents/workflow.toml
+for every run (not asked with --home; the output says what allowed such a
+clone); then one plan is made, printed, and applied. With --dry-run it is
 only printed. The whole plan is checked before the first write, so a plan
 that is refused writes nothing. Applying it is not atomic: if a change fails
 part way, the changes before it stay and are recorded, the error says how
@@ -182,9 +184,10 @@ user-level settings, and DIR gets, from its own settings
       listed: they are setup's part of files the project owns and may
       commit.
 
-Turning roles.manager_default off, removing an override, or --no-roles makes
-what an earlier run wrote for it stale: the next run with --project removes
-it, and a directory setup created that this leaves empty.
+Turning roles.manager_default off, removing an override, --no-roles or
+roles.enabled = false makes what an earlier run wrote for it stale: the next
+run with --project removes it, and a directory setup created that this
+leaves empty.
 
 A provider that is installed and has no dictionary in the clone, or a
 profile that names an effort its model does not accept, stops the run before
@@ -222,6 +225,27 @@ is generated, in a home or a project. What an earlier run generated is then
 removed, like any file or link that render would no longer make, and one
 that was edited by hand is kept and reported. Running render without the
 option generates them again.
+
+The setting roles.enabled = false does the same on every run, without the
+option: `init --no-roles` writes it, or it is set in the settings file. For
+the home it is read from ~/.agents/workflow.toml; for the project from the
+project's settings (DIR/.agents/workflow.toml and workflow.local.toml over
+the user's), so a project can turn the roles off for itself. A project gets
+roles only where the home has them: what it gets is built on the home's
+definitions. --no-roles wins over the setting for its run. There is no
+option that turns the roles on against the setting: what one run generated
+the next run would remove again. Set roles.enabled = true (`init --roles`)
+and run render. The output says when the roles are off, and whether by the
+option or by the setting, in which file.
+
+A run without --project writes nothing in a project, and setup keeps no
+list of the projects it rendered (each project's record is in the
+project). So when the home's roles go off, by the option or the setting, a
+project rendered with roles keeps what render wrote there: the starting
+role of roles.manager_default ("agent" in .claude/settings.json, setup's
+block in .codex/config.toml), which names a definition the home no longer
+has, and its own definitions. Run `render --project DIR` for each such
+project to take them out; the output, and `doctor`, say so.
 
 What is not written, and is reported:
 
@@ -303,11 +327,20 @@ so. What was made is listed in ~/.agents/workflow-setup/manifest.json, and
 what was made in a project in DIR/.agents/workflow-setup/manifest.json, by
 anchor ("home:", "clone:", "project:") and not by this machine's paths.
 
-The output: for each provider its home, each place and what became of each
+The output: the clone, with what allowed it where only this side reads it;
+whether the roles are off, and why; for each provider its home, each place
+and what became of each
 link and each generated file; what is no longer installed; the plan, one
 line per change; and one line that sums it up. With --json it is one object
-with the same facts ("providers", "definitions", "entry_points", "project",
-"stale", "plan", "errors", "counts", "summary", "exit_code"); "definitions"
+with the same facts ("unshared_clone", "roles", "providers", "definitions",
+"entry_points", "project", "stale", "plan", "errors", "counts", "summary",
+"exit_code"); "unshared_clone" is null unless a clone only this side reads
+was allowed, and then holds "why", "allowed_by" ("setting" or "option"),
+"said" (the line printed) and "setting"; "roles" holds "enabled", "off_by"
+("option", "setting" or null) and "setting" (the effective roles.enabled:
+"value", "layer", "file"; null under --no-roles, when no settings file is
+read for it), and "project" has its own "roles", where "off_by" may also be
+"home"; "definitions"
 lists every role definition with its provider, file, bytes, model, effort,
 status and level (home or project); "entry_points" lists how each role is
 loaded or started on each provider, with the file, its bytes and for a
@@ -435,10 +468,11 @@ def run(args: argparse.Namespace) -> int:
     where = locations.from_args(args)
     sources = validate.require(where)
     found = homes.resolve(where)
-    homes.require_shared_clone(found, args.allow_unshared_clone)
+    allowance = homes.clone_allowance(where, args.allow_unshared_clone)
+    standing = homes.require_shared_clone(found, allowance.allowed)
     outcome = render.execute(
         found, sources, args, dry_run=args.dry_run, follow=args.follow_config_symlinks,
-        overwrite_edited=args.overwrite_edited,
+        overwrite_edited=args.overwrite_edited, unshared_clone=render.unshared_clone(standing, allowance),
     )
     if args.json:
         print(json.dumps(outcome.report, indent=2, ensure_ascii=False))

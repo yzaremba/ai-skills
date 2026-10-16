@@ -540,6 +540,20 @@ class CloneCase(HomesCase):
         self.assertIn("run setup from that clone", text)
         self.assertIn("--allow-unshared-clone", text)
 
+    def test_the_refusal_says_when_the_setting_is_right_in_this_sides_words(self) -> None:
+        with self.assertRaises(SetupError) as caught:
+            homes.require_shared_clone(self.at(self.clone, self.wsl()))
+        self.assertIn("only where the Windows side does not install from this clone (WSL used alone, or a clone "
+                      "for each side)", str(caught.exception))
+        windows = homes.Host(homes.WINDOWS, {}, ())
+        standing = homes.CloneStanding(self.clone, self.clone, False, "not on a local drive")
+        with mock.patch.object(homes, "clone_standing", return_value=standing):
+            with self.assertRaises(SetupError) as caught:
+                homes.require_shared_clone(self.at(self.clone, windows))
+        text = str(caught.exception)
+        self.assertIn("only where the WSL side does not install from this clone (a clone for each side)", text)
+        self.assertNotIn("WSL used alone", text)
+
     def test_the_flag_allows_it(self) -> None:
         found = self.at(self.clone, self.wsl())
         self.assertIs(homes.require_shared_clone(found, allow_unshared=True).shared, False)

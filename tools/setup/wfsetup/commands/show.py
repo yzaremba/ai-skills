@@ -4,6 +4,10 @@ Layers, later wins: shipped (the clone's defaults), user
 (~/.agents/workflow.toml), project (.agents/workflow.toml in the project)
 and local (.agents/workflow.local.toml beside it).
 
+The group setup (setup.allow_unshared_clone) is read from the user's file
+alone: a project's file that holds it is an error here, as in every command
+that reads the group.
+
 KEY narrows the output to one group (process), one table (roles.coder) or
 one value (process.docs_dir). Only the group KEY names is read and checked,
 so a fault in another group does not get in the way. A key that is valid

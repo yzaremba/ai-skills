@@ -23,11 +23,13 @@ class ShippedDefaultsTests(support.ScratchCase):
                 "process.docs_dir": "docs",
                 "process.questions": "one-at-a-time",
                 "process.recommend": True,
+                "roles.enabled": True,
                 "roles.manager_default": False,
                 "roles.high_stakes": False,
                 "roles.max_parallel_coders": 3,
                 "memory.dir": "docs/memory",
                 **support.SHIPPED_PROVIDERS,
+                "setup.allow_unshared_clone": False,
             },
         )
         self.assertEqual({entry.layer for entry in entries.values()}, {"shipped"})
@@ -72,6 +74,7 @@ class ShippedDefaultsTests(support.ScratchCase):
         self.assertEqual(
             keys,
             [
+                "roles.enabled",
                 "roles.manager_default",
                 "roles.high_stakes",
                 "roles.max_parallel_coders",
@@ -108,6 +111,7 @@ class LayerTests(support.ScratchCase):
                 "process.docs_dir": ("u", "user"),
                 "process.questions": ("one-at-a-time", "project"),
                 "process.recommend": (True, "local"),
+                "roles.enabled": (True, "shipped"),
                 "roles.manager_default": (False, "shipped"),
                 "roles.high_stakes": (False, "shipped"),
                 "roles.max_parallel_coders": (5, "local"),
@@ -193,7 +197,7 @@ class ValidationTests(support.ScratchCase):
     def test_an_unknown_top_level_key(self) -> None:
         self.assertEqual(
             self.problems("[proces]\nrecommend = true\n"),
-            ["proces: unknown key; known here: schema_version, process, roles, memory, providers"],
+            ["proces: unknown key; known here: schema_version, process, roles, memory, providers, setup"],
         )
 
     def test_an_unknown_key_in_a_role_override(self) -> None:
@@ -205,7 +209,7 @@ class ValidationTests(support.ScratchCase):
     def test_an_unknown_scalar_under_roles_is_not_taken_for_a_role(self) -> None:
         self.assertEqual(
             self.problems("[roles]\nmax_coders = 2\n"),
-            ["roles.max_coders: unknown key; known here: manager_default, high_stakes, max_parallel_coders, <role id>"],
+            ["roles.max_coders: unknown key; known here: enabled, manager_default, high_stakes, max_parallel_coders, <role id>"],
         )
 
     def test_a_table_that_is_not_a_role_id(self) -> None:
@@ -409,6 +413,68 @@ class GroupIsolationTests(support.ScratchCase):
                             settings.resolve(self.locations(), (group,))
                     else:
                         settings.resolve(self.locations(), (group,))
+
+
+class RememberedChoiceTests(support.ScratchCase):
+    """``roles.enabled`` and ``setup.allow_unshared_clone``: what the schema
+    takes, and which layers may hold each."""
+
+    def problems(self, file, text: str, groups=schema.GROUPS) -> list[str]:
+        self.write(file, text)
+        with self.assertRaises(SetupError) as caught:
+            settings.resolve(self.locations(), groups)
+        return list(caught.exception.lines)
+
+    def test_both_take_a_boolean_only(self) -> None:
+        for text, line in (
+            ('[roles]\nenabled = "no"\n', "roles.enabled: expected a boolean, got a string"),
+            ("[roles]\nenabled = 0\n", "roles.enabled: expected a boolean, got an integer"),
+            ("[setup]\nallow_unshared_clone = 1\n", "setup.allow_unshared_clone: expected a boolean, got an integer"),
+            ("[setup]\nshared = true\n", "setup.shared: unknown key; known here: allow_unshared_clone"),
+            ("setup = true\n", "setup: expected a table, got a boolean"),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.problems(self.user_file, text), [f"{self.user_file}: {line}"])
+
+    def test_the_repositorys_defaults_set_both_and_ship_the_safe_values(self) -> None:
+        entries = settings.resolve(self.repository(), ("roles", "setup"))
+        self.assertEqual((entries["roles.enabled"].value, entries["roles.enabled"].layer), (True, "shipped"))
+        found = entries["setup.allow_unshared_clone"]
+        self.assertEqual((found.value, found.layer, found.file), (False, "shipped", support.DEFAULTS))
+
+    def test_roles_enabled_is_layered_like_any_key(self) -> None:
+        def value(project: bool = True) -> tuple:
+            entry = settings.resolve(self.locations(project), ("roles",)).get("roles.enabled")
+            return None if entry is None else (entry.value, entry.layer)
+
+        self.assertEqual(value(), (True, "shipped"))
+        self.write(self.user_file, "[roles]\nenabled = false\n")
+        self.assertEqual(value(), (False, "user"))
+        self.write(self.project_file, "[roles]\nenabled = true\n")
+        self.assertEqual(value(), (True, "project"))
+        self.assertEqual(value(project=False), (False, "user"))  # a home reads the user's file alone
+        self.write(self.local_file, "[roles]\nenabled = false\n")
+        self.assertEqual(value(), (False, "local"))
+
+    def test_the_setup_group_is_read_from_the_users_file(self) -> None:
+        self.write(self.user_file, "[setup]\nallow_unshared_clone = true\n")
+        entry = settings.resolve(self.locations(), ("setup",))["setup.allow_unshared_clone"]
+        self.assertEqual((entry.value, entry.layer, entry.file), (True, "user", self.user_file))
+
+    def test_a_projects_file_may_not_hold_the_setup_group(self) -> None:
+        for file in (self.project_file, self.local_file):
+            with self.subTest(file=file.name):
+                (line,) = self.problems(file, "[setup]\nallow_unshared_clone = true\n", ("setup",))
+                self.assertTrue(line.startswith(f"{file}: setup: read from the user's settings file alone"), line)
+                self.assertIn("~/.agents/workflow.toml", line)
+                self.assertIn("not of a project", line)
+                # Refused in the same words when every group is read, as by show.
+                self.assertEqual(self.problems(file, "[setup]\nallow_unshared_clone = false\n"), [line])
+                file.unlink()
+
+    def test_a_projects_setup_group_does_not_stop_a_reader_of_another_group(self) -> None:
+        self.write(self.project_file, "[setup]\nallow_unshared_clone = true\n[process]\ndocs_dir = \"p\"\n")
+        self.assertEqual(settings.resolve(self.locations(), ("process",))["process.docs_dir"].value, "p")
 
 
 class DictionarySeamTests(support.CloneCase):

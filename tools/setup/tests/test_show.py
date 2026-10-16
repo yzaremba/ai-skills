@@ -27,12 +27,14 @@ PROCESS_TEXT = (
     "process.recommend = true  (shipped)\n"
 )
 ROLES_TEXT = (
+    "roles.enabled = true  (shipped)\n"
     "roles.manager_default = false  (shipped)\n"
     "roles.high_stakes = false  (shipped)\n"
     "roles.max_parallel_coders = 3  (shipped)\n"
 )
 MEMORY_TEXT = 'memory.dir = "docs/memory"  (shipped)\n'
-SHIPPED_TEXT = PROCESS_TEXT + ROLES_TEXT + MEMORY_TEXT + support.SHIPPED_PROVIDERS_TEXT
+SETUP_TEXT = "setup.allow_unshared_clone = false  (shipped)\n"
+SHIPPED_TEXT = PROCESS_TEXT + ROLES_TEXT + MEMORY_TEXT + support.SHIPPED_PROVIDERS_TEXT + SETUP_TEXT
 
 
 class ShowTextTests(support.ScratchCase):
@@ -51,11 +53,12 @@ class ShowTextTests(support.ScratchCase):
             'process.docs_dir = "u"  (user)\n'
             'process.questions = "one-at-a-time"  (shipped)\n'
             "process.recommend = true  (shipped)\n"
+            "roles.enabled = true  (shipped)\n"
             "roles.manager_default = false  (shipped)\n"
             "roles.high_stakes = false  (shipped)\n"
             "roles.max_parallel_coders = 2  (project)\n"
             'roles.coder.tier = "deep"  (user)\n'
-            'memory.dir = "notes/memory"  (local)\n' + support.SHIPPED_PROVIDERS_TEXT,
+            'memory.dir = "notes/memory"  (local)\n' + support.SHIPPED_PROVIDERS_TEXT + SETUP_TEXT,
         )
 
     def test_a_group(self) -> None:
@@ -124,12 +127,12 @@ class ShowTextTests(support.ScratchCase):
 
     def test_a_key_the_schema_does_not_have(self) -> None:
         cases = {
-            "proces": "error: proces: no such setting; known groups: process, roles, memory, providers\n",
+            "proces": "error: proces: no such setting; known groups: process, roles, memory, providers, setup\n",
             "process.nope": "error: process.nope: no such setting; known under process: docs_dir, questions, recommend\n",
             "process.docs_dir.more": "error: process.docs_dir.more: no such setting; process.docs_dir is a single value\n",
             "process.": "error: process.: no such setting; known under process: docs_dir, questions, recommend\n",
             "roles.Bad_Name": "error: roles.Bad_Name: no such setting; known under roles: "
-            "manager_default, high_stakes, max_parallel_coders, <role id>\n",
+            "enabled, manager_default, high_stakes, max_parallel_coders, <role id>\n",
         }
         for key, expected in cases.items():
             with self.subTest(key=key):
@@ -195,7 +198,7 @@ class SeveralKeysTests(support.ScratchCase):
         self.assertEqual((code, out), (2, ""))
         self.assertEqual(
             err,
-            "error: proces: no such setting; known groups: process, roles, memory, providers\n"
+            "error: proces: no such setting; known groups: process, roles, memory, providers, setup\n"
             "error: memory.nope: no such setting; known under memory: dir\n",
         )
 
@@ -214,7 +217,8 @@ class ShowJsonTests(support.ScratchCase):
         self.assertEqual((code, err), (0, ""))
         shipped = str(self.defaults_file)
         report = json.loads(out)
-        report["settings"] = {key: entry for key, entry in report["settings"].items() if not key.startswith("providers.")}
+        report["settings"] = {key: entry for key, entry in report["settings"].items()
+                              if not key.startswith(("providers.", "setup."))}
         self.assertEqual(
             report,
             {
@@ -223,6 +227,7 @@ class ShowJsonTests(support.ScratchCase):
                     "process.docs_dir": {"value": "docs", "layer": "shipped", "file": shipped},
                     "process.questions": {"value": "one-at-a-time", "layer": "shipped", "file": shipped},
                     "process.recommend": {"value": False, "layer": "user", "file": str(self.user_file)},
+                    "roles.enabled": {"value": True, "layer": "shipped", "file": shipped},
                     "roles.manager_default": {"value": False, "layer": "shipped", "file": shipped},
                     "roles.high_stakes": {"value": False, "layer": "shipped", "file": shipped},
                     "roles.max_parallel_coders": {"value": 1, "layer": "local", "file": str(self.local_file)},
@@ -655,10 +660,32 @@ class RepositoryTests(support.ScratchCase):
             "roles.high_stakes = false  (shipped)",
             "roles.max_parallel_coders = 3  (shipped)",
             'memory.dir = "docs/memory"  (shipped)',
+            "roles.enabled = true  (shipped)",
+            "setup.allow_unshared_clone = false  (shipped)",
         ):
             with self.subTest(line=line):
                 self.assertIn(line, lines)
         self.assertTrue(all(line.endswith("  (shipped)") for line in lines), out)
+
+    def test_the_two_remembered_choices_show_with_their_layer(self) -> None:
+        self.write(self.user_file, "[roles]\nenabled = false\n[setup]\nallow_unshared_clone = true\n")
+        code, out, err = self.show_repository("roles.enabled", "setup")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out, "roles.enabled = false  (user)\nsetup.allow_unshared_clone = true  (user)\n")
+        report = json.loads(self.show_repository("setup", "--json")[1])
+        self.assertEqual(report["settings"], {
+            "setup.allow_unshared_clone": {"value": True, "layer": "user", "file": str(self.user_file)},
+        })
+        # A project may turn its roles off; it may not hold [setup].
+        self.write(self.project_file, "[roles]\nenabled = true\n")
+        with mock.patch.object(locations, "CLONE", support.REPOSITORY):
+            code, out, err = self.show("roles.enabled")
+        self.assertEqual((code, out, err), (0, "roles.enabled = true  (project)\n", ""))
+        self.write(self.project_file, "[setup]\nallow_unshared_clone = true\n")
+        with mock.patch.object(locations, "CLONE", support.REPOSITORY):
+            code, out, err = self.show()
+        self.assertEqual((code, out), (2, ""))
+        self.assertIn(f"error: {self.project_file}: setup: read from the user's settings file alone", err)
 
     def test_every_group_shows_and_json_names_the_shipped_file(self) -> None:
         for group in schema.GROUPS:

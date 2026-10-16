@@ -59,8 +59,11 @@ Severities, where the step left the choice
               On a home with no record at all it is one ``info`` line
               (nothing was rendered yet), and so are the generated files
               on a home whose record holds none (rendered with
-              ``--no-roles``). Something in the way that setup did not
-              make is an error: ``render`` stops on it. Where that is
+              ``--no-roles``). The roles turned off by the setting
+              ``roles.enabled`` are one ``info`` line: the probe, like
+              ``render``, then asks for none of them. Something in the
+              way that setup did not make is an error: ``render`` stops
+              on it. Where that is
               what a v1 install left, the check ``v1`` says it and this
               one does not: one thing is reported once.
     v1        Every v1 import line, copy, link and clone that remains in a
@@ -582,6 +585,19 @@ def check_missing(context: Context) -> list[Finding]:
         return findings + [info(NOT_PLANNED)]
 
     findings.extend(error(f"render cannot plan the install: {line}") for line in probe.errors)
+    # The roles turned off by the setting: said, since nothing of them is
+    # then missing. Off by the option is no fact of the install (the probe
+    # is given no option).
+    home_roles, project_roles = render.roles_report(probe._roles)
+    for line in (render.roles_line(home_roles), render.project_roles_line(project_roles)):
+        if line is not None:
+            findings.append(info(
+                f"{line}; render removes what an earlier run generated, unless it was edited by hand"
+            ))
+    if home_roles is not None and not home_roles["enabled"]:
+        # What a project got is not in this home's record, and no check of
+        # a home sees it: said once, for every project rendered with roles.
+        findings.append(info(render.PROJECTS_LEFT[0].upper() + render.PROJECTS_LEFT[1:]))
     home_rendered = bool(record.home.on_disk)
     project_rendered = record.project is not None and bool(record.project.on_disk)
     home_generated = any(
@@ -711,9 +727,12 @@ def check_duplicate_skills(context: Context) -> list[Finding]:
     """A skill name setup installs that also exists in another skill
     location of the same provider."""
     try:
-        loaded = entry.loaded_roles(context.user_level)
+        # A loaded role is a skill setup installs only while the home's
+        # roles are on (``roles.enabled``).
+        enabled = render.home_roles_setting(context.where)
+        loaded = entry.loaded_roles(context.user_level) if enabled is None or enabled.value is not False else []
     except SetupError:
-        loaded = []  # the check `sources` says why
+        loaded = []  # the check `sources` or `profiles` says why
     project = context.homes.project
     findings = []
     looked = 0
@@ -845,21 +864,38 @@ def check_other_clones(context: Context) -> list[Finding]:
 
 
 def check_clone(context: Context) -> list[Finding]:
-    """Whether both sides of the machine can read the clone (R6.9)."""
+    """Whether both sides of the machine can read the clone (R6.9). Allowed
+    by the setting ``setup.allow_unshared_clone``, a clone only this side
+    reads is info: decided once, it is no longer a thing to look at on every
+    run. Allowed by the option alone, it is a warning, as before. A setting
+    that allows it where it is not needed is said as info."""
     found = homes.clone_standing(context.homes)
+    allowance = homes.clone_allowance(context.where, bool(context.option("allow_unshared_clone", False)))
+    unneeded = []
+    if allowance.by == homes.BY_SETTING and allowance.setting is not None:
+        said = "not used here, where the question is not asked" if found.shared is None else \
+            "not needed for this clone"
+        unneeded = [info(
+            f"{homes.UNSHARED_KEY} = true in {allowance.setting.file} ({allowance.setting.layer} layer): {said}; it "
+            "allows a clone only this side reads, on every run of render and doctor"
+        )]
     if found.shared is None:
-        return [info(f"{found.real}: {found.why}")]
+        return [info(f"{found.real}: {found.why}"), *unneeded]
     if found.shared:
-        return [fine(f"{found.real}: {found.why}")]
+        return [fine(f"{found.real}: {found.why}"), *unneeded]
     line = (
         f"{found.real}: the clone setup runs from is {found.why}. Every home, on Windows and in WSL, links to one "
         "clone that both can read"
     )
-    if context.option("allow_unshared_clone", False):
-        return [warning(f"{line}; allowed for this run by --allow-unshared-clone", found.real)]
+    if allowance.by == homes.BY_SETTING:
+        return [info(f"{line}; {allowance.describe()}: this side installs from its own clone", found.real)]
+    if allowance.by == homes.BY_OPTION:
+        return [warning(f"{line}; {allowance.describe()}", found.real)]
     return [error(
         f"{line}: clone the repository to a directory on a Windows drive and run setup from there, or give "
-        "--allow-unshared-clone to accept this clone for this side alone", found.real,
+        f"{homes.UNSHARED_OPTION} to accept this clone for this side alone for one run, or set "
+        f"{homes.UNSHARED_KEY} = true in ~/.agents/workflow.toml (`init {homes.UNSHARED_OPTION}`) for every run",
+        found.real,
     )]
 
 
@@ -1226,6 +1262,12 @@ def check_loaded_skill_size(context: Context) -> list[Finding]:
     the limit ``validate`` holds the shipped roles to, on either provider."""
     if not context.sources.ok:
         return [info(NOT_PLANNED)]
+    enabled = render.home_roles_setting(context.where)
+    if enabled is not None and enabled.value is False:
+        return [info(
+            f"{render.ROLES_KEY} = false in {enabled.file} ({enabled.layer} layer): no role is installed as a skill; "
+            "nothing to measure"
+        )]
     names = [provider.name for provider in context.installed() if provider.name in definitions.PROVIDERS]
     made = [one for one in entry.skills(context.user_level, names, context.homes)
             if one.name.endswith(entry.SKILL_FILE)]

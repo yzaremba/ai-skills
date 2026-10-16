@@ -24,13 +24,34 @@ What is asked
         --docs-dir DIR                    process.docs_dir
         --questions HOW                   process.questions
         --recommend / --no-recommend      process.recommend
+        --roles / --no-roles              roles.enabled
         --manager-default / --no-...      roles.manager_default
         --high-stakes / --no-...          roles.high_stakes
         --max-parallel-coders N           roles.max_parallel_coders
         --memory-dir DIR                  memory.dir
+        --allow-unshared-clone / --no-... setup.allow_unshared_clone
+                                          (the user's file only)
 
     The first three may be given several times. Each answer is checked by
     the settings schema, with the schema's own message.
+
+    roles.enabled = false is the process alone on every `render`, which
+    `render --no-roles` is for one run; a project's file may set it for that
+    project. setup.allow_unshared_clone = true lets `render` and `doctor`
+    accept, on every run, a clone that only this side of the machine can
+    read, which `--allow-unshared-clone` does for one run: only where the
+    other side does not install from this clone (one side used alone, or a
+    clone for each side). It is read from the user's file alone, so it is
+    never asked, and its flag is refused, with --project. Its question is
+    asked only where it applies: the machine has a Windows side and a WSL
+    side and this side's clone is one the other cannot read. Its proposal is
+    then the value in effect, false (a shared clone required) unless the
+    file already says otherwise. Elsewhere it is not asked, a value the file
+    holds stays, and the flag still sets it.
+
+    A script that answers every question by flag, without --yes, now gives
+    --roles or --no-roles too, and, on a clone the other side cannot read,
+    --allow-unshared-clone or --no-allow-unshared-clone.
 
     What is proposed for a question is the value in effect now: the one in
     the file being written if it has one, else the one the layers below
@@ -151,10 +172,12 @@ _SETTINGS = (
     ("process.docs_dir", "--docs-dir", "docs_dir", "string"),
     ("process.questions", "--questions", "questions", "string"),
     ("process.recommend", "--recommend", "recommend", "boolean"),
+    ("roles.enabled", "--roles", "roles", "boolean"),
     ("roles.manager_default", "--manager-default", "manager_default", "boolean"),
     ("roles.high_stakes", "--high-stakes", "high_stakes", "boolean"),
     ("roles.max_parallel_coders", "--max-parallel-coders", "max_parallel_coders", "integer"),
     ("memory.dir", "--memory-dir", "memory_dir", "string"),
+    (homes.UNSHARED_KEY, homes.UNSHARED_OPTION, "allow_unshared_clone", "boolean"),
 )
 _TRUE = ("y", "yes", "true")
 _FALSE = ("n", "no", "false")
@@ -210,6 +233,11 @@ def configure(parser: argparse.ArgumentParser) -> None:
     switch = argparse.BooleanOptionalAction
     parser.add_argument("--recommend", action=switch, help="process.recommend: a recommendation with each question")
     parser.add_argument(
+        "--roles", action=switch,
+        help="roles.enabled: render generates the role definitions and the entry points; --no-roles installs "
+        "the process alone on every render, as `render --no-roles` does for one run",
+    )
+    parser.add_argument(
         "--manager-default", action=switch, help="roles.manager_default: a session in the project starts as the Manager",
     )
     parser.add_argument("--high-stakes", action=switch, help="roles.high_stakes: roles use their high-stakes tier")
@@ -217,6 +245,12 @@ def configure(parser: argparse.ArgumentParser) -> None:
         "--max-parallel-coders", metavar="N", help="roles.max_parallel_coders: how many Coders work at the same time",
     )
     parser.add_argument("--memory-dir", metavar="DIR", help="memory.dir: where the project memory lives")
+    parser.add_argument(
+        homes.UNSHARED_OPTION, action=switch,
+        help=f"{homes.UNSHARED_KEY}: render and doctor accept, on every run, a clone that only this side of the "
+        "machine can read; only where the other side does not install from this clone (one side used alone, or a "
+        "clone for each side). The user's file only; asked only where the clone is such a clone",
+    )
 
 
 # --- Asking -------------------------------------------------------------------
@@ -608,6 +642,12 @@ def run(args: argparse.Namespace) -> int:
     answers: dict[str, Any] = {}
     for key, flag, attribute, kind in _SETTINGS:
         value = getattr(args, attribute)
+        if value is not None and scope == PROJECT and key.split(".")[0] in schema.USER_ONLY:
+            typed = flag if value is True else f"--no-{flag[2:]}"
+            raise SetupError(
+                f"{typed}: {key} is read from the user's file alone (~/.agents/workflow.toml): it is a fact of this "
+                "machine, not of a project. Give it to `init` without --project"
+            )
         if value is not None:
             if isinstance(value, str) and kind == "string" and locations.control_character(value):
                 raise SetupError(f"{flag}: the value holds a control character or a line break")
@@ -659,9 +699,29 @@ def run(args: argparse.Namespace) -> int:
             place(key, model)
 
     # --- The other settings ---------------------------------------------------
+    # The clone's question is asked where it applies: the user's file, on a
+    # machine whose other side cannot read this clone. Elsewhere a value the
+    # file holds stays as it is, and a flag still sets it.
+    clone = homes.clone_standing(found)
+    unasked: dict[str, str] = {}
+    if scope == PROJECT:
+        unasked[homes.UNSHARED_KEY] = "the user's file alone holds it"
+    elif clone.shared is not False:
+        why = clone.why.removeprefix("not asked: ")
+        unasked[homes.UNSHARED_KEY] = f"the clone needs no such permission here ({why})"
     for key, flag, _, kind in _SETTINGS:
-        value = answers[key] if key in answers else _settle_setting(dialogue, key, flag, kind, proposed(key))
-        place(key, value)
+        if key in answers:
+            place(key, answers[key])
+            continue
+        if key in unasked:
+            continue
+        if key == homes.UNSHARED_KEY and dialogue.interactive:
+            print(
+                f"the clone {clone.real} is {clone.why}: render and doctor refuse it unless {homes.UNSHARED_OPTION} "
+                f"is given on each run, or {key} is true. Say true only where the {homes.other_side(found)} "
+                f"does not install from this clone ({homes.unshared_cases(found)})"
+            )
+        place(key, _settle_setting(dialogue, key, flag, kind, proposed(key)))
 
     # --- What the roles would run with ----------------------------------------
     entries = {key: entry for key, entry in below.items() if key.split(".")[0] in profiles.GROUPS}
@@ -697,10 +757,13 @@ def run(args: argparse.Namespace) -> int:
     print()
     print("settings:")
     for key, _, _, _ in _SETTINGS:
+        if scope == PROJECT and key.split(".")[0] in schema.USER_ONLY:
+            continue
+        why = f"; not asked: {unasked[key]}" if key in unasked and key not in answers else ""
         if key in flat:
-            print(f"  {key} = {tomlio.format_value(flat[key])}  (in this file)")
+            print(f"  {key} = {tomlio.format_value(flat[key])}  (in this file{why})")
         else:
-            print(f"  {key} = {tomlio.format_value(below[key].value)}  ({below[key].layer}; not written)")
+            print(f"  {key} = {tomlio.format_value(below[key].value)}  ({below[key].layer}; not written{why})")
     print()
 
     # --- Plan -----------------------------------------------------------------

@@ -131,7 +131,7 @@ EXIT_ERROR = 2
 # two must stay equal; tools/setup/tests holds a test that they agree.
 SETTINGS_SCHEMA_VERSION = 1
 VERSION_KEY = "schema_version"
-SETTINGS_GROUPS = ("process", "roles", "memory", "providers")
+SETTINGS_GROUPS = ("process", "roles", "memory", "providers", "setup")
 GROUP = "process"
 # Each key of the group: its type, and the values allowed when not every one is.
 PROCESS_KEYS = {

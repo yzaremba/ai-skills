@@ -525,6 +525,7 @@ def _lines(definition: str, provider: str, model: str, effort: str, tier: str, e
 
 
 SETTINGS_TEXT = (
+    "roles.enabled = true  (shipped)\n"
     "roles.manager_default = false  (shipped)\n"
     "roles.high_stakes = false  (shipped)\n"
     "roles.max_parallel_coders = 3  (shipped)\n"
@@ -643,7 +644,8 @@ class ShowRolesTests(support.ScratchCase):
         self.assertEqual(report["notes"], [])
         self.assertEqual(
             list(report["settings"]),
-            ["roles.manager_default", "roles.high_stakes", "roles.max_parallel_coders", "roles.coder.tier"],
+            ["roles.enabled", "roles.manager_default", "roles.high_stakes", "roles.max_parallel_coders",
+             "roles.coder.tier"],
         )
         self.assertEqual(list(report["profiles"]), DEFINITIONS)
         coder = report["profiles"]["coder"]

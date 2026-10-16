@@ -98,6 +98,15 @@ PROVIDER = Table({
 # ``roles.high_stakes`` is the general switch and ``[roles.<id>]`` the
 # explicit setting for one role definition: an explicit ``tier`` wins over
 # the switch, whichever layer sets each (see ``profiles``).
+#
+# ``roles.enabled`` is whether ``render`` generates the roles at all: false
+# is the process alone, what ``render --no-roles`` does for one run. No role
+# id can be ``enabled``: Codex reserves it (``validate``, role-reserved).
+#
+# ``[setup]`` is read by the setup tool alone, and from the user's file
+# alone (``USER_ONLY``): it holds facts of this machine, not of a project.
+# ``setup.allow_unshared_clone`` is what ``--allow-unshared-clone`` says for
+# one run, decided once.
 SCHEMA: dict[str, Table] = {
     "process": Table({
         "docs_dir": _STRING,
@@ -106,6 +115,7 @@ SCHEMA: dict[str, Table] = {
     }),
     "roles": Table(
         {
+            "enabled": _BOOLEAN,
             "manager_default": _BOOLEAN,
             "high_stakes": _BOOLEAN,
             "max_parallel_coders": Value("integer", minimum=1),
@@ -120,8 +130,13 @@ SCHEMA: dict[str, Table] = {
         "dir": _STRING,
     }),
     "providers": Table(each=PROVIDER, each_name="provider name"),
+    "setup": Table({
+        "allow_unshared_clone": _BOOLEAN,
+    }),
 }
 GROUPS = tuple(SCHEMA)
+# The groups a project's files may not hold: read from the user's file alone.
+USER_ONLY = ("setup",)
 _ROOT = Table(dict(SCHEMA))
 
 

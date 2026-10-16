@@ -60,12 +60,16 @@ questions = "one-at-a-time"
 recommend = true
 
 [roles]
+enabled = true
 manager_default = false
 high_stakes = false
 max_parallel_coders = 3
 
 [memory]
 dir = "docs/memory"
+
+[setup]
+allow_unshared_clone = false
 '''
 
 FIXTURE_DICTIONARIES = {
