@@ -983,7 +983,7 @@ class Backlog(Case):
 
     def test_the_example_of_the_reference_is_clean(self):
         self.write("BACKLOG.md", example("stage-0-backlog.md", "An example of a whole `BACKLOG.md`"))
-        self.write("BACKLOG-B9-offline-journal.md", "anything at all\n- sketch\n" + "x" * 500 + "\n")
+        self.write("BACKLOG/B9-offline-journal.md", "anything at all\n- sketch\n" + "x" * 500 + "\n")
         self.assertClean()
 
     def test_the_example_without_its_document(self):
@@ -1031,10 +1031,10 @@ class Backlog(Case):
         code, report = self.run_check()
         self.assertEqual((code, report["summary"]["violations"], report["summary"]["notes"]), (1, 1, 1))
         self.assertEqual([v["rule"] for v in report["violations"]], ["tasks-line-too-long"])
-        # A document beside a backlog that was not converted is still an orphan.
+        # A document of a backlog that was not converted is still an orphan.
         self.write(TASKS, "")
-        self.write("BACKLOG-B1-a.md", "notes\n")
-        self.assertEqual(self.rules(), [("BACKLOG-B1-a.md", None, "backlog-document-orphan")])
+        self.write("BACKLOG/B1-a.md", "notes\n")
+        self.assertEqual(self.rules(), [("BACKLOG/B1-a.md", None, "backlog-document-orphan")])
 
     def test_the_pointer_line(self):
         self.assertEqual(self.found("- **B1** One\n- loose\n", head="# Backlog\n\n"),
@@ -1082,39 +1082,173 @@ class Backlog(Case):
                          [(5, "backlog-item-not-one-line"), (6, "backlog-item-not-one-line")])
 
     def test_item_documents(self):
-        self.write("BACKLOG-B9-offline-journal.md", "notes\n")
-        good = "- **B9** Offline mode — [notes](BACKLOG-B9-offline-journal.md)\n"
-        self.assertEqual(self.rules(), [("BACKLOG-B9-offline-journal.md", None, "backlog-document-orphan")])
+        self.write("BACKLOG/B9-offline-journal.md", "notes\n")
+        good = "- **B9** Offline mode — [notes](BACKLOG/B9-offline-journal.md)\n"
+        self.assertEqual(self.rules(), [("BACKLOG/B9-offline-journal.md", None, "backlog-document-orphan")])
         self.assertEqual(self.found(good), [])
-        self.assertEqual(self.found("- **B9** [the whole text](BACKLOG-B9-offline-journal.md)\n"), [])
-        for line in ("- **B9** See [notes](BACKLOG-B9-offline-journal.md) for more",
-                     "- **B9** [notes](BACKLOG-B9-offline-journal.md).",
-                     "- **B9** [a](BACKLOG-B9-offline-journal.md) [b](BACKLOG-B9-offline-journal.md)",
-                     "- **B8** Another item — [notes](BACKLOG-B9-offline-journal.md)"):
+        self.assertEqual(self.found("- **B9** [the whole text](BACKLOG/B9-offline-journal.md)\n"), [])
+        for line in ("- **B9** See [notes](BACKLOG/B9-offline-journal.md) for more",
+                     "- **B9** [notes](BACKLOG/B9-offline-journal.md).",
+                     "- **B9** [a](BACKLOG/B9-offline-journal.md) [b](BACKLOG/B9-offline-journal.md)",
+                     "- **B9** [a](BACKLOG/B9-offline-journal.md) [b](BACKLOG-B9-offline-journal.md)",
+                     "- **B8** Another item — [notes](BACKLOG/B9-offline-journal.md)"):
             with self.subTest(line):
                 self.assertEqual(self.found(line + "\n"), [(5, "backlog-document-link")])
-        for target in ("./BACKLOG-B9-offline-journal.md", "docs/BACKLOG-B9-offline-journal.md", "BACKLOG-B9.md",
-                       "BACKLOG-B9-Offline.md", "BACKLOG-B09-offline-journal.md", "BACKLOG-B9-offline_journal.md",
-                       "BACKLOG-B9-offline-journal.md#part", "BACKLOG-B9-offline-journal.txt"):
+        for target in ("./BACKLOG/B9-offline-journal.md", "docs/BACKLOG/B9-offline-journal.md", "BACKLOG/B9.md",
+                       "BACKLOG/B9-Offline.md", "BACKLOG/B09-offline-journal.md", "BACKLOG/B9-offline_journal.md",
+                       "BACKLOG/B9-offline-journal.md#part", "BACKLOG/B9-offline-journal.txt",
+                       "BACKLOG/b9-offline-journal.md", "../docs/BACKLOG/B9-offline-journal.md",
+                       "BACKLOG\\B9-offline-journal.md", "BACKLOG/sub/B9-offline-journal.md",
+                       "BACKLOG/BACKLOG-B9-offline-journal.md", "./BACKLOG-B9-offline-journal.md",
+                       "docs/BACKLOG-B9-offline-journal.md", "BACKLOG-B9.md", "BACKLOG-B9-Offline.md",
+                       "backlog/B9-offline-journal.md", "Backlog\\B9-offline-journal.md",
+                       "backlog-b9-offline-journal.md"):
             with self.subTest(target):
                 self.write("BACKLOG.md", self.HEAD + f"- **B9** Offline mode — [notes]({target})\n")
                 self.assertEqual(self.rules(), [("BACKLOG.md", 5, "backlog-document-link"),
-                                                ("BACKLOG-B9-offline-journal.md", None, "backlog-document-orphan")])
-        self.assertEqual(self.found("- **B9** Offline mode — [notes](BACKLOG-B9-other.md)\n"),
+                                                ("BACKLOG/B9-offline-journal.md", None, "backlog-document-orphan")])
+        _, report = self.run_check()
+        self.assertEqual(report["violations"][0]["message"], "the link's target is `BACKLOG/B<n>-<slug>.md`")
+        # A URL, or a path with no folder of that name, is not a link to an item document.
+        for target in ("https://example.com/BACKLOG/B9-offline-journal.md", "https://example.com/BACKLOG-B9-a.md",
+                       "SPRINT07-PRD-backlog-bugs.md", "BACKLOG.md", "notes/backlog.md"):
+            with self.subTest(target):
+                self.assertEqual(self.found(f"- **B9** Offline mode — [notes]({target})\n"), [])
+        self.assertEqual(self.found("- **B9** Offline mode — [notes](BACKLOG/B9-other.md)\n"),
                          [(5, "backlog-document-missing")])
+        _, report = self.run_check()
+        self.assertEqual(report["violations"][0]["message"], "the folder BACKLOG/ has no B9-other.md")
+        # The same name beside BACKLOG.md is not the document in the folder.
+        (self.docs / "BACKLOG" / "B9-offline-journal.md").unlink()
+        self.write("B9-offline-journal.md", "notes\n")
+        self.assertEqual(self.found(good), [(5, "backlog-document-missing")])
+
+    def test_numbers_and_documents_in_the_folder(self):
+        self.write("BACKLOG/B9-a.md", "notes\n")
+        self.assertEqual(self.found("- **B9** One — [notes](BACKLOG/B9-a.md)\n- **B9** Again — [notes](BACKLOG/B9-a.md)\n"),
+                         [(6, "backlog-number-duplicate")])
+        self.assertEqual(self.found("- **B21** Above — [notes](BACKLOG/B21-a.md)\n"),
+                         [(5, "backlog-document-missing"), (5, "backlog-number-above-pointer")])
 
     def test_orphan_documents(self):
-        self.write("BACKLOG.md", self.HEAD + "- **B9** Offline mode — [notes](BACKLOG-B9-a.md)\n- **B4** Other\n")
-        for name in ("BACKLOG-B9-a.md", "BACKLOG-B9-b.md", "BACKLOG-B4-c.md", "BACKLOG-B5-d.md", "BACKLOG-B05-e.md",
-                     "BACKLOG-B6-.md"):
-            self.write(name, "notes\n")
+        self.write("BACKLOG.md", self.HEAD + "- **B9** Offline mode — [notes](BACKLOG/B9-a.md)\n- **B4** Other\n")
+        for name in ("B9-a.md", "B9-b.md", "B4-c.md", "B5-d.md", "B05-e.md", "B6-.md", "notes.md",
+                     "BACKLOG-B7-unrenamed.md"):
+            self.write("BACKLOG/" + name, "notes\n")
+        self.write("BACKLOG/sketch.png", "not a document\n")
         self.write("BACKLOG-notes.md", "not an item document\n")
-        self.write("DONE/BACKLOG-B1-archived.md", "the archive is not checked\n")
+        self.write("B3-beside.md", "not in the folder\n")
+        self.write("DONE/BACKLOG/B1-archived.md", "the archive is not checked\n")
+        self.write("DONE/BACKLOG-B2-archived.md", "the archive is not checked\n")
         orphans = [name for name, _, rule in self.rules() if rule == "backlog-document-orphan"]
-        self.assertEqual(orphans, ["BACKLOG-B05-e.md", "BACKLOG-B4-c.md", "BACKLOG-B5-d.md", "BACKLOG-B6-.md",
-                                   "BACKLOG-B9-b.md"])
+        self.assertEqual(orphans, ["BACKLOG/B05-e.md", "BACKLOG/B4-c.md", "BACKLOG/B5-d.md", "BACKLOG/B6-.md",
+                                   "BACKLOG/B9-b.md", "BACKLOG/BACKLOG-B7-unrenamed.md", "BACKLOG/notes.md"])
+        self.assertEqual(len(self.rules()), 7)
         (self.docs / "BACKLOG.md").unlink()
-        self.assertEqual(len(self.rules()), 6)  # with no backlog, every document is an orphan
+        self.assertEqual(len(self.rules()), 8)  # with no backlog, every document is an orphan
+
+    EARLIER = "backlog-documents-earlier-place"
+    OLD_LINK = "- **B9** Offline mode — [notes](BACKLOG-B9-offline-journal.md)\n"
+    MOVE = ": move the documents into the folder BACKLOG/ and point the links there, as backlog-conversion.md says"
+
+    def earlier(self) -> tuple[int, list[tuple], list[str]]:
+        """The exit code, the violations, and the messages of the earlier-place notes."""
+        code, report = self.run_check()
+        self.assertTrue(all(note["rule"] == self.EARLIER and note["file"] == "BACKLOG.md" and note["line"] is None
+                            for note in report["notes"]), report["notes"])
+        return (code, [(v["file"], v["line"], v["rule"]) for v in report["violations"]],
+                [note["message"] for note in report["notes"]])
+
+    def test_documents_at_their_earlier_place_are_one_note(self):
+        # A project converted before the folder: documents beside BACKLOG.md, and links to them.
+        self.write("BACKLOG.md", self.HEAD + self.OLD_LINK + "- **B10** Ten — [notes](BACKLOG-B10-ten.md)\n")
+        for name in ("BACKLOG-B9-offline-journal.md", "BACKLOG-B10-ten.md", "backlog-b3-lower.md"):
+            self.write(name, "notes\n")
+        self.assertEqual(self.earlier(), (0, [], [
+            "3 item documents are at the earlier place beside BACKLOG.md (first: BACKLOG-B10-ten.md) and 2 items "
+            "link to that place (first: line 5)" + self.MOVE]))
+        code, text = check.run(self.arguments())
+        self.assertEqual(code, 0)
+        self.assertIn("\nViolations: 0\n\nNotes: 1\nBACKLOG.md: backlog-documents-earlier-place: 3 item documents",
+                      text)
+        self.assertTrue(text.endswith("\nResult: nothing needs action\n"))
+        # One of each.
+        (self.docs / "BACKLOG-B10-ten.md").unlink()
+        (self.docs / "backlog-b3-lower.md").unlink()
+        self.write("BACKLOG.md", self.HEAD + self.OLD_LINK)
+        self.assertEqual(self.earlier(), (0, [], [
+            "1 item document is at the earlier place beside BACKLOG.md (first: BACKLOG-B9-offline-journal.md) and "
+            "1 item links to that place (first: line 5)" + self.MOVE]))
+        # A document with no BACKLOG.md is the same note.
+        (self.docs / "BACKLOG.md").unlink()
+        self.assertEqual(self.earlier()[:2], (0, []))
+        self.assertEqual(len(self.earlier()[2]), 1)
+
+    def test_a_link_to_the_earlier_place_is_still_checked(self):
+        self.write("BACKLOG-B9-offline-journal.md", "notes\n")
+        for line in ("- **B8** Another item — [notes](BACKLOG-B9-offline-journal.md)",
+                     "- **B9** See [notes](BACKLOG-B9-offline-journal.md) for more"):
+            with self.subTest(line):
+                self.write("BACKLOG.md", self.HEAD + line + "\n")
+                code, violations, notes = self.earlier()
+                self.assertEqual((code, violations, len(notes)), (1, [("BACKLOG.md", 5, "backlog-document-link")], 1))
+        # A link to the earlier place whose document is in neither place.
+        self.write("BACKLOG.md", self.HEAD + "- **B9** Gone — [notes](BACKLOG-B9-gone.md)\n")
+        _, report = self.run_check()
+        self.assertEqual([(v["line"], v["rule"], v["message"]) for v in report["violations"]], [
+            (5, "backlog-document-missing",
+             "BACKLOG-B9-gone.md is not beside BACKLOG.md, and the folder BACKLOG/ has no B9-gone.md")])
+
+    def test_a_move_half_done(self):
+        # Moved, and the link not yet changed: the copy in the folder is the one pointed to, no orphan.
+        self.write("BACKLOG.md", self.HEAD + self.OLD_LINK)
+        self.write("BACKLOG/B9-offline-journal.md", "notes\n")
+        self.assertEqual(self.earlier(), (0, [], ["1 item links to that place (first: line 5)" + self.MOVE]))
+        # Both copies: compare them and delete the earlier one, rather than moving it onto the other.
+        both = ("; 1 is also in BACKLOG/ (first: BACKLOG-B9-offline-journal.md): compare the two copies, then "
+                "delete the one beside BACKLOG.md instead of moving it")
+        self.write("BACKLOG-B9-offline-journal.md", "notes\n")
+        self.assertEqual(self.earlier(), (0, [], [
+            "1 item document is at the earlier place beside BACKLOG.md (first: BACKLOG-B9-offline-journal.md) and "
+            "1 item links to that place (first: line 5)" + self.MOVE + both]))
+        # The link changed, and the copy left behind.
+        self.write("BACKLOG.md", self.HEAD + "- **B9** Offline mode — [notes](BACKLOG/B9-offline-journal.md)\n")
+        self.assertEqual(self.earlier(), (0, [], [
+            "1 item document is at the earlier place beside BACKLOG.md (first: BACKLOG-B9-offline-journal.md)"
+            + self.MOVE + both]))
+        # Moved and pointed to: clean, with no note.
+        (self.docs / "BACKLOG-B9-offline-journal.md").unlink()
+        self.assertEqual(self.earlier(), (0, [], []))
+
+    def test_a_folder_named_in_another_case(self):
+        # Every system gives the same answer: the folder is the one named exactly BACKLOG.
+        self.write("backlog/B9-a.md", "notes\n")
+        self.write("BACKLOG.md", self.HEAD + "- **B9** One — [notes](backlog/B9-a.md)\n")
+        _, report = self.run_check()
+        self.assertEqual([(v["file"], v["line"], v["rule"]) for v in report["violations"]],
+                         [("backlog", None, "backlog-folder-case"), ("BACKLOG.md", 5, "backlog-document-link")])
+        self.assertEqual(report["violations"][0]["message"],
+                         "differs from BACKLOG only in case: the item documents are in the folder BACKLOG, in "
+                         "capitals; rename this one, or move what it holds into BACKLOG")
+        self.write("BACKLOG.md", self.HEAD + "- **B9** One — [notes](BACKLOG/B9-a.md)\n")
+        self.assertEqual(self.rules(), [("backlog", None, "backlog-folder-case"),
+                                        ("BACKLOG.md", 5, "backlog-document-missing")])
+
+    def test_a_folder_that_cannot_be_listed(self):
+        self.write("BACKLOG", "a file, not the folder\n")
+        self.assertEqual(self.found("- **B9** Offline mode — [notes](BACKLOG/B9-a.md)\n"), [])
+        _, report = self.run_check()
+        self.assertEqual([(v["file"], v["line"], v["rule"]) for v in report["violations"]],
+                         [("BACKLOG", None, "not-a-directory")])
+        (self.docs / "BACKLOG").unlink()
+        outside = self.root / "outside-backlog"
+        self.write("B9-a.md", "notes\n", outside)
+        self.write("B4-b.md", "notes\n", outside)
+        try:
+            (self.docs / "BACKLOG").symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"no symbolic links here: {exc}")
+        self.assertEqual(self.rules(), [("BACKLOG", None, "link-outside")])
 
 
 # --- The lesson index ---------------------------------------------------------
@@ -1168,7 +1302,7 @@ class Files(Case):
                             (TASKS, self.docs), ("AGENTS.md", self.project)):
             (where / name).write_bytes(b"# Title\n\nLatin-1: caf\xe9\n")
         self.write("SPRINT02-PLAN-other.md", LONG + "\n")
-        self.write("BACKLOG-B1-a.md", "\xff\n")
+        self.write("BACKLOG/B1-a.md", "\xff\n")
         code, report = self.run_check()
         self.assertEqual(code, 1)
         found = sorted((v["file"], v["line"], v["rule"]) for v in report["violations"])
@@ -1192,7 +1326,7 @@ class Files(Case):
             with self.subTest(name):
                 for file, where in places:
                     self.write(file, body, where)
-                self.write("BACKLOG-B1-a.md", "notes\n")  # an unread backlog names no orphan
+                self.write("BACKLOG/B1-a.md", "notes\n")  # an unread backlog names no orphan
                 code, report = self.run_check()
                 self.assertEqual(code, 1)
                 self.assertEqual(sorted((v["file"], v["line"], v["rule"]) for v in report["violations"]),
@@ -1202,7 +1336,7 @@ class Files(Case):
         self.assertIn("1 carriage return not directly before a newline", self.message_of("a\rb\n"))
 
     def message_of(self, body: str) -> str:
-        for name in ("DEFERRED.md", "BACKLOG.md", PLAN, "BACKLOG-B1-a.md"):
+        for name in ("DEFERRED.md", "BACKLOG.md", PLAN, "BACKLOG/B1-a.md"):
             (self.docs / name).unlink(missing_ok=True)
         (self.project / "AGENTS.md").unlink(missing_ok=True)
         self.write(TASKS, body)
@@ -2192,7 +2326,8 @@ class SprintWorkspaces(Case):
         stale = {
             "DEFERRED.md": deferred(item(1, review="2000-01-01"), "A stray line\n"),
             "BACKLOG.md": "Latest assigned: B1\n\n- **B1** One\n  more\n- **B9** Nine\n",
-            "BACKLOG-B7-orphan.md": "# An orphan\n",
+            "BACKLOG-B7-orphan.md": "# An orphan at the earlier place\n",
+            "BACKLOG/B8-orphan.md": "# An orphan\n",
             "SPRINT-INDEX.md": "anything\n",
             "SPRINT02-TASKS-other.md": LONG_TASK + "\n",
             "SPRINT01-STATE-a.md": LONG_TASK + "\n",

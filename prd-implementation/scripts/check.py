@@ -25,7 +25,9 @@ load code, and its tests assert that from its syntax tree.
 What it reads, all as UTF-8:
 
     DEFERRED.md and BACKLOG.md in the sprint docs directory, and the names
-    of the BACKLOG-B<n>-<slug>.md files beside them (the names only)
+    of the item documents in the folder BACKLOG/ beside them (the names
+    only); a BACKLOG-B<n>-<slug>.md beside them is a document at its
+    earlier place, reported in one note, to be moved into the folder
     SPRINTNN-PLAN-*.md and SPRINTNN-TASKS-*.md there; never DONE/
     AGENTS.md in the project root, for the lesson index: the block between
     the lines <!-- project-memory:index:start --> and
@@ -75,7 +77,8 @@ A file is read only if, with every link in its path followed, it is still
 inside the directory it was looked for in: the sprint docs directory, a
 worktree's for its PLAN and TASKS, or the project root for AGENTS.md. A
 git file is read where it is. A link that leads outside is reported and
-not read. The docs directory itself is taken as named, link or not.
+not read. The folder BACKLOG/ is listed under the same rule. The docs
+directory itself is taken as named, link or not.
 
 The report has four parts. The deferred items: every item that is open,
 and every item whose state cannot be told (its "Status:" is missing or
@@ -84,7 +87,8 @@ sprint, the checks tied to a sprint skip it, and closed it is reported,
 since it leaves the file when it is closed. The sprint workspaces,
 when the project root holds a .git. The violations. And the notes: facts
 that need no action, such as a BACKLOG.md or a DEFERRED.md still in the
-old form. A note is not a violation and has no effect on the exit code.
+old form, or item documents at their earlier place. A note is not a
+violation and has no effect on the exit code.
 
 Settings. The process group is read here, and no other group: from the
 same files, in the same order and under the same rules as the setup tool's
@@ -168,13 +172,15 @@ INDEX_LINE_LIMIT = 150
 
 DEFERRED_FILE = "DEFERRED.md"
 BACKLOG_FILE = "BACKLOG.md"
+BACKLOG_DIR = "BACKLOG"
 AGENTS_FILE = "AGENTS.md"
 INDEX_START = "<!-- project-memory:index:start -->"
 INDEX_END = "<!-- project-memory:index:end -->"
 
 PLAN_NAME = re.compile(r"^SPRINT[0-9]{2,}-PLAN-.+\.md$")
 TASKS_NAME = re.compile(r"^SPRINT[0-9]{2,}-TASKS-.+\.md$")
-DOCUMENT_NAME = re.compile(r"^BACKLOG-B([0-9]+)-.*\.md$")
+# An item document at its earlier place, beside BACKLOG.md: BACKLOG-B<n>-<slug>.md, in any case.
+OLD_DOCUMENT_NAME = re.compile(r"^BACKLOG-B[0-9]+-.*\.md$", re.IGNORECASE)
 
 DATE = r"[0-9]{4}-[0-9]{2}-[0-9]{2}"
 DATE_ONLY = re.compile(rf"^{DATE}$")
@@ -196,7 +202,14 @@ B_ITEM = re.compile(r"^- \*\*B([1-9][0-9]*)\*\* (?:\*\*\[(?:HIGH|MED|LOW)\]\*\* 
 B_NUMBERED = re.compile(r"^- \*\*B[0-9]+\*\*")
 B_TAG = re.compile(r"\*\*\[[^\]]*\]\*\*")
 B_LINK = re.compile(r"\]\(([^)]*)\)")
-B_DOCUMENT = re.compile(r"^BACKLOG-B([1-9][0-9]*)-[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
+B_DOCUMENT = re.compile(r"^BACKLOG/(?P<name>B(?P<n>[1-9][0-9]*)-[a-z0-9]+(?:-[a-z0-9]+)*\.md)$")
+B_OLD_DOCUMENT = re.compile(r"^BACKLOG-(?P<name>B(?P<n>[1-9][0-9]*)-[a-z0-9]+(?:-[a-z0-9]+)*\.md)$")
+# A link is taken for a link to an item document when its target is a path,
+# not a URL, with a folder named BACKLOG in any case, or a last part that
+# starts like a document at its earlier place.
+URL_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+PATH_PARTS = re.compile(r"[/\\]")
+OLD_DOCUMENT_START = re.compile(r"^BACKLOG-B[0-9]", re.IGNORECASE)
 
 SPRINT_BRANCH = re.compile(r"^sprint/([0-9]{2,})-([^/]+)$")
 SPRINT_KINDS = ("THOUGHTS", "PRD", "PLAN", "TASKS", "STATE")
@@ -334,6 +347,26 @@ def read_lines(path: Path, inside: Path) -> tuple[list[str] | None, tuple[str, s
             "a line ends with a newline, or a carriage return and a newline; it was not checked",
         )
     return split_lines(text), None
+
+
+def backlog_documents(docs: Path, names: list[str]) -> tuple[set[str] | None, tuple[str, str] | None]:
+    """The names in the folder ``BACKLOG/`` of the sprint docs directory, each
+    as ``BACKLOG/<name>``, or None and the rule and message of why the folder
+    was not listed. ``names`` are the names in the docs directory: the folder
+    is there when one of them is exactly ``BACKLOG``, on every system. No
+    folder is an empty set. Only names are read."""
+    if BACKLOG_DIR not in names:
+        return set(), None
+    folder = docs / BACKLOG_DIR
+    try:
+        real = folder.resolve(strict=True)
+        if not real.is_relative_to(docs.resolve(strict=True)):
+            return None, ("link-outside", "a link that leads out of its directory; it was not read")
+        if not real.is_dir():
+            return None, ("not-a-directory", "is not a directory: the item documents are in a folder of this name")
+        return {f"{BACKLOG_DIR}/{entry.name}" for entry in real.iterdir()}, None
+    except (OSError, RuntimeError, ValueError) as exc:
+        return None, ("unreadable", f"cannot be read: {_reason(exc)}")
 
 
 def _reason(exc: BaseException) -> str:
@@ -624,14 +657,32 @@ def check_tasks(lines: list[str], add, plan: dict[str, tuple[int, int | None]] |
 
 # --- BACKLOG.md ---------------------------------------------------------------
 
-def check_backlog(lines: list[str], names: set[str], add, note) -> set[str]:
-    """Check ``BACKLOG.md``. Returns the item documents its items point to.
+class Backlog:
+    """What the backlog check knows of the item documents, and what it found.
+
+    ``documents`` holds the files of the folder ``BACKLOG/``, each as
+    ``BACKLOG/<name>``, or is None when the folder could not be listed: then
+    no document is reported missing. ``earlier`` holds the names of the
+    documents at their earlier place, beside BACKLOG.md. The check adds to
+    ``pointed`` the folder's documents an item points to, and to
+    ``old_links`` the line of each item whose link names the earlier place.
+    """
+
+    def __init__(self, documents: set[str] | None, earlier: set[str]):
+        self.documents = documents
+        self.earlier = earlier
+        self.pointed: set[str] = set()
+        self.old_links: list[int] = []
+
+
+def check_backlog(lines: list[str], backlog: Backlog, add, note) -> None:
+    """Check ``BACKLOG.md``, noting in ``backlog`` the documents its items
+    point to.
 
     A file with no pointer line and no item line is clean when it holds
     nothing but blank lines and headings; otherwise it has not been
     converted, which is a note and not a violation.
     """
-    pointed: set[str] = set()
     if not any(B_POINTER.match(line) or B_NUMBERED.match(line) for line in lines):
         if any(line.strip() and not line.startswith("#") for line in lines):
             note(
@@ -639,7 +690,7 @@ def check_backlog(lines: list[str], names: set[str], add, note) -> set[str]:
                 "backlog-not-converted",
                 "no pointer line and no numbered item: the file is in the old form; its lines were not checked",
             )
-        return pointed
+        return
     pointer = None
     items: dict[int, int] = {}
     order: list[tuple[int, int]] = []
@@ -678,7 +729,7 @@ def check_backlog(lines: list[str], names: set[str], add, note) -> set[str]:
                     "backlog-item-form",
                     "a priority tag is **[HIGH]**, **[MED]** or **[LOW]**, once, directly after the number",
                 )
-            _check_document_link(line, item, number, names, pointed, add)
+            _check_document_link(line, item, number, backlog, add)
         elif line.startswith("- "):
             before = "item"
             add(number, "backlog-item-form", "not of the form `- **B<n>** <text>`")
@@ -694,11 +745,18 @@ def check_backlog(lines: list[str], names: set[str], add, note) -> set[str]:
         for item, number in order:
             if item > pointer:
                 add(number, "backlog-number-above-pointer", f"B{item} is above the pointer line's B{pointer}")
-    return pointed
 
 
-def _check_document_link(line: str, item: int, number: int, names: set[str], pointed: set[str], add) -> None:
-    links = [match for match in B_LINK.finditer(line) if "BACKLOG-B" in match.group(1)]
+def _is_document_target(target: str) -> bool:
+    if URL_SCHEME.match(target):
+        return False
+    parts = PATH_PARTS.split(target)
+    return any(part.casefold() == BACKLOG_DIR.casefold() for part in parts[:-1]) or bool(
+        OLD_DOCUMENT_START.match(parts[-1]))
+
+
+def _check_document_link(line: str, item: int, number: int, backlog: Backlog, add) -> None:
+    links = [match for match in B_LINK.finditer(line) if _is_document_target(match.group(1))]
     if not links:
         return
     if len(links) > 1:
@@ -706,17 +764,59 @@ def _check_document_link(line: str, item: int, number: int, names: set[str], poi
         return
     link = links[0]
     target = link.group(1)
-    named = B_DOCUMENT.match(target)
+    old = B_OLD_DOCUMENT.match(target)
+    named = old or B_DOCUMENT.match(target)
     if not named:
-        add(number, "backlog-document-link", "the link's target is the file name `BACKLOG-B<n>-<slug>.md`")
+        add(number, "backlog-document-link", f"the link's target is `{BACKLOG_DIR}/B<n>-<slug>.md`")
         return
-    pointed.add(target)
-    if int(named.group(1)) != item:
-        add(number, "backlog-document-link", f"B{item} points to the document of B{named.group(1)}")
+    if int(named.group("n")) != item:
+        add(number, "backlog-document-link", f"B{item} points to the document of B{named.group('n')}")
     if link.end() != len(line):
         add(number, "backlog-document-link", "the link to the document is at the end of the line")
-    if target not in names:
-        add(number, "backlog-document-missing", f"{target} is not in the sprint docs directory")
+    documents = backlog.documents
+    moved = f"{BACKLOG_DIR}/{named.group('name')}"
+    if old:
+        # The earlier place: one note for the backlog, not a violation for each item.
+        backlog.old_links.append(number)
+        if documents is not None and moved in documents:
+            backlog.pointed.add(moved)  # moved already, and the link not yet changed
+        elif documents is not None and target not in backlog.earlier:
+            add(number, "backlog-document-missing",
+                f"{target} is not beside BACKLOG.md, and the folder {BACKLOG_DIR}/ has no {named.group('name')}")
+        return
+    backlog.pointed.add(target)
+    if documents is not None and target not in documents:
+        add(number, "backlog-document-missing", f"the folder {BACKLOG_DIR}/ has no {named.group('name')}")
+
+
+def _moved_name(name: str) -> str:
+    """The name in the folder of a document at its earlier place:
+    ``BACKLOG-B9-slug.md`` is ``B9-slug.md``, whatever the case of its start."""
+    return "B" + name[len("BACKLOG-B"):]
+
+
+def _earlier_place(backlog: Backlog) -> str | None:
+    """The one note for item documents at their earlier place, or None."""
+    earlier = sorted(backlog.earlier)
+    links = backlog.old_links
+    if not earlier and not links:
+        return None
+    parts = []
+    if earlier:
+        many = len(earlier) > 1
+        parts.append(f"{len(earlier)} item document{'s are' if many else ' is'} at the earlier place beside "
+                     f"BACKLOG.md (first: {earlier[0]})")
+    if links:
+        many = len(links) > 1
+        parts.append(f"{len(links)} item{'s' if many else ''} link{'' if many else 's'} to that place "
+                     f"(first: line {links[0]})")
+    message = (" and ".join(parts) + f": move the documents into the folder {BACKLOG_DIR}/ and point the links "
+               "there, as backlog-conversion.md says")
+    both = [name for name in earlier if f"{BACKLOG_DIR}/{_moved_name(name)}" in (backlog.documents or ())]
+    if both:
+        message += (f"; {len(both)} {'are' if len(both) > 1 else 'is'} also in {BACKLOG_DIR}/ (first: {both[0]}): "
+                    "compare the two copies, then delete the one beside BACKLOG.md instead of moving it")
+    return message
 
 
 # --- DEFERRED.md --------------------------------------------------------------
@@ -1318,16 +1418,27 @@ def build_report(project: Path, docs: Path, docs_from: str, settings: dict, toda
         lines = lines_of(DEFERRED_FILE, docs)
         if lines is not None:
             deferred = check_deferred(lines, today, adder(DEFERRED_FILE), adder(DEFERRED_FILE, notes))
-    pointed: set[str] = set()
+    for name in names:
+        if name != BACKLOG_DIR and name.casefold() == BACKLOG_DIR.casefold():
+            adder(name)(None, "backlog-folder-case",
+                        f"differs from {BACKLOG_DIR} only in case: the item documents are in the folder "
+                        f"{BACKLOG_DIR}, in capitals; rename this one, or move what it holds into {BACKLOG_DIR}")
+    documents, fault = backlog_documents(docs, names)
+    if fault is not None:
+        adder(BACKLOG_DIR)(None, *fault)
+    backlog = Backlog(documents, {name for name in names if OLD_DOCUMENT_NAME.match(name)})
     if BACKLOG_FILE in names:
         lines = lines_of(BACKLOG_FILE, docs)
         if lines is not None:
-            pointed = check_backlog(lines, set(names), adder(BACKLOG_FILE), adder(BACKLOG_FILE, notes))
+            check_backlog(lines, backlog, adder(BACKLOG_FILE), adder(BACKLOG_FILE, notes))
         else:
-            pointed = {name for name in names if DOCUMENT_NAME.match(name)}  # unknown: report no orphan
-    for name in names:
-        if DOCUMENT_NAME.match(name) and name not in pointed:
+            backlog.pointed = set(documents or ())  # unknown: report no orphan
+    for name in sorted(documents or ()):
+        if name.endswith(".md") and name not in backlog.pointed:
             adder(name)(None, "backlog-document-orphan", "no item of BACKLOG.md points to this document")
+    message = _earlier_place(backlog)
+    if message:
+        adder(BACKLOG_FILE, notes)(None, "backlog-documents-earlier-place", message)
     # A PLAN's name sorts before the name of the TASKS of the same sprint.
     plans: dict[str, dict] = {}
     for name in names:

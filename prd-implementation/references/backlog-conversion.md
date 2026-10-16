@@ -13,7 +13,7 @@ A backlog written before items had numbers is free-form: bullets, items of sever
 3. **Number the items in file order**, top to bottom, from `B1`. The order in the file is the only order there is: do not sort by priority, age or topic.
 4. **Decide the form of each item.**
    - It fits one line of at most 300 characters without losing anything: it becomes `- **B<n>** <text>`, in its own words. A priority tag it already has moves to directly after the number.
-   - It is longer, has sub-bullets, or holds a code block or a table: its full original text goes, unchanged, into `BACKLOG-B<n>-<slug>.md`, and the item becomes one line that names the idea and ends with the link to that document.
+   - It is longer, has sub-bullets, or holds a code block or a table: its full original text goes, unchanged, into `BACKLOG/B<n>-<slug>.md`, and the item becomes one line that names the idea and ends with the link to that document.
    - It holds several unrelated ideas: it is still one item, pointing to a document, unless the user says to split it. A split gives each part its own number, in the order the parts appear.
 5. **Put the doubtful cases to the user before writing**: the items that would be split, any text that is not an item (an introduction, a note to self, a dated log), and any item whose one-line name you had to invent. Text that is not an item is deleted or moved only as the user says.
 6. **Write the change**: the title `# Backlog` if the file has none, then the pointer line `Latest assigned: B<n>` with the highest number assigned, above the first item; the item lines under their headers; the item documents.
@@ -27,3 +27,14 @@ A backlog written before items had numbers is free-form: bullets, items of sever
 
 - Numbers assigned here are permanent from the moment the change is committed. If the user rejects the result before a commit, discard the change and start again; after a commit, fix an item in place and leave its number.
 - Other docs did not cite backlog numbers before the conversion, so nothing else needs editing. A THOUGHTS file that quotes an item plucked earlier stays as it is.
+
+## Item documents at their earlier place
+
+A backlog converted before item documents had their folder keeps them beside `BACKLOG.md` as `BACKLOG-B<n>-<slug>.md`, and its items link to those names. The check command reports this once, as a note for the backlog. Moving them is one change on the default branch, in the working tree that has it checked out, made on the user's word by whoever keeps the backlog. The change holds the moved documents, `BACKLOG.md` and the links that steps 3 and 5 fix, and nothing else.
+
+1. **Check the starting point.** A document the note says is also in `BACKLOG/` has two copies: compare them. The same text: delete the copy beside `BACKLOG.md` instead of moving it. Different text: put both to the user before going on.
+2. **Move each document**, keeping its number and slug: from the sprint docs directory, after creating the folder `BACKLOG/` there, `git mv BACKLOG-B<n>-<slug>.md BACKLOG/B<n>-<slug>.md`. A document git does not track, as an uncommitted conversion leaves it, is moved with a plain move instead. Its name in the folder starts with a capital `B`, whatever the case of the earlier name.
+3. **Fix the links inside each moved document.** A relative link in it now starts one folder deeper: `SPRINT07-PRD-x.md` becomes `../SPRINT07-PRD-x.md`, `../src/a.py` becomes `../../src/a.py`, and a link to another moved document, `BACKLOG-B4-y.md`, becomes `B4-y.md`. A URL, an anchor in the same file and an absolute path stay as they are.
+4. **Point each item's link to the new place**: in `BACKLOG.md`, the target `BACKLOG-B<n>-<slug>.md` becomes `BACKLOG/B<n>-<slug>.md`. Nothing else in the file changes: no number, text, tag or order.
+5. **Fix the links from other files.** Search the repository, `DONE/` included, for `BACKLOG-B`: a THOUGHTS file, `DEFERRED-context.md` or a lesson of the project memory may link to a moved document. Retarget each such link, or path written out, to the document's new path from the file that holds it. A name whose document was deleted with its item earlier stays as it is.
+6. **Verify and stop.** The check command reports no note and no violation for the backlog: nothing at the earlier place, no document missing and no orphan. A second search for `BACKLOG-B` finds no reference to a moved document. `git status` shows the moves, `BACKLOG.md` and the files whose links were fixed, and nothing else. The commit is the user's decision; propose one commit holding exactly this change.

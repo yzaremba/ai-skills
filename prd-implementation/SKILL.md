@@ -1,6 +1,6 @@
 ---
 name: prd-implementation
-description: Staged sprint process with explicit gates, from backlog through THOUGHTS, PRD, PLAN and TASKS to implementation and archiving. Use when the user asks to start, brainstorm, plan or implement a sprint, to write or finalize a PRD, to work through sprint steps such as P1.2, to close, merge or archive a sprint, to abandon or supersede a sprint, to add a backlog item, or to defer work or check, resolve, re-date or drop deferred items; and whenever a sprint doc is read, created, renamed or edited - SPRINTNN-THOUGHTS-slug.md, SPRINTNN-PRD-slug.md, SPRINTNN-PLAN-slug.md, SPRINTNN-TASKS-slug.md, SPRINTNN-STATE-slug.md, SPRINT-INDEX.md, BACKLOG.md, BACKLOG-BN-slug.md, DEFERRED.md, DEFERRED-context.md or DONE/README.md.
+description: Staged sprint process with explicit gates, from backlog through THOUGHTS, PRD, PLAN and TASKS to implementation and archiving. Use when the user asks to start, brainstorm, plan or implement a sprint, to write or finalize a PRD, to work through sprint steps such as P1.2, to close, merge or archive a sprint, to abandon or supersede a sprint, to add a backlog item, or to defer work or check, resolve, re-date or drop deferred items; and whenever a sprint doc is read, created, renamed or edited - SPRINTNN-THOUGHTS-slug.md, SPRINTNN-PRD-slug.md, SPRINTNN-PLAN-slug.md, SPRINTNN-TASKS-slug.md, SPRINTNN-STATE-slug.md, SPRINT-INDEX.md, BACKLOG.md, BACKLOG/BN-slug.md, BACKLOG-BN-slug.md, DEFERRED.md, DEFERRED-context.md or DONE/README.md.
 compatibility: claude-code, codex
 ---
 
@@ -29,7 +29,7 @@ All files are in `references/` in this skill's directory.
 |-------|------|------|
 | All stages | [conventions.md](references/conventions.md) | Before creating, renaming or editing any sprint doc |
 | 0. Backlog | [stage-0-backlog.md](references/stage-0-backlog.md) | An idea, bug or wish is captured outside a sprint; `BACKLOG.md` is read or edited; a sprint is about to start |
-| 0. Backlog | [backlog-conversion.md](references/backlog-conversion.md) | The user agrees to convert a `BACKLOG.md` in the old form |
+| 0. Backlog | [backlog-conversion.md](references/backlog-conversion.md) | The user agrees to convert a `BACKLOG.md` in the old form, or to move item documents out of their earlier place |
 | 1. THOUGHTS | [stage-1-thoughts.md](references/stage-1-thoughts.md) | Starting or brainstorming a sprint |
 | 2. PRD | [stage-2-prd.md](references/stage-2-prd.md) | The user confirms THOUGHTS are ready to become requirements |
 | 3. PLAN + TASKS | [stage-3-plan-tasks.md](references/stage-3-plan-tasks.md) | The user says the PRD is final, e.g. "PRD is good" or "generate PLAN and TASKS" |

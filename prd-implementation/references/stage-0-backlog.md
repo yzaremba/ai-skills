@@ -38,10 +38,11 @@ Every line of `BACKLOG.md` that is not blank is one of three things, and nothing
 
 What does not fit one line goes in a **dedicated document**, and the item is the one line that points to it.
 
-- The document is `BACKLOG-B<n>-<slug>.md`, in the sprint docs directory beside `BACKLOG.md`, with the item's own number and a short kebab-case slug: `BACKLOG-B9-offline-journal.md`. No subdirectory.
-- The item points to it with a markdown link **at the end of the line**, whose target is that file name: `- **B9** Offline mode for the trade journal — [notes](BACKLOG-B9-offline-journal.md)`. The link's text is free. An item has at most one document.
+- The document is `B<n>-<slug>.md` in the folder `BACKLOG/` of the sprint docs directory, beside `BACKLOG.md`, with the item's own number and a short kebab-case slug: `BACKLOG/B9-offline-journal.md`. Of the backlog, only `BACKLOG.md` is in the sprint docs directory itself; its item documents are in the folder, which is named `BACKLOG` in capitals on every system.
+- The item points to it with a markdown link **at the end of the line**, whose target is the document's path from `BACKLOG.md`, `BACKLOG/B<n>-<slug>.md`: `- **B9** Offline mode for the trade journal — [notes](BACKLOG/B9-offline-journal.md)`. The link's text is free. An item has at most one document.
 - The document is free-form: bullets, half-thoughts, sketches, open questions. It has no required sections and no limits. This is where the unstructured thinking goes; the backlog file stays a list.
-- An item and its document live and die together: a pointer whose document is missing, and a `BACKLOG-B<n>-*.md` file with no item of that number, are both violations.
+- An item and its document live and die together: a pointer whose document is missing, and a `.md` file in `BACKLOG/` that no item points to, are both violations.
+- **Documents at their earlier place**, `BACKLOG-B<n>-<slug>.md` beside `BACKLOG.md`, and links to those names, are the layout of a backlog converted before the folder. The check command reports them once for the backlog, as a note like "not converted" below, and not item by item. Moving them is "Item documents at their earlier place" in [backlog-conversion.md](backlog-conversion.md), on the user's word.
 - Do not start a document for an idea that fits its line.
 
 ## Example
@@ -60,7 +61,7 @@ Latest assigned: B14
 
 ## Features
 
-- **B9** **[MED]** Offline mode for the trade journal — [notes](BACKLOG-B9-offline-journal.md)
+- **B9** **[MED]** Offline mode for the trade journal — [notes](BACKLOG/B9-offline-journal.md)
 - **B12** Let a note carry a link to the trade it is about
 - **B14** **[LOW]** Keyboard shortcuts for the three most used filters
 

@@ -89,7 +89,7 @@ An epic has no worktree of its own. Its docs are shared between its sprints, so 
 | Doc | Written on |
 |-----|------------|
 | EPIC THOUGHTS, the EPIC PRD (charter) and the epic index (`EPIC-INDEX.md`) | The default branch |
-| The ROADMAP, the backlog (`BACKLOG.md`) with its item documents (`BACKLOG-B<n>-<slug>.md`) and the archive index (`DONE/README.md`) | The default branch only, at any time, also while a sprint is active |
+| The ROADMAP, the backlog (`BACKLOG.md`) with its item documents (`BACKLOG/B<n>-<slug>.md`) and the archive index (`DONE/README.md`) | The default branch only, at any time, also while a sprint is active |
 | A sprint's own docs | Where the `prd-implementation` skill says: the first THOUGHTS file on the default branch, everything later in the sprint's worktree or branch, which is made right after the sprint's start commit |
 
 - **The ROADMAP is never changed in a sprint worktree.** The copy there is a stale one. A row's sprint number, its Docs link and each change of its Status are made in the working tree that has the default branch checked out; if none has, ask the user.
