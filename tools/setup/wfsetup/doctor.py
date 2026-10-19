@@ -143,7 +143,9 @@ PERMISSIONS_KEY = "default_permissions"
 # The size at which Codex stops adding instruction files (R7.4); the check
 # ``instruction-files`` reads it.
 DOC_BYTES_KEY = "project_doc_max_bytes"
-CODEX_KEYS = (THREADS_KEY, SANDBOX_KEY, PERMISSIONS_KEY, DOC_BYTES_KEY)
+# The wait floor of ``wait_agent`` and its companions (``codexsettings``).
+WAIT_MIN_KEY, WAIT_DEFAULT_KEY, WAIT_MAX_KEY = codexsettings.WAIT_KEYS
+CODEX_KEYS = (THREADS_KEY, SANDBOX_KEY, PERMISSIONS_KEY, DOC_BYTES_KEY, *codexsettings.WAIT_KEYS)
 # The Manager's session is the primary thread, which the limit does not
 # count; below it run an Implementation Manager, three Coders and a
 # reviewer, with room for a second reviewer and a specialist.
@@ -1132,6 +1134,8 @@ def check_codex_settings(context: Context) -> list[Finding]:
     else:
         findings.append(fine(f"{THREADS_KEY} = {threads}", THREADS_KEY))
 
+    findings.extend(_wait_findings(found.values, shown))
+
     sandbox, permissions = found.values[SANDBOX_KEY], found.values[PERMISSIONS_KEY]
     # Setup's own profile files may carry either key after setup's part
     # (``carried``): a session started with the profile then has it.
@@ -1162,6 +1166,39 @@ def check_codex_settings(context: Context) -> list[Finding]:
         findings.append(info(f"{PERMISSIONS_KEY} = {shown(PERMISSIONS_KEY)}{ignored}", PERMISSIONS_KEY))
     if whose:
         findings.append(info(f"{found.path}:{whose}"))
+    return findings
+
+
+def _wait_findings(values: dict[str, Any], shown: Callable[[str], str]) -> list[Finding]:
+    """The wait floor of ``wait_agent``: the minimum graded, the default and
+    the maximum as info where they are set, and an order Codex refuses."""
+    needed = codexsettings.WAIT_MIN_NEEDED
+    need = (
+        f"the framework needs {needed} or more: a wait_agent with a short timeout wakes its caller, and each "
+        "wake-up reads the caller's whole context again"
+    )
+    low = values[WAIT_MIN_KEY]
+    findings = []
+    if low is UNSET:
+        findings.append(info(
+            f"{WAIT_MIN_KEY}: unset, so Codex's own floor of {codexsettings.WAIT_CODEX[codexsettings.WAIT_MIN]} ms "
+            f"applies; {need}", WAIT_MIN_KEY,
+        ))
+    elif isinstance(low, bool) or not isinstance(low, int):
+        findings.append(warning(f"{WAIT_MIN_KEY} = {shown(WAIT_MIN_KEY)}: not a whole number; {need}", WAIT_MIN_KEY))
+    elif low < needed:
+        findings.append(warning(f"{WAIT_MIN_KEY} = {low}: below {needed}; {need}", WAIT_MIN_KEY))
+    else:
+        findings.append(fine(f"{WAIT_MIN_KEY} = {low}", WAIT_MIN_KEY))
+    for key in (WAIT_DEFAULT_KEY, WAIT_MAX_KEY):
+        if values[key] is not UNSET:
+            findings.append(info(f"{key} = {shown(key)}", key))
+    # A key left out takes Codex's own value (``UNSET`` here is not the module's).
+    order = codexsettings.wait_order({
+        key.rsplit(".", 1)[1]: values[key] for key in codexsettings.WAIT_KEYS if values[key] is not UNSET
+    })
+    if order:
+        findings.append(warning(f"{codexsettings.WAIT_TABLE}: {order}", codexsettings.WAIT_TABLE))
     return findings
 
 

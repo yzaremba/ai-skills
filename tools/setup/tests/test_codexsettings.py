@@ -54,6 +54,50 @@ COMBINATIONS = {
 }
 USER_VALUE = {"lower": 4, "equal": 8, "higher": 12, "dotted key": 4, "inline table": 9}
 
+WAIT = "features.multi_agent_v2"
+MIN, DEF, MAX = "min_wait_timeout_ms", "default_wait_timeout_ms", "max_wait_timeout_ms"
+FLOOR = {MIN: 300000, DEF: 3600000}
+# A file that holds the floor already, so that the end block has nothing of it to write.
+FLOORED = f"[{WAIT}]\n{MIN} = 300000\n{DEF} = 3600000\n"
+
+# What the user's file holds, and what becomes of the wait floor beside it: the status, the user's values
+# as the output gives them, and the lines it prints to add.
+WAIT_COMBINATIONS = {
+    "nothing": ("", codexsettings.TABLE, None, None),
+    "a features table": ("[features]\nfast = true\n", codexsettings.TABLE, None, None),
+    "top-level dotted features keys": ("features.fast = true\n\n[x]\ny = 1\n", codexsettings.TABLE, None, None),
+    "another features sub-table": ("[features.other]\na = 1\n", codexsettings.TABLE, None, None),
+    "a dotted key in the features table": ("[features]\nother.a = 1\n", codexsettings.TABLE, None, None),
+    "the table with the switch only": (
+        f"[{WAIT}]\nenabled = true\n", codexsettings.USER_SET, "none of the wait keys",
+        f"{MIN} = 300000; {DEF} = 3600000"),
+    "the table with both keys": (
+        FLOORED, codexsettings.USER_SET, f"{MIN} = 300000, {DEF} = 3600000", None),
+    "the table with every key, the floor higher": (
+        f"[{WAIT}]\n{MIN} = 600000\n{DEF} = 3600000\n{MAX} = 3600000\n", codexsettings.USER_SET,
+        f"{MIN} = 600000, {DEF} = 3600000, {MAX} = 3600000", None),
+    "the table with a low floor": (
+        f"[{WAIT}]\n{MIN} = 60000\n", codexsettings.USER_SET, f"{MIN} = 60000", f"{DEF} = 3600000"),
+    "the table with a max of its own": (
+        f"[{WAIT}]\n{MIN} = 300000\n{MAX} = 1800000\n", codexsettings.USER_SET,
+        f"{MIN} = 300000, {MAX} = 1800000", f"{DEF} = 1800000"),
+    "top-level dotted keys": (
+        f"{WAIT}.{MIN} = 400000\n", codexsettings.USER_SET, f"{MIN} = 400000", f"{DEF} = 3600000"),
+    "a dotted wait key in the features table": (
+        f"[features]\nmulti_agent_v2.{DEF} = 3600000\n", codexsettings.USER_SET, f"{DEF} = 3600000",
+        f"{MIN} = 300000"),
+    "an inline table": (
+        f"features = {{ multi_agent_v2 = {{ {MIN} = 300000 }} }}\n", codexsettings.USER_SET, f"{MIN} = 300000",
+        f"{DEF} = 3600000"),
+    "a sub-table of it": (f"[{WAIT}.sub]\na = 1\n", codexsettings.USER_SET, "none of the wait keys",
+                          f"{MIN} = 300000; {DEF} = 3600000"),
+    "the switch in the features table": ("[features]\nmulti_agent_v2 = true\n", codexsettings.SWITCH, None, None),
+    "the switch as a dotted key": (f"{WAIT} = false\n", codexsettings.SWITCH, None, None),
+    "an inline features table": ("features = { fast = true }\n", codexsettings.CANNOT, None, None),
+    "features as a plain value": ("features = 3\n", codexsettings.CANNOT, None, None),
+    "an array of features tables": ("[[features]]\na = 1\n", codexsettings.CANNOT, None, None),
+}
+
 # The checks that read what this step writes. A whole run of doctor would also hold these tests to every
 # other check of the registry.
 MINE = ("--only", "codex-settings", "--only", "hand-edits", "--only", "drift", "--only", "missing")
@@ -151,7 +195,7 @@ class LimitCase(SettingsCase):
         self.assertTrue(data.startswith(original + b"\r\n# workflow-setup:start codex-settings\r\n"))
         self.assertEqual(data.count(b"\n"), data.count(b"\r\n"))
         self.assertEqual(self.limit(), 8)
-        self.assertEqual(self.loaded()["features"], {"fast": True})
+        self.assertEqual(self.loaded()["features"], {"fast": True, "multi_agent_v2": FLOOR})
         self.assertEqual(self.loaded()["model"], "x")
 
     def test_every_combination_of_what_the_file_holds(self) -> None:
@@ -169,7 +213,10 @@ class LimitCase(SettingsCase):
                 self.assertEqual(self.without_blocks(), original)
                 for key, value in before.items():
                     if key not in ("agents", "permissions"):
-                        self.assertEqual(after[key], value)
+                        got = after[key]
+                        if key == "features":  # beside the wait floor setup writes
+                            got = {name: one for name, one in got.items() if name != "multi_agent_v2"}
+                        self.assertEqual(got, value)
                 if expected == codexsettings.TABLE:
                     self.assertEqual(self.limit(), 8)
                     self.assertTrue(data.startswith(original))
@@ -226,6 +273,141 @@ class LimitCase(SettingsCase):
                 self.assertTrue(codexsettings._valid(text, dotted, [], want))
 
 
+class WaitCase(SettingsCase):
+    def floor(self):
+        found = self.loaded().get("features")
+        return found.get("multi_agent_v2") if isinstance(found, dict) else None
+
+    def test_no_file_gets_the_floor_in_the_end_block(self) -> None:
+        out = self.apply()
+        self.assertEqual(self.floor(), FLOOR)
+        self.assertIn(f"[{WAIT}]\n{MIN} = 300000\n{DEF} = 3600000\n".encode(), self.block())
+        self.assertNotIn(MAX.encode(), self.block())
+        self.assertIsNone(self.block(codexsettings.TOP_BLOCK))
+        self.assertIn(f"{WAIT}.{MIN}: set to 300000, with {DEF} = 3600000, in setup's block at the end of the "
+                      "file", out)
+
+    def test_every_combination_of_what_the_file_holds(self) -> None:
+        for name, (text, expected, values, add) in WAIT_COMBINATIONS.items():
+            with self.subTest(name):
+                if self.manifest_file.exists():
+                    self.go(REMOVE)
+                original = self.user(text)
+                before = tomllib.loads(text)
+                facts = codexsettings.analyse(original)
+                self.assertEqual(codexsettings.decide(facts, codexsettings.Want()).wait, expected)
+                out = self.apply()
+                self.assertEqual(self.without_blocks(), original)
+                after = self.loaded()  # valid TOML
+                self.assertEqual(self.limit(), 8)
+                if expected == codexsettings.TABLE:
+                    self.assertEqual(self.floor(), FLOOR)
+                    self.assertTrue(self.config.read_bytes().startswith(original))
+                    self.assertIn(f"{WAIT}.{MIN}: set to 300000", out)
+                else:
+                    # Nothing of the floor is written, whatever else is, and the user's own stays as it was.
+                    self.assertNotIn(b"multi_agent_v2", self.block() or b"")
+                    self.assertEqual(after.get("features"), before.get("features"))
+                if expected == codexsettings.USER_SET:
+                    self.assertIn(f"{WAIT}: your file defines it, outside setup's block, so setup writes nothing", out)
+                    self.assertIn(f"it sets {values};", out)
+                    low = codexsettings.analyse(original).outside[f"{WAIT}.{MIN}"]
+                    if low is codexsettings.UNSET:
+                        self.assertIn("the floor is Codex's own 10000 ms", out)
+                    elif low >= 300000:
+                        self.assertIn("the floor is met", out)
+                    else:
+                        self.assertIn(f"needs {MIN} of 300000 or more, and raising it is yours to do", out)
+                    if add is None:
+                        self.assertNotIn("Add to that table", out)
+                    else:
+                        self.assertIn(f"Add to that table, in the form your file gives it: {add}", out)
+                    self.assertNotIn("Codex refuses", out)
+                elif expected == codexsettings.SWITCH:
+                    self.assertIn(f"Your file sets {WAIT} itself, to a value that is not a table", out)
+                    self.assertIn(f"with enabled = <the switch you had> and these lines: {MIN} = 300000; "
+                                  f"{DEF} = 3600000", out)
+                elif expected == codexsettings.CANNOT:
+                    self.assertIn(f"{WAIT}.{MIN}: not written. Your file defines `features` in a form", out)
+                    self.assertIn(f"these lines: {MIN} = 300000; {DEF} = 3600000", out)
+                # A second run writes nothing.
+                home = tree(self.home)
+                again = self.apply()
+                self.assertIn("nothing was written", again)
+                self.assertEqual(tree(self.home), home)
+                # Taking it out gives the file's bytes back.
+                self.go(REMOVE)
+                self.assertEqual(self.config.read_bytes(), original)
+
+    def test_the_combinations_hold_what_tomllib_says(self) -> None:
+        """The table of the module, asked of the parser itself: the end form
+        where nothing is at the path, and no head form that would do better."""
+        want = {("features", "multi_agent_v2", MIN): 300000, ("features", "multi_agent_v2", DEF): 3600000}
+        dotted = [f"{WAIT}.{MIN} = 300000", f"{WAIT}.{DEF} = 3600000"]
+        for name, (text, expected, _, _) in WAIT_COMBINATIONS.items():
+            with self.subTest(name):
+                at_end = codexsettings._valid(text, [], codexsettings.wait_table(), want)
+                at_head = codexsettings._valid(text, dotted, [], want)
+                if expected == codexsettings.TABLE:
+                    self.assertTrue(at_end)
+                elif expected == codexsettings.CANNOT:
+                    self.assertEqual((at_end, at_head), (False, False))
+                elif expected == codexsettings.SWITCH:
+                    self.assertEqual((at_end, at_head), (False, False))
+                if codexsettings.analyse(text.encode()).wait is codexsettings.UNSET and at_head:
+                    self.assertTrue(at_end)
+
+    def test_an_order_codex_refuses_is_said(self) -> None:
+        for text, words in (
+            (f"[{WAIT}]\n{MIN} = 300000\n{DEF} = 60000\n",
+             "As it is, Codex refuses a config unless min_wait_timeout_ms <= default_wait_timeout_ms <= "
+             "max_wait_timeout_ms, and these are min_wait_timeout_ms 300000, default_wait_timeout_ms 60000, "
+             "max_wait_timeout_ms 3600000 (Codex's own)"),
+            (f"[{WAIT}]\n{MAX} = 120000\n",
+             f"Add to that table, in the form your file gives it: {MIN} = 300000; {DEF} = 120000. With those "
+             "lines, Codex refuses a config unless"),
+        ):
+            with self.subTest(text):
+                self.go(REMOVE)
+                original = self.user(text)
+                out = self.apply()
+                self.assertIn(words, out)
+                self.assertEqual(self.without_blocks(), original)
+                self.assertNotIn(b"multi_agent_v2", self.block())
+
+    def test_a_hand_edited_floor_is_kept_and_reported(self) -> None:
+        self.user('model = "x"\n')
+        self.apply()
+        edited = self.config.read_bytes().replace(f"{MIN} = 300000".encode(), f"{MIN} = 1000".encode())
+        self.config.write_bytes(edited)
+        code, out, err = self.go(APPLY)
+        self.assertEqual((code, err), (render.EXIT_NEEDS_FLAG, ""))
+        self.assertEqual(self.config.read_bytes(), edited)
+        self.assertIn("codex-settings: kept: edited by hand since setup wrote it", out)
+        findings = self.settings()
+        self.assertFinding(findings, doctor.WARNING, f"{WAIT}.{MIN} = 1000: below 300000")
+        self.assertFinding(findings, doctor.INFO, "setup's block codex-settings: in the file, and changed by hand")
+        code, edits = self.only("hand-edits")
+        self.assertFinding(edits, doctor.WARNING, "config.toml: block codex-settings", "changed by hand")
+        code, out, err = self.go(REMOVE)
+        self.assertEqual(self.config.read_bytes(), edited)
+        code, out, err = self.go(APPLY, "--overwrite-edited")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.floor(), FLOOR)
+
+    def test_every_key_whose_value_is_printed_is_one_doctor_names(self) -> None:
+        self.assertLessEqual(set(codexsettings.KEYS), set(doctor.CODEX_KEYS))
+
+    def test_removal_takes_the_floor_out_with_the_block(self) -> None:
+        original = self.user("[features]\nfast = true\n")
+        self.apply()
+        self.assertEqual(self.floor(), FLOOR)
+        code, out, err = self.go(REMOVE)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertEqual(self.recorded(), {})
+
+
 class ProfileCase(SettingsCase):
     def profile(self) -> dict | None:
         return (self.loaded().get("permissions") or {}).get("workflow")
@@ -261,7 +443,7 @@ class ProfileCase(SettingsCase):
                          codexsettings.profile_data(os.path.normpath(str(self.root / "trees"))))
 
     def test_sandbox_mode_and_the_limit_set_leave_nothing_to_write(self) -> None:
-        original = self.user(f'sandbox_mode = "read-only"\n\n[agents]\n{KEY} = 8\n')
+        original = self.user(f'sandbox_mode = "read-only"\n\n[agents]\n{KEY} = 8\n\n{FLOORED}')
         before = tree(self.home)
         report = self.as_json(APPLY)
         self.assertEqual(self.statuses(report), {codexsettings.BLOCK: render.UP_TO_DATE})
@@ -270,20 +452,109 @@ class ProfileCase(SettingsCase):
         self.assertFalse(any("config.toml" in line for line in report["plan"]))
         self.assertEqual(tree(self.home)[".codex/config.toml"], before[".codex/config.toml"])
 
-    def test_without_sandbox_mode_the_profile_is_defined_and_not_selected(self) -> None:
+    def test_without_the_option_or_a_default_of_the_users_the_profile_is_only_printed(self) -> None:
         original = self.user('model = "x"\n')
-        out = self.apply()
+        code, out, err = self.go(APPLY)
+        self.assertEqual((code, err), (0, ""))
+        flat = " ".join(out.split())
         self.assertTrue(self.config.read_bytes().startswith(original))
-        self.assertEqual(self.profile(), codexsettings.profile_data(None))
-        self.assertEqual(self.profile()["extends"], ":workspace")
-        self.assertEqual(self.profile()["filesystem"], {":workspace_roots": {".git": "write"}})
+        self.assertNotIn("permissions", self.loaded())
         self.assertNotIn("default_permissions", self.loaded())
+        self.assertNotIn(b"permissions", self.block())
         self.assertIsNone(self.block(codexsettings.TOP_BLOCK))
-        self.assertIn("permission profile: `workflow` defined in setup's block at the end of the file", out)
-        self.assertIn("the profile is not selected: start Codex with codex -c \"default_permissions='workflow'\"", out)
-        self.assertIn("permission profiles are beta in Codex", out)
-        self.assertIn("no worktree root is in the profile", out)
-        self.assertIn("a session started inside a linked git worktree", out)
+        # The limit and the floor are written all the same.
+        self.assertEqual(self.limit(), 8)
+        self.assertEqual(self.loaded()["features"]["multi_agent_v2"], FLOOR)
+        self.assertIn("permission profile: not written. Codex (0.163.0) refuses to load a config that defines a "
+                      "[permissions] profile and sets no default_permissions while sandbox_mode is unset, and after "
+                      "this run your file would set none: --default-codex-permissions was not given", flat)
+        self.assertIn("to use it: run render --apply-codex-settings --default-codex-permissions, which writes it "
+                      "and selects it", flat)
+        self.assertIn("permission profiles are beta in Codex", flat)
+        self.assertIn("no worktree root is in the profile", flat)
+        lines = out.splitlines()
+        printed = "\n".join(line[len("note:     "):] for line in lines if line.startswith("note:     "))
+        self.assertEqual(tomllib.loads(printed)["permissions"]["workflow"], codexsettings.profile_data(None))
+        # A second run writes nothing.
+        home = tree(self.home)
+        self.assertIn("nothing was written", self.apply())
+        self.assertEqual(tree(self.home), home)
+
+    def test_a_default_of_the_users_gets_the_profile_written_and_not_selected(self) -> None:
+        for value in (":workspace", ":read-only", "mine"):
+            with self.subTest(value):
+                self.go(REMOVE)
+                original = self.user(f'default_permissions = "{value}"\n')
+                out = self.apply()
+                self.assertEqual(self.without_blocks(), original)
+                self.assertEqual(self.profile(), codexsettings.profile_data(None))
+                self.assertEqual(self.loaded()["default_permissions"], value)
+                self.assertIsNone(self.block(codexsettings.TOP_BLOCK))
+                self.assertIn("permission profile: `workflow` defined in setup's block at the end of the file", out)
+                self.assertIn(f'default_permissions: your file sets it to "{value}"; setup leaves it alone. The '
+                              "profile is written and not selected", out)
+                home = tree(self.home)
+                self.assertIn("nothing was written", self.apply())
+                self.assertEqual(tree(self.home), home)
+
+    def test_an_earlier_block_with_the_profile_and_no_default_fails_doctor_and_goes_with_a_run(self) -> None:
+        # An earlier run beside the user's own default; the user then took that default out.
+        self.user('default_permissions = ":workspace"\nmodel = "x"\n')
+        self.apply()
+        self.config.write_bytes(self.config.read_bytes().replace(b'default_permissions = ":workspace"\n', b""))
+        self.assertEqual(self.profile(), codexsettings.profile_data(None))
+        self.assertNotIn("default_permissions", self.loaded())
+        code, findings = self.only("codex-settings")
+        self.assertEqual(code, 1)
+        self.assertFinding(findings, doctor.ERROR, "setup's block codex-settings defines the permission profile "
+                           "`workflow` and the file sets no default_permissions", "so Codex will not start",
+                           "render --apply-codex-settings --default-codex-permissions",
+                           "render --remove-codex-settings")
+        self.assertFinding(findings, doctor.OK, "setup's block codex-settings: in the file, as setup wrote it")
+        # The fix by the option keeps the profile and selects it.
+        self.apply(DEFAULT)
+        self.assertEqual(self.profile(), codexsettings.profile_data(None))
+        self.assertEqual(self.loaded()["default_permissions"], "workflow")
+        self.assertEqual(self.only("codex-settings")[0], 0)
+        # A run without it takes the profile out, and says so.
+        out = self.apply()
+        self.assertNotIn("permissions", self.loaded())
+        self.assertNotIn("default_permissions", self.loaded())
+        self.assertEqual(self.limit(), 8)
+        self.assertIn("this run was given no --default-codex-permissions, so default_permissions is taken out", out)
+        # The same from the old block itself, as an earlier setup left it.
+        self.go(REMOVE)
+        self.user('default_permissions = ":workspace"\nmodel = "x"\n')
+        self.apply()
+        self.config.write_bytes(self.config.read_bytes().replace(b'default_permissions = ":workspace"\n', b""))
+        out = self.apply()
+        self.assertIn("codex-settings: update: ", out)
+        self.assertIn("the permission profile `workflow` is taken out, because --default-codex-permissions was not "
+                      "given to this run and your file sets no default_permissions", out)
+        self.assertIn("the earlier block defined the permission profile `workflow`", out)
+        self.assertNotIn("permissions", self.loaded())
+        self.assertEqual(self.loaded()["features"]["multi_agent_v2"], FLOOR)
+        self.assertEqual(self.only("codex-settings")[0], 0)
+        home = tree(self.home)
+        self.assertIn("nothing was written", self.apply())
+        self.assertEqual(tree(self.home), home)
+        # The fix by removal.
+        self.go(REMOVE)
+        self.user('default_permissions = ":workspace"\nmodel = "x"\n')
+        self.apply()
+        self.config.write_bytes(self.config.read_bytes().replace(b'default_permissions = ":workspace"\n', b""))
+        self.go(REMOVE)
+        self.assertEqual(self.config.read_bytes(), b'model = "x"\n')
+        self.assertEqual(self.only("codex-settings")[0], 0)
+
+    def test_with_sandbox_mode_an_earlier_profile_is_no_failure(self) -> None:
+        self.user('default_permissions = ":workspace"\n')
+        self.apply()
+        self.config.write_bytes(self.config.read_bytes().replace(b'default_permissions = ":workspace"\n',
+                                                                 b'sandbox_mode = "workspace-write"\n'))
+        code, findings = self.only("codex-settings")
+        self.assertEqual(code, 0)
+        self.assertFalse(any(found["severity"] == doctor.ERROR for found in findings))
 
     def test_the_default_flag_selects_it_in_a_block_at_the_head(self) -> None:
         original = self.user('model = "x"\n\n[features]\nfast = true\n')
@@ -292,7 +563,7 @@ class ProfileCase(SettingsCase):
         self.assertTrue(data.startswith(b"# workflow-setup:start codex-settings-top\n"))
         self.assertEqual(self.without_blocks(), original)
         self.assertEqual(self.loaded()["default_permissions"], "workflow")
-        self.assertEqual(self.loaded()["features"], {"fast": True})
+        self.assertEqual(self.loaded()["features"], {"fast": True, "multi_agent_v2": FLOOR})
         self.assertEqual(self.profile(), codexsettings.profile_data(None))
         self.assertEqual(sorted(self.recorded()), [codexsettings.BLOCK, codexsettings.TOP_BLOCK])
         self.assertIn('default_permissions: set to "workflow" in setup\'s block at the head of the file', out)
@@ -337,7 +608,7 @@ class ProfileCase(SettingsCase):
             with self.subTest(text):
                 self.go(REMOVE)
                 self.user(text)
-                self.apply()
+                self.apply(DEFAULT)
                 found = self.loaded()["permissions"]
                 self.assertEqual(found["workflow"], codexsettings.profile_data(None))
                 self.assertEqual({key: value for key, value in found.items() if key != "workflow"},
@@ -345,7 +616,7 @@ class ProfileCase(SettingsCase):
 
     def test_a_permissions_value_that_takes_no_table_is_reported(self) -> None:
         original = self.user("permissions = 3\n")
-        out = self.apply()
+        out = self.apply(DEFAULT)
         self.assertEqual(self.without_blocks(), original)
         self.assertEqual(self.loaded()["permissions"], 3)
         self.assertIn("permission profile: not written. Your file defines `permissions` in a form", out)
@@ -365,7 +636,7 @@ class WorktreeRootCase(SettingsCase):
     def test_a_path_with_spaces_is_written_as_given_and_read_back(self) -> None:
         trees = self.root / "my work trees"
         trees.mkdir()
-        out = self.apply(ROOT, str(trees))
+        out = self.apply(DEFAULT, ROOT, str(trees))
         self.assertEqual(self.written(), [str(trees)])
         files = self.loaded()["permissions"]["workflow"]["filesystem"]
         self.assertEqual(files, {str(trees): "write", ":workspace_roots": {".git": "write"}})
@@ -379,14 +650,14 @@ class WorktreeRootCase(SettingsCase):
 
     def test_an_absolute_path_is_normalised_and_one_that_is_missing_is_said(self) -> None:
         trees = self.root / "trees"
-        out = self.apply(ROOT, str(trees) + os.sep + "." + os.sep)
+        out = self.apply(DEFAULT, ROOT, str(trees) + os.sep + "." + os.sep)
         self.assertEqual(self.written(), [str(trees)])
         self.assertIn(f"the worktree root {trees} is not a directory on this machine yet", out)
 
     def test_a_home_path_is_kept_as_written(self) -> None:
         for given, written in (("~/work trees", "~/work trees"), ("~/a//b/", "~/a/b")):
             with self.subTest(given):
-                self.apply(ROOT, given)
+                self.apply(DEFAULT, ROOT, given)
                 self.assertEqual(self.written(), [written])
         self.assertEqual(codexsettings.worktree_root("~\\trees"), "~/trees")
 
@@ -424,8 +695,8 @@ class WorktreeRootCase(SettingsCase):
 
     def test_a_run_without_the_option_takes_the_root_out_and_says_so(self) -> None:
         trees = self.root / "trees"
-        self.apply(ROOT, str(trees))
-        out = self.apply()
+        self.apply(DEFAULT, ROOT, str(trees))
+        out = self.apply(DEFAULT)
         self.assertEqual(self.written(), [])
         self.assertIn(f"the earlier block held the worktree root {trees}, and this run was given no --worktree-root", out)
 
@@ -697,8 +968,8 @@ class DoctorReportCase(SettingsCase):
         self.assertFinding(findings, doctor.INFO, f"{LIMIT}: unset", "needs 8 or more")
         self.assertFinding(findings, doctor.INFO, "setup has written no block into the file")
         self.would(findings, f"{LIMIT}: set to 8 in setup's block at the end of the file")
-        self.would(findings, "permission profile: `workflow` defined in setup's block")
-        self.would(findings, "the profile is not selected")
+        self.would(findings, "permission profile: not written", "--default-codex-permissions was not given")
+        self.assertFinding(findings, doctor.INFO, "would print the permission profile `workflow` as text")
         self.assertFalse(self.config.exists())
         self.assertFalse(self.manifest_file.exists())
 
@@ -717,6 +988,48 @@ class DoctorReportCase(SettingsCase):
         self.user("agents.enabled = true\n")
         self.would(self.settings(), "as a dotted key in setup's block at the head of the file")
 
+    def test_the_wait_floor_unset_written_low_and_out_of_order(self) -> None:
+        findings = self.settings()
+        self.assertFinding(findings, doctor.INFO, f"{WAIT}.{MIN}: unset", "Codex's own floor of 10000 ms",
+                           "needs 300000 or more")
+        self.would(findings, f"{WAIT}.{MIN}: set to 300000, with {DEF} = 3600000, in setup's block")
+        self.apply()
+        findings = self.settings()
+        self.assertQuiet(findings)
+        self.assertFinding(findings, doctor.OK, f"{WAIT}.{MIN} = 300000")
+        self.assertFinding(findings, doctor.INFO, f"{WAIT}.{DEF} = 3600000")
+        self.assertFalse(any(MAX in found["detail"] for found in findings))
+        self.assertFinding(findings, doctor.INFO, "would change nothing")
+        self.go(REMOVE)
+        self.user(f"[{WAIT}]\n{MIN} = 60000\n")
+        findings = self.settings()
+        self.assertFinding(findings, doctor.WARNING, f"{WAIT}.{MIN} = 60000: below 300000")
+        self.would(findings, f"{WAIT}: your file defines it", "raising it is yours to do",
+                   f"Add to that table, in the form your file gives it: {DEF} = 3600000")
+        self.user(f"[{WAIT}]\n{MIN} = 300000\n")
+        findings = self.settings()
+        self.assertFinding(findings, doctor.OK, f"{WAIT}.{MIN} = 300000")
+        self.assertFinding(findings, doctor.WARNING, f"{WAIT}: Codex refuses a config unless",
+                           "default_wait_timeout_ms 30000 (Codex's own)")
+        self.would(findings, "the floor is met", f"Add to that table, in the form your file gives it: {DEF} = 3600000")
+        self.user(f'[{WAIT}]\n{MIN} = "long"\n')
+        self.assertFinding(self.settings(), doctor.WARNING, f"{WAIT}.{MIN} = \"long\": not a whole number")
+        self.user("[features]\nmulti_agent_v2 = true\n")
+        findings = self.settings()
+        self.assertFinding(findings, doctor.INFO, f"{WAIT}.{MIN}: unset")
+        self.would(findings, f"Your file sets {WAIT} itself, to a value that is not a table")
+
+    def test_no_value_under_the_wait_table_but_its_keys_is_printed(self) -> None:
+        self.user(f'[{WAIT}]\n{MIN} = 300000\n\n[{WAIT}.sub]\ntoken = "{SECRET}"\n')
+        for argv in (("--json",), ()):
+            code, out, err = self.run_doctor(*MINE, *argv)
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("300000", out)
+            self.assertNotIn(SECRET, out)
+        code, out, err = self.go(APPLY)
+        self.assertEqual((code, err), (0, ""))
+        self.assertNotIn(SECRET, out)
+
     def test_sandbox_mode_set(self) -> None:
         self.user('sandbox_mode = "workspace-write"\n')
         findings = self.settings()
@@ -730,12 +1043,15 @@ class DoctorReportCase(SettingsCase):
     def test_sandbox_mode_unset_and_default_permissions_set_or_not(self) -> None:
         self.user('model = "x"\n')
         findings = self.settings()
-        self.would(findings, "the profile is not selected")
+        self.would(findings, "permission profile: not written. Codex (0.163.0) refuses to load")
         self.assertFalse(any("gate G4" in found["detail"] for found in findings))
         self.user('default_permissions = ":workspace"\n')
         findings = self.settings()
         self.assertFinding(findings, doctor.INFO, 'default_permissions = ":workspace"')
-        self.would(findings, 'default_permissions: your file sets it to ":workspace"; setup leaves it alone')
+        self.would(findings, "permission profile: `workflow` defined in setup's block")
+        self.would(findings, 'default_permissions: your file sets it to ":workspace"; setup leaves it alone',
+                   "written and not selected")
+        self.assertFalse(any("would print the permission profile" in found["detail"] for found in findings))
 
     def test_the_blocks_present_and_as_written(self) -> None:
         self.user('model = "x"\n')

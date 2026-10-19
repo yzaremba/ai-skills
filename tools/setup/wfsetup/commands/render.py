@@ -296,6 +296,13 @@ file, and every byte outside the markers stays as it is:
       a table to be defined once, so the one line to add is printed. A file
       that sets other agents.* keys at its top level gets the limit as a
       dotted key in the block "codex-settings-top" at the head of the file.
+    - The wait floor: [features.multi_agent_v2] with min_wait_timeout_ms =
+      300000 and default_wait_timeout_ms = 3600000, in the block at the
+      end. Codex raises a wait_agent timeout below the floor to it, and a
+      wait with no timeout waits the maximum. A file that defines anything
+      at features.multi_agent_v2 (a table, dotted keys, an inline table or
+      the feature's switch) gets nothing: its values are reported, with
+      whether the floor is met, and the lines to add are printed.
     - The permission profile "workflow" (permission profiles are beta in
       Codex): [permissions.workflow], which extends ":workspace" and makes
       ".git" writable under ":workspace_roots", in the block at the end.
@@ -308,11 +315,19 @@ file, and every byte outside the markers stays as it is:
       then uses the older sandbox settings and ignores default_permissions.
       The profile is printed instead, with what you would change, and
       sandbox_mode is never changed or removed.
-    - The profile is defined and not selected. --default-codex-permissions
-      also writes default_permissions = "workflow", in the block at the
-      head of the file, where a top-level key must be. A default_permissions
-      the file already sets, and a profile named "workflow" of your own,
-      are reported and left alone.
+    - The profile is written only where default_permissions is set after
+      the run: Codex (0.163.0) refuses to load a config that defines a
+      profile and sets no default_permissions. --default-codex-permissions
+      writes it and default_permissions = "workflow", in the block at the
+      head of the file, where a top-level key must be. Without the option
+      the profile is written unselected where the file sets
+      default_permissions itself (any value, a built-in among them), and
+      otherwise printed as text, with what you would do. A
+      default_permissions the file already sets, and a profile named
+      "workflow" of your own, are reported and left alone. An earlier
+      block that defines the profile with no default_permissions beside it
+      is an error of "doctor --only codex-settings"; a run without the
+      option takes the profile out of it.
 
 The blocks stay: a later render without the option does not touch them, and
 --remove-codex-settings takes them out where they still hold what setup

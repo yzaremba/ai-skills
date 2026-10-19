@@ -107,10 +107,16 @@ The checks, in the order they run:
                          checked on, or older than the oldest supported, or
                          one that cannot be read, is a warning.
                          --no-versions leaves the check out.
-    codex-settings       three keys of the user's Codex config.toml, each
-                         with its value or as unset:
+    codex-settings       keys of the user's Codex config.toml, each with its
+                         value or as unset:
                          agents.max_concurrent_threads_per_session (below 8
-                         is a warning), sandbox_mode (while it is set Codex
+                         is a warning),
+                         features.multi_agent_v2.min_wait_timeout_ms, the
+                         wait floor (below 300000 is a warning), with
+                         default_wait_timeout_ms and max_wait_timeout_ms of
+                         that table where they are set (an order Codex
+                         refuses, min <= default <= max broken, is a
+                         warning), sandbox_mode (while it is set Codex
                          uses it and ignores default_permissions: info) and
                          default_permissions. No other key is read out of
                          the file (but project_doc_max_bytes, for the check
@@ -123,9 +129,14 @@ The checks, in the order they run:
                          the install record; and what that command would do
                          now and would leave to you (a limit you set
                          yourself; an [agents] table it cannot add to, with
-                         the line to add; no permission profile while
+                         the line to add; a features.multi_agent_v2 of
+                         yours, with whether its floor is met and the lines
+                         to add; no permission profile while
                          sandbox_mode is set, which setup never changes, so
                          that git commands go through approval one by one).
+                         A block of setup's that defines the profile while
+                         the file sets neither default_permissions nor
+                         sandbox_mode is an error: Codex will not start.
                          --codex-probe adds the steps of the one Codex
                          session, started by you, that shows whether this
                          Codex ignores a `-c default_permissions=...`

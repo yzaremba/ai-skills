@@ -136,13 +136,22 @@ python3 tools/setup/workflow_setup.py doctor
 - **On Codex: `render --apply-codex-settings`.** Codex's default sandbox keeps `.git`
   read-only, so a commit or a worktree needs approval command by command; and with no
   limit set Codex was seen to allow four agents, the main session counted, which is fewer
-  than the Manager, the Implementation Manager and three parallel Coders. With this option
-  `render` writes, in marked blocks of your Codex `config.toml`,
-  `agents.max_concurrent_threads_per_session = 8` and a permission profile, `workflow`
+  than the Manager, the Implementation Manager and three parallel Coders; and an agent that
+  waits with a short timeout wakes again and again, each time reading its whole context.
+  With this option `render` writes, in marked blocks of your Codex `config.toml`,
+  `agents.max_concurrent_threads_per_session = 8`; a wait floor,
+  `[features.multi_agent_v2]` with `min_wait_timeout_ms = 300000` and
+  `default_wait_timeout_ms = 3600000`, so that Codex raises a shorter wait to five minutes;
+  and a permission profile, `workflow`
   (permission profiles are beta in Codex), that makes `.git` writable. `--worktree-root DIR`
   also makes the directory your worktrees are made under writable, and
-  `--default-codex-permissions` selects the profile. While the file sets `sandbox_mode` no
-  profile is written. It helps the process alone too: its sprint worktree and commits meet
+  `--default-codex-permissions` writes the profile and selects it. Codex 0.163.0 refuses to
+  load a config that defines a profile and sets no `default_permissions`, so without the
+  option the profile is written, unselected, only where your file sets
+  `default_permissions` itself, and is otherwise printed as text. While the file sets
+  `sandbox_mode` no profile is written, and a file that defines `features.multi_agent_v2`
+  itself gets no floor: its values are reported and the lines to add are printed. It helps
+  the process alone too: its sprint worktree and commits meet
   the same sandbox ("The sprint worktree" in `prd-implementation/references/codex.md`).
   `doctor --only codex-settings` says what the option would do, and
   `render --remove-codex-settings` takes it out; more under "Git on Codex" in
@@ -793,15 +802,25 @@ and each skill's `SKILL.md`.
   install with the shipped settings ends with no such warning.
 - **Git on Codex.** The default sandbox keeps `.git` read-only, so a commit or a
   worktree needs approval command by command, or a permission profile (beta in Codex).
-  `render --apply-codex-settings` defines one, `workflow`, and with
-  `--default-codex-permissions` also selects it. While the user's `config.toml` sets
-  `sandbox_mode` no profile is written, because Codex then ignores
-  `default_permissions`; setup never changes `sandbox_mode`.
+  `render --apply-codex-settings --default-codex-permissions` defines one, `workflow`,
+  and selects it. Without the option the profile is written only beside a
+  `default_permissions` of your own: Codex CLI 0.163.0 will not start with a config that
+  defines a profile and sets no `default_permissions`. A block an earlier setup wrote that
+  way is an error of `doctor --only codex-settings`; `render --apply-codex-settings`
+  takes the profile out of it, and `render --remove-codex-settings` takes the blocks out.
+  While the user's `config.toml` sets `sandbox_mode` no profile is written, because Codex
+  then ignores `default_permissions`; setup never changes `sandbox_mode`.
 - **Four agents on Codex with no limit set**, counting the main session, as seen on
   Codex CLI 0.160.0; Codex's documentation leaves that default to the client and does
   not count the main session in the limit it sets.
   `render --apply-codex-settings` sets `agents.max_concurrent_threads_per_session = 8`
   where the file sets no limit.
+- **Short waits on Codex.** Agents were seen to call `wait_agent` with timeouts of 60 and
+  300 seconds although the action notes say 3600000 ms, and every wake-up of a long-lived
+  Manager reads its whole context again. `render --apply-codex-settings` sets the floor
+  `features.multi_agent_v2.min_wait_timeout_ms = 300000`, with
+  `default_wait_timeout_ms = 3600000`, where the file defines nothing at
+  `features.multi_agent_v2`; Codex CLI 0.163.0 raises a shorter request to the floor.
 - **Codex reads a project's `.codex/config.toml` only in a trusted project.** In an
   untrusted one the Manager default does nothing on Codex.
 - **Codex writes into the profile file.** Started with

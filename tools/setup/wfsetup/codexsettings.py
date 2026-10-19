@@ -14,6 +14,13 @@ What the framework needs on Codex (docs/agent-roles-framework.md,
 "Differences on Codex, and what to do about each")
 
     the limit    ``agents.max_concurrent_threads_per_session`` of 8 or more.
+    the floor    ``features.multi_agent_v2.min_wait_timeout_ms`` of 300000 or
+                 more, with ``default_wait_timeout_ms`` 3600000 beside it: a
+                 ``wait_agent`` with a short timeout wakes its caller, and
+                 every wake-up of a long-lived Manager reads its whole
+                 context again (about 220K tokens in a measured run, where
+                 models asked for 60 s and 300 s although the action notes
+                 say 3600000). The floor makes the action notes binding.
     the profile  a permission profile under which ``.git`` of the repository
                  and the worktree root are writable, so that git's add,
                  commit and worktree commands run without an approval each.
@@ -81,13 +88,36 @@ What the provider's pages say (read on 2026-10-05)
   the session's workspace root, so it is not); and the default number of
   threads.
 
+What codex-cli 0.163.0 itself showed of the floor (2026-10-18; its config
+validation, ``codex -c features.multi_agent_v2.<key>=<n> features list``,
+which starts no model session; no page of the provider's was read for it)
+
+    The table ``features.multi_agent_v2`` takes ``min_wait_timeout_ms``,
+    ``default_wait_timeout_ms`` and ``max_wait_timeout_ms``, and ``enabled``;
+    an unknown key in it is refused. ``features.multi_agent_v2 = true``, a
+    plain switch, is accepted as well (an untagged enum of Codex's).
+    Codex's own values: min 10000, default 30000, max 3600000. It refuses a
+    config unless min <= default <= max ("default_wait_timeout_ms must be at
+    least ... min_wait_timeout_ms"), so a min of 300000 alone is refused:
+    the default goes with it. ``max_wait_timeout_ms`` is left unset.
+    The table without ``enabled`` leaves the feature's switch where it was
+    (``features list`` showed ``multi_agent_v2`` false before and after).
+    The binary holds the message "Requested timeout of Nms was clamped to
+    the minimum of Mms", and in a run requests of 10000 to 3600000 ms were
+    honoured: the floor raises a shorter request, it does not refuse it.
+
+  NOT ESTABLISHED: that the floor applies to a session in which the switch
+  of ``multi_agent_v2`` is off (the clamp was not watched in a session);
+  and whether a later Codex keeps these keys.
+
 The two blocks, and why two
     A key written after a table header belongs to that table, so a block
     at the end of a file that has tables can hold tables only, and a
     top-level key must come before the first table.
 
     ``codex-settings``       at the end of the file: ``[agents]`` with the
-                             limit, and the tables of the profile.
+                             limit, ``[features.multi_agent_v2]`` with the
+                             floor, and the tables of the profile.
     ``codex-settings-top``   at the head of the file, and only where it is
                              needed: ``default_permissions``, and the limit
                              as a dotted key where the end form is not
@@ -109,6 +139,33 @@ The limit, by what the user's file holds outside setup's blocks
     the legacy alias ``agents.max_threads``    nothing: reported, its value
                                                not read
 
+The floor, by what the user's file holds outside setup's blocks
+    (``tomllib`` decides; ``_valid`` asks it for every case)
+
+    nothing at ``features.multi_agent_v2``:    [features.multi_agent_v2] in
+      no ``features``, a ``[features]``        the end block, with the two
+      table, dotted ``features.*`` keys,       keys
+      other ``[features.<name>]`` tables
+    anything at ``features.multi_agent_v2``,   nothing: a table is defined
+      by a header, dotted keys or an inline    once. The user's values of the
+      table, a sub-table of it among them      three keys are reported, with
+                                               whether the floor is met, and
+                                               the lines of the two keys the
+                                               file does not set are printed
+                                               (the default as the user's
+                                               max where one is set), with
+                                               what Codex would refuse
+    ``features.multi_agent_v2`` a switch       nothing: the value is not
+      (``= true``) or another value            read; making it a table, with
+                                               ``enabled``, is the user's
+    ``features`` an inline table, a plain      nothing: the lines to add are
+      value or an array of tables              printed
+
+    No form at the head of the file is needed: where the user's file
+    defines nothing at ``features.multi_agent_v2``, ``tomllib`` found no
+    text in which dotted keys at the head are valid and the table at the
+    end is not (``[features.<name>]`` may follow dotted ``features.*`` keys).
+
 The profile
     While the user's file sets ``sandbox_mode`` no ``[permissions]`` table
     is written and ``default_permissions`` is not set: Codex would ignore
@@ -117,11 +174,29 @@ The profile
     ``config.toml`` is looked at: a project's config or a profile file that
     sets the key has the same effect, and the output says so.
 
-    Where the key is absent the profile ``workflow`` is defined in the end
-    block and not selected. ``--default-codex-permissions`` selects it:
-    ``default_permissions = "workflow"`` in the head block. A
-    ``default_permissions`` the user already set is reported and kept; a
-    profile of that name that the user defined is reported and kept.
+    Where the key is absent the profile ``workflow`` is written only where
+    ``default_permissions`` is set after the run. codex-cli 0.163.0
+    refuses to load a config that defines a ``[permissions]`` profile and
+    sets no ``default_permissions`` ("config defines `[permissions]`
+    profiles but does not set `default_permissions`"); with
+    ``sandbox_mode`` set, or with ``default_permissions`` set to any
+    value, a built-in among them, it loads (``codex features list`` on
+    scratch homes, 2026-10-18). So:
+
+    ``--default-codex-permissions``      the profile in the end block, and
+                                         ``default_permissions = "workflow"``
+                                         in the head block
+    the user's file sets                 the profile in the end block, not
+      ``default_permissions``            selected; the user's value is
+                                         reported and kept
+    neither                              not written: printed as text, with
+                                         what the user would do
+
+    A profile of that name that the user defined is reported and kept. An
+    end block that an earlier setup wrote with the profile and no
+    ``default_permissions`` beside it is the config Codex refuses: ``doctor``
+    reports it as an error, and the next run without the option takes the
+    profile out of the block and says so.
 
     Its write roots: ``.git`` under ``:workspace_roots``, which names the
     ``.git`` of whatever project a session is in and needs no path of this
@@ -137,8 +212,10 @@ What stays
     ``render --remove-codex-settings``, and with the reversal of the record
     (``uninstall``). A run with ``--apply-codex-settings`` writes what its
     options say: without ``--worktree-root`` the profile has no worktree
-    root, and without ``--default-codex-permissions`` it is not selected;
-    what such a run takes out of an earlier block is said in the output. A
+    root, and without ``--default-codex-permissions`` it is not selected,
+    and not written either unless the user's file sets
+    ``default_permissions``; what such a run takes out of an earlier block
+    is said in the output. A
     block edited by hand is kept and reported (exit code 3), as every block
     of setup's is. A block the record lists and the file no longer holds is
     taken out of the record by the next ``render``.
@@ -174,6 +251,18 @@ THREADS_NAME = "max_concurrent_threads_per_session"
 THREADS_KEY = f"{THREADS_TABLE}.{THREADS_NAME}"
 THREADS_ALIAS = "max_threads"
 THREADS_NEEDED = 8
+WAIT_PATH = ("features", "multi_agent_v2")
+WAIT_TABLE = ".".join(WAIT_PATH)
+WAIT_MIN = "min_wait_timeout_ms"
+WAIT_DEFAULT = "default_wait_timeout_ms"
+WAIT_MAX = "max_wait_timeout_ms"
+WAIT_NAMES = (WAIT_MIN, WAIT_DEFAULT, WAIT_MAX)
+WAIT_KEYS = tuple(f"{WAIT_TABLE}.{name}" for name in WAIT_NAMES)
+WAIT_MIN_KEY, WAIT_DEFAULT_KEY, WAIT_MAX_KEY = WAIT_KEYS
+WAIT_MIN_NEEDED = 300000
+WAIT_DEFAULT_WANTED = 3600000
+# Codex's own values where a key is not set (codex-cli 0.163.0).
+WAIT_CODEX = {WAIT_MIN: 10000, WAIT_DEFAULT: 30000, WAIT_MAX: 3600000}
 SANDBOX_KEY = "sandbox_mode"
 PERMISSIONS_KEY = "default_permissions"
 PERMISSIONS_TABLE = "permissions"
@@ -192,11 +281,12 @@ PER_LAUNCH = f"codex -c \"{PERMISSIONS_KEY}='{PROFILE}'\""
 
 UNSET = object()
 
-# What became of the limit.
-TABLE = "table"          # [agents] in the end block
+# What became of the limit, and of the floor.
+TABLE = "table"          # [agents] (or [features.multi_agent_v2]) in the end block
 DOTTED = "dotted"        # a dotted key in the head block
-USER_SET = "user-set"    # the user sets the key
+USER_SET = "user-set"    # the user sets the key (for the floor: anything at features.multi_agent_v2)
 ALIAS = "alias"          # the user sets the legacy alias
+SWITCH = "switch"        # features.multi_agent_v2 is set to a value that is not a table
 CANNOT = "cannot"        # no form is valid TOML beside the user's file
 
 # What became of the profile, and of its selection.
@@ -205,6 +295,12 @@ SANDBOX = "sandbox-mode"     # not written: sandbox_mode is set
 THEIRS = "theirs"            # the user defines a profile of that name
 NOT_ASKED = "not-asked"
 NO_PROFILE = "no-profile"    # nothing of setup's to select
+NO_DEFAULT = "no-default"    # not written: default_permissions would not be set after the run
+
+REFUSES = (
+    f"Codex (0.163.0) refuses to load a config that defines a [{PERMISSIONS_TABLE}] profile and sets no "
+    f"{PERMISSIONS_KEY} while {SANDBOX_KEY} is unset"
+)
 
 APPROVAL = (
     f"until you change the sandbox model yourself, git commands that write under .git (add, commit, worktree) "
@@ -227,9 +323,11 @@ def configure(parser: Any) -> None:
     parser.add_argument(
         APPLY_OPTION, action="store_true",
         help="write the Codex settings the framework needs into marked blocks of the user's Codex config.toml: "
-        f"{THREADS_KEY} = {THREADS_NEEDED}, and, unless the file sets {SANDBOX_KEY}, the permission profile "
-        f"`{PROFILE}`. A key the file already sets is reported and left alone. Once written, the blocks stay "
-        f"until {REMOVE_OPTION}",
+        f"{THREADS_KEY} = {THREADS_NEEDED}; the wait floor {WAIT_MIN_KEY} = {WAIT_MIN_NEEDED} with "
+        f"{WAIT_DEFAULT} = {WAIT_DEFAULT_WANTED}, unless the file defines {WAIT_TABLE} itself; and, unless the "
+        f"file sets {SANDBOX_KEY}, the permission profile `{PROFILE}`, where {PERMISSIONS_KEY} is set after the "
+        f"run (by {DEFAULT_OPTION}, or by your file). A key the file already sets is reported and left alone. "
+        f"Once written, the blocks stay until {REMOVE_OPTION}",
     )
     parser.add_argument(
         WORKTREE_OPTION, metavar="DIR",
@@ -240,8 +338,10 @@ def configure(parser: Any) -> None:
     )
     parser.add_argument(
         DEFAULT_OPTION, action="store_true",
-        help=f"with {APPLY_OPTION}: also select the profile, with {PERMISSIONS_KEY} = \"{PROFILE}\". Without "
-        "it the profile is defined and not selected",
+        help=f"with {APPLY_OPTION}: also write and select the profile, with {PERMISSIONS_KEY} = \"{PROFILE}\". "
+        f"Without it the profile is written, unselected, only where your file sets {PERMISSIONS_KEY} itself, "
+        f"and otherwise printed as text: Codex refuses a config that defines a profile and sets no "
+        f"{PERMISSIONS_KEY}",
     )
     parser.add_argument(
         REMOVE_OPTION, action="store_true",
@@ -315,10 +415,13 @@ def worktree_root(text: str) -> str:
 @dataclass(frozen=True)
 class Want:
     """What a run asks for: the worktree root, as it is written, and
-    whether the profile is selected."""
+    whether the profile is selected. As what setup's blocks hold
+    (``Facts.held``), ``profile`` says whether the end block defines the
+    profile; a run does not ask for that."""
 
     root: str | None = None
     default: bool = False
+    profile: bool = False
 
 
 # --- Reading the file --------------------------------------------------------------
@@ -326,8 +429,8 @@ class Want:
 @dataclass
 class Facts:
     """What the file holds, as far as setup needs it. ``values`` are the
-    three keys as the whole file sets them, ``outside`` as the user sets
-    them outside setup's blocks; a key that is not set is ``UNSET``."""
+    keys of ``KEYS`` as the whole file sets them, ``outside`` as the user
+    sets them outside setup's blocks; a key that is not set is ``UNSET``."""
 
     present: bool
     fault: str | None = None
@@ -336,6 +439,7 @@ class Facts:
     outside_text: str = ""
     alias: bool = False            # agents.max_threads is set outside the blocks
     profile_theirs: bool = False   # permissions.<PROFILE> is defined outside the blocks
+    wait: Any = UNSET              # features.multi_agent_v2 outside the blocks; never printed
     found: dict[str, bytes | None] = field(default_factory=dict)   # each block, as it is in the file
     held: Want | None = None       # what setup's blocks hold now
 
@@ -346,8 +450,12 @@ def _dig(table: Any, *parts: str) -> Any:
     return table
 
 
+# The keys whose values setup reads; each is in ``doctor.CODEX_KEYS``.
+KEYS = (THREADS_KEY, SANDBOX_KEY, PERMISSIONS_KEY, *WAIT_KEYS)
+
+
 def _three(parsed: dict[str, Any]) -> dict[str, Any]:
-    return {key: _dig(parsed, *key.split(".")) for key in (THREADS_KEY, SANDBOX_KEY, PERMISSIONS_KEY)}
+    return {key: _dig(parsed, *key.split(".")) for key in KEYS}
 
 
 def _parse(text: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -364,7 +472,7 @@ def analyse(data: bytes | None) -> Facts:
     """What ``data``, the bytes of the user's ``config.toml`` (None for no
     file), holds. Nothing is written and nothing is raised: a file that
     cannot be read as TOML gives ``fault``."""
-    unset = {key: UNSET for key in (THREADS_KEY, SANDBOX_KEY, PERMISSIONS_KEY)}
+    unset = {key: UNSET for key in KEYS}
     names = {name: None for name in BLOCK_NAMES}
     if data is None:
         return Facts(False, values=dict(unset), outside=dict(unset), found=names)
@@ -390,6 +498,7 @@ def analyse(data: bytes | None) -> Facts:
         True, None, _three(whole), _three(outside), outside_text,
         alias=_dig(outside, THREADS_TABLE, THREADS_ALIAS) is not UNSET,
         profile_theirs=_dig(outside, PERMISSIONS_TABLE, PROFILE) is not UNSET,
+        wait=_dig(outside, *WAIT_PATH),
         found=found, held=_held(found),
     )
 
@@ -400,7 +509,7 @@ def _held(found: dict[str, bytes | None]) -> Want | None:
     be read (one edited into something else)."""
     if all(block is None for block in found.values()):
         return None
-    root, default = None, False
+    root, default, profile = None, False, False
     for name, block in found.items():
         if block is None:
             continue
@@ -410,11 +519,12 @@ def _held(found: dict[str, bytes | None]) -> Want | None:
         if name == TOP_BLOCK:
             default = parsed.get(PERMISSIONS_KEY) == PROFILE
         else:
+            profile = isinstance(_dig(parsed, PERMISSIONS_TABLE, PROFILE), dict)
             files = _dig(parsed, PERMISSIONS_TABLE, PROFILE, "filesystem")
             if isinstance(files, dict):
                 roots = [key for key, value in files.items() if key != WORKSPACE_ROOTS and value == "write"]
                 root = roots[0] if roots else None
-    return Want(root, default)
+    return Want(root, default, profile)
 
 
 # --- What to write -----------------------------------------------------------------
@@ -425,6 +535,32 @@ def limit_table() -> list[str]:
 
 def limit_dotted() -> list[str]:
     return [f"{THREADS_KEY} = {THREADS_NEEDED}"]
+
+
+def wait_table() -> list[str]:
+    return [f"[{WAIT_TABLE}]", f"{WAIT_MIN} = {WAIT_MIN_NEEDED}", f"{WAIT_DEFAULT} = {WAIT_DEFAULT_WANTED}"]
+
+
+def _whole(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def wait_order(values: dict[str, Any]) -> str | None:
+    """What Codex would refuse in the three wait keys, ``values`` by their
+    names (``UNSET`` for one the file does not set, which then takes
+    Codex's own value), as one clause; None where min <= default <= max.
+    A value that is not a whole number is not compared."""
+    have = {name: WAIT_CODEX[name] if values.get(name, UNSET) is UNSET else values[name] for name in WAIT_NAMES}
+    if not all(_whole(value) for value in have.values()):
+        return None
+    low, mid, high = (have[name] for name in WAIT_NAMES)
+    if low <= mid <= high:
+        return None
+    given = ", ".join(
+        f"{name} {have[name]}" + (" (Codex's own)" if values.get(name, UNSET) is UNSET else "")
+        for name in WAIT_NAMES
+    )
+    return f"Codex refuses a config unless {WAIT_MIN} <= {WAIT_DEFAULT} <= {WAIT_MAX}, and these are {given}"
 
 
 def profile_data(root: str | None) -> dict[str, Any]:
@@ -493,6 +629,7 @@ class Decision:
     end: str | None = None
     top: str | None = None
     limit: str = CANNOT
+    wait: str = CANNOT
     profile: str = SANDBOX
     selected: str = NOT_ASKED
     lines: list[str] = field(default_factory=list)       # what is done, and what is left to the user
@@ -501,7 +638,7 @@ class Decision:
 
 
 def shown(value: Any) -> str:
-    """One of the three keys' values, as it is printed."""
+    """The value of one of ``KEYS``, as it is printed."""
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float)):
@@ -513,8 +650,8 @@ def shown(value: Any) -> str:
 
 
 def decide(facts: Facts, want: Want) -> Decision:
-    """See the module: the limit, the profile and its selection, each by
-    what the user's file holds outside setup's blocks."""
+    """See the module: the limit, the wait floor, the profile and its
+    selection, each by what the user's file holds outside setup's blocks."""
     found = Decision()
     end: list[str] = []
     top: list[str] = []
@@ -570,10 +707,14 @@ def decide(facts: Facts, want: Want) -> Decision:
             f"[{THREADS_TABLE}] table: {line}"
         )
 
-    # The profile.
+    # The wait floor.
+    _decide_wait(found, facts, end)
+
+    # The profile: written only where default_permissions is set after the run.
     sandbox = facts.outside[SANDBOX_KEY]
     theirs = facts.outside[PERMISSIONS_KEY]
     data = profile_data(want.root)
+    can_select = want.default and theirs is UNSET and _valid(text, default_lines(), [], {(PERMISSIONS_KEY,): PROFILE})
     if sandbox is not UNSET:
         found.profile = SANDBOX
         found.lines.append(
@@ -600,6 +741,24 @@ def decide(facts: Facts, want: Want) -> Decision:
             "it needs \".git\" = \"write\" under filesystem.\":workspace_roots\", and the worktree root as "
             "a writable path"
         )
+    elif theirs is UNSET and not can_select:
+        found.profile = NO_DEFAULT
+        found.lines.append(
+            f"permission profile: not written. {REFUSES}, and after this run your file would set none"
+            + ("" if want.default else f": {DEFAULT_OPTION} was not given")
+            + f". Setup writes the profile only where {PERMISSIONS_KEY} is set"
+        )
+        found.printed = [
+            f"the permission profile `{PROFILE}`, as text; nothing of it was written:",
+            *[f"    {one}" for one in profile_lines(want.root, comments=False) if one],
+            f"to use it: run render {APPLY_OPTION} {DEFAULT_OPTION}, which writes it and selects it with "
+            f"{PERMISSIONS_KEY} = \"{PROFILE}\"; or set {PERMISSIONS_KEY} yourself (any value, a built-in such as "
+            f"\"{PARENT}\" among them) and run render {APPLY_OPTION} again, which then writes it unselected, for "
+            f"one launch with {PER_LAUNCH}",
+            UNCERTAIN,
+        ]
+        if want.root is None:
+            found.printed.append(_no_root())
     elif _valid(text, [], profile_lines(want.root), {(PERMISSIONS_TABLE, PROFILE): data}):
         found.profile = WRITTEN
         if end:
@@ -639,18 +798,20 @@ def decide(facts: Facts, want: Want) -> Decision:
     if not want.default:
         found.selected = NOT_ASKED
         if found.profile == WRITTEN:
-            if theirs is UNSET:
-                found.lines.append(
-                    f"the profile is not selected: start Codex with {PER_LAUNCH} for one launch, or run render "
-                    f"{APPLY_OPTION} {DEFAULT_OPTION} to select it for every session"
-                )
-            else:
-                found.lines.append(f"{PERMISSIONS_KEY}: your file sets it to {shown(theirs)}; setup leaves it alone")
+            # Written unselected only beside a default_permissions of the user's.
+            found.lines.append(
+                f"{PERMISSIONS_KEY}: your file sets it to {shown(theirs)}; setup leaves it alone. The profile is "
+                f"written and not selected: start Codex with {PER_LAUNCH} for one launch, or set "
+                f"{PERMISSIONS_KEY} = \"{PROFILE}\" yourself for every session"
+            )
     elif found.profile == SANDBOX:
         found.selected = SANDBOX
         found.lines.append(
             f"{PERMISSIONS_KEY}: not set, for the same reason: Codex ignores it while {SANDBOX_KEY} is set"
         )
+    elif found.profile == NO_DEFAULT:
+        found.selected = CANNOT
+        found.lines.append(f"{PERMISSIONS_KEY}: not set: the key cannot be added to your file as it is")
     elif found.profile != WRITTEN:
         found.selected = NO_PROFILE
         found.lines.append(f"{PERMISSIONS_KEY}: not set: setup selects only the profile it wrote")
@@ -688,6 +849,73 @@ def decide(facts: Facts, want: Want) -> Decision:
             *top,
         ]) + "\n"
     return found
+
+
+def _decide_wait(found: Decision, facts: Facts, end: list[str]) -> None:
+    """The wait floor, into ``found`` and the lines of the end block; see
+    the module. A value of the user's is reported and never changed."""
+    wait = facts.wait
+    pair = f"{WAIT_MIN} = {WAIT_MIN_NEEDED}; {WAIT_DEFAULT} = {WAIT_DEFAULT_WANTED}"
+    expect = {(*WAIT_PATH, WAIT_MIN): WAIT_MIN_NEEDED, (*WAIT_PATH, WAIT_DEFAULT): WAIT_DEFAULT_WANTED}
+    if wait is UNSET and _valid(facts.outside_text, [], wait_table(), expect):
+        found.wait = TABLE
+        if end:
+            end.append("")
+        end += [
+            f"# Codex raises a wait_agent timeout below {WAIT_MIN_NEEDED} ms to that floor, and a wait with no "
+            "timeout waits the",
+            "# maximum: every wake-up of a waiting agent reads its whole context again.",
+            *wait_table(),
+        ]
+        found.expect.update(expect)
+        found.lines.append(
+            f"{WAIT_MIN_KEY}: set to {WAIT_MIN_NEEDED}, with {WAIT_DEFAULT} = {WAIT_DEFAULT_WANTED}, in setup's "
+            "block at the end of the file: Codex raises a shorter wait to the floor, and a wait with no timeout "
+            "waits the maximum"
+        )
+    elif wait is UNSET:
+        found.wait = CANNOT
+        found.lines.append(
+            f"{WAIT_MIN_KEY}: not written. Your file defines `features` in a form that a [{WAIT_TABLE}] table "
+            f"cannot be added to; add {WAIT_TABLE} there yourself, with these lines: {pair}"
+        )
+    elif not isinstance(wait, dict):
+        found.wait = SWITCH
+        found.lines.append(
+            f"{WAIT_MIN_KEY}: not written. Your file sets {WAIT_TABLE} itself, to a value that is not a table "
+            "(its value is not read; true or false is the feature's switch), and TOML allows it to be defined "
+            f"once. To set the floor, make it a [{WAIT_TABLE}] table yourself, with enabled = <the switch you "
+            f"had> and these lines: {pair}"
+        )
+    else:
+        found.wait = USER_SET
+        theirs = {name: facts.outside[f"{WAIT_TABLE}.{name}"] for name in WAIT_NAMES}
+        said = [f"{name} = {shown(value)}" for name, value in theirs.items() if value is not UNSET]
+        low = theirs[WAIT_MIN]
+        if low is UNSET:
+            floor = f"the floor is Codex's own {WAIT_CODEX[WAIT_MIN]} ms"
+        elif _whole(low) and low >= WAIT_MIN_NEEDED:
+            floor = "the floor is met"
+        else:
+            floor = f"the framework needs {WAIT_MIN} of {WAIT_MIN_NEEDED} or more, and raising it is yours to do"
+        add: dict[str, int] = {}
+        if low is UNSET:
+            add[WAIT_MIN] = WAIT_MIN_NEEDED
+        if theirs[WAIT_DEFAULT] is UNSET:
+            high = theirs[WAIT_MAX]
+            add[WAIT_DEFAULT] = high if _whole(high) else WAIT_DEFAULT_WANTED
+        text = (
+            f"{WAIT_TABLE}: your file defines it, outside setup's block, so setup writes nothing for the wait "
+            f"floor and leaves yours alone; it sets {', '.join(said) if said else 'none of the wait keys'}; {floor}"
+        )
+        if add:
+            text += ". Add to that table, in the form your file gives it: " + "; ".join(
+                f"{name} = {value}" for name, value in add.items()
+            )
+        order = wait_order({**theirs, **add})
+        if order:
+            text += f". {'With those lines' if add else 'As it is'}, {order}: change your values so that they hold"
+        found.lines.append(text)
 
 
 def _no_root() -> str:
@@ -857,7 +1085,12 @@ def _absent_options(held: Want | None, want: Want, found: Decision) -> dict[str,
     said: dict[str, str] = {}
     if held is None:
         return said
-    if held.root is not None and want.root is None and found.profile == WRITTEN:
+    if held.profile and found.profile == NO_DEFAULT and not want.default:
+        said[BLOCK] = (
+            f"the permission profile `{PROFILE}` is taken out, because {DEFAULT_OPTION} was not given to this run "
+            f"and your file sets no {PERMISSIONS_KEY}"
+        )
+    elif held.root is not None and want.root is None and found.profile == WRITTEN:
         said[BLOCK] = (
             f"the worktree root {held.root} is taken out of the profile, because {WORKTREE_OPTION} was not given "
             "to this run"
@@ -872,7 +1105,13 @@ def _taken_out(held: Want | None, want: Want, found: Decision) -> list[str]:
     absence took it out, said once."""
     said = _absent_options(held, want, found)
     lines = []
-    if BLOCK in said:
+    if BLOCK in said and found.profile == NO_DEFAULT:
+        lines.append(
+            f"codex settings: the earlier block defined the permission profile `{PROFILE}`, and this run was given "
+            f"no {DEFAULT_OPTION} while your file sets no {PERMISSIONS_KEY}, so the profile is taken out: "
+            f"{REFUSES}. Give the option to keep it, selected"
+        )
+    elif BLOCK in said:
         lines.append(
             f"codex settings: the earlier block held the worktree root {held.root}, and this run was given no "
             f"{WORKTREE_OPTION}, so the profile no longer has it; give the option again to keep it"
@@ -940,6 +1179,16 @@ def check(context: Any) -> list[Any]:
         return findings + [doctor.warning(f"{path}: {facts.fault}; setup's blocks cannot be checked", path)]
 
     findings.extend(_block_findings(context, path, facts))
+    if facts.held is not None and facts.held.profile and facts.values[PERMISSIONS_KEY] is UNSET \
+            and facts.values[SANDBOX_KEY] is UNSET:
+        # Written so by an earlier setup, which defined the profile unselected.
+        findings.append(doctor.error(
+            f"setup's block {BLOCK} defines the permission profile `{PROFILE}` and the file sets no "
+            f"{PERMISSIONS_KEY}: {REFUSES}, so Codex will not start. Fix it with render {APPLY_OPTION} "
+            f"{DEFAULT_OPTION}, which selects the profile, or with render {REMOVE_OPTION}, which takes setup's "
+            f"blocks out; render {APPLY_OPTION} alone takes the profile out of the block",
+            f"{path}: block {BLOCK}",
+        ))
     held = facts.held or Want()
     found = decide(facts, held)
     asked = f"render {APPLY_OPTION}"

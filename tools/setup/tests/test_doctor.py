@@ -944,6 +944,24 @@ class CodexSettingsCase(DoctorCase):
                            "Codex chooses the default", "needs 8 or more")
         self.assertFinding(findings, doctor.INFO, "sandbox_mode: unset")
         self.assertFinding(findings, doctor.INFO, "default_permissions: unset")
+        self.assertFinding(findings, doctor.INFO, "features.multi_agent_v2.min_wait_timeout_ms: unset",
+                           "Codex's own floor of 10000 ms", "needs 300000 or more")
+
+    def test_the_wait_floor(self) -> None:
+        table = "[features.multi_agent_v2]\n"
+        self.config(table + "min_wait_timeout_ms = 300000\ndefault_wait_timeout_ms = 3600000\n")
+        code, findings = self.settings()
+        self.assertEqual(code, 0)
+        self.assertQuiet(findings)
+        self.assertFinding(findings, doctor.OK, "features.multi_agent_v2.min_wait_timeout_ms = 300000")
+        self.assertFinding(findings, doctor.INFO, "features.multi_agent_v2.default_wait_timeout_ms = 3600000")
+        self.config(table + "min_wait_timeout_ms = 60000\nmax_wait_timeout_ms = 3600000\n")
+        findings = self.settings()[1]
+        self.assertFinding(findings, doctor.WARNING, "min_wait_timeout_ms = 60000: below 300000", "wake-up")
+        self.assertFinding(findings, doctor.INFO, "features.multi_agent_v2.max_wait_timeout_ms = 3600000")
+        self.config(table + "min_wait_timeout_ms = 300000\n")
+        self.assertFinding(self.settings()[1], doctor.WARNING, "features.multi_agent_v2: Codex refuses a config "
+                           "unless min_wait_timeout_ms <= default_wait_timeout_ms <= max_wait_timeout_ms")
 
     def test_each_key_set(self) -> None:
         self.config('sandbox_mode = "workspace-write"\ndefault_permissions = ":workspace"\n\n'

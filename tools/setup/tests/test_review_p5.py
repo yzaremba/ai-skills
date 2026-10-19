@@ -624,22 +624,33 @@ class AbsentOptionTests(SettingsCase):
         self.user('model = "x"\n')
         trees = self.root / "trees"
         self.apply(ROOT, str(trees), DEFAULT)
-        code, out, err = self.go(APPLY, "--json")
-        self.assertEqual((code, err), (0, ""))
-        report = json.loads(out)
-        says = {item["name"]: item["says"] for provider in report["providers"] for place in provider["places"]
-                for item in place["items"] if item["kind"] == codexsettings.KIND}
+
+        def run(*argv: str) -> tuple[dict, dict, str]:
+            code, out, err = self.go(APPLY, "--json", *argv)
+            self.assertEqual((code, err), (0, ""))
+            report = json.loads(out)
+            says = {item["name"]: item["says"] for provider in report["providers"] for place in provider["places"]
+                    for item in place["items"] if item["kind"] == codexsettings.KIND}
+            gone = {item["name"]: item["says"] for item in report["stale"]}
+            return says, gone, " ".join(report["notes"])
+
+        # Without --worktree-root: the root goes out of the profile, which stays selected.
+        says, gone, notes = run(DEFAULT)
         self.assertIn(f"the worktree root {trees} is taken out of the profile, because --worktree-root was not given "
                       "to this run", says[codexsettings.BLOCK])
-        gone = {item["name"]: item["says"] for item in report["stale"]}
+        self.assertIn("this run was given no --worktree-root", notes)
+        # Without --default-codex-permissions, beside no default_permissions of the user's: the profile goes
+        # out of the end block too, since Codex refuses a profile with no default_permissions.
+        says, gone, notes = run()
+        self.assertIn("the permission profile `workflow` is taken out, because --default-codex-permissions was not "
+                      "given to this run and your file sets no default_permissions", says[codexsettings.BLOCK])
         self.assertEqual(
             gone[codexsettings.TOP_BLOCK],
             "removed, with nothing else in it: default_permissions is taken out, because "
             "--default-codex-permissions was not given to this run",
         )
-        notes = " ".join(report["notes"])
-        self.assertIn("this run was given no --worktree-root", notes)
         self.assertIn("this run was given no --default-codex-permissions", notes)
+        self.assertIn("the earlier block defined the permission profile `workflow`", notes)
 
     def test_a_run_with_the_same_options_says_no_such_thing(self) -> None:
         self.user('model = "x"\n')
