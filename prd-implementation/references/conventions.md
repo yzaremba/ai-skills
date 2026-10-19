@@ -118,11 +118,13 @@ These limits are exact, so that they can be checked mechanically.
 |------|-------|
 | An annotation on a PLAN step: a line of a PLAN file (`SPRINTXX-PLAN-…`) that starts with `> Landed `, `> Bug fix ` or `> Audit ` | One line of at most 300 characters |
 | A TASKS line: a line of a TASKS file (`SPRINTXX-TASKS-…`) that starts with `- [ ]`, `- [~]` or `- [x]` | At most 150 characters |
+| A sprint's STATE: the file `SPRINTXX-STATE-…` | At most 70 lines and at most 8000 characters |
 | A backlog item: a line of `BACKLOG.md` that starts with `- ` | One line of at most 300 characters |
 | A line of a deferred item in `DEFERRED.md`: its heading or one of its field lines | One line of at most 300 characters |
 
 - **Every limit is inclusive**: a line of exactly 300, or exactly 150, characters is within its limit; one more is over.
 - **What is counted** is the Unicode characters (code points) of the whole line as written, without the line's newline. Everything on the line counts: the leading `> ` or `- [ ] `, the date, markup such as `**`, backticks and `~~`, and a link's brackets and target as well as its text. On a TASKS line the `**[hard]**` tag counts, and on a skipped one the strikethrough and the `(skipped: …)` reason too; on a backlog item the number, the priority tag and the link to its document count.
+- **STATE is counted as a whole file**: its lines, as the lines of the other files are counted, and its Unicode characters (code points), each line counted with its line break as one character. A line inside a fenced code block counts. Two violations are possible, one for each limit, and a file can have both: [state.md](state.md), "Overwrite; never append".
 - **A carriage return at the end of a line is not counted.** A file checked out with CRLF line endings measures the same as with LF.
 - **One line means one line.** An annotation is never continued: a line directly after it that starts with `>` and is not itself an annotation or a mark (`> Depends on:`, `> Parallel:`, `> Tag:`) is a second line, and a violation. A backlog item and a field of a deferred item are never continued either: [stage-0-backlog.md](stage-0-backlog.md) and [deferred.md](deferred.md) say which lines those two files may hold, and any other line in them is a violation.
 - **What does not fit goes elsewhere**: for an annotation, in the commit message; for a TASKS line, on the PLAN step; for a backlog item, in the item's document.

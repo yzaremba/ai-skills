@@ -191,6 +191,8 @@ SETUP_DIR = _HERE.parents[2] / "tools" / "setup"
 
 ANNOTATION_LIMIT = 300
 TASKS_LIMIT = 150
+STATE_LINES = 70
+STATE_CHARACTERS = 8000
 BACKLOG_LIMIT = 300
 DEFERRED_LIMIT = 300
 INDEX_LINES = 50
@@ -206,6 +208,7 @@ INDEX_END = "<!-- project-memory:index:end -->"
 
 PLAN_NAME = re.compile(r"^SPRINT[0-9]{2,}-PLAN-.+\.md$")
 TASKS_NAME = re.compile(r"^SPRINT[0-9]{2,}-TASKS-.+\.md$")
+STATE_NAME = re.compile(r"^SPRINT[0-9]{2,}-STATE-.+\.md$")
 # A sprint's own doc in the sprint docs directory: its number and its kind.
 SPRINT_DOC_NAME = re.compile(r"^SPRINT([0-9]{2,})-(THOUGHTS|PRD|PLAN|TASKS|STATE)-.+\.md$")
 # The last part of a link's target: a doc of a sprint, or of an epic.
@@ -702,6 +705,19 @@ def check_tasks(lines: list[str], add, plan: dict[str, tuple[int, int | None]] |
 
 
 # --- Links in a sprint's docs -------------------------------------------------
+
+def check_state(lines: list[str], add) -> None:
+    """Check a STATE file: at most STATE_LINES lines and STATE_CHARACTERS
+    characters (code points of the file, each line break counted as one,
+    a carriage return not counted). Fenced lines count."""
+    if len(lines) > STATE_LINES:
+        add(STATE_LINES + 1, "state-too-many-lines",
+            f"{len(lines)} lines; the limit is {STATE_LINES}; cut it to the present: what happened is in git log")
+    size = sum(len(line) + 1 for line in lines)
+    if size > STATE_CHARACTERS:
+        add(None, "state-too-long",
+            f"{size} characters; the limit is {STATE_CHARACTERS}; cut it to the present: what happened is in git log")
+
 
 def _without_code_spans(line: str) -> str:
     """``line`` with each code span put out of the way: a run of backticks
@@ -1567,6 +1583,8 @@ def sprint_workspaces(project: Path, docs: Path, adder, note) -> tuple[str | Non
                     plan = plan_steps(lines)
                 elif kind == "TASKS":
                     check_tasks(lines, adder(file), plan)
+                elif kind == "STATE":
+                    check_state(lines, adder(file))
                 check_links(lines, int(number), adder(file), mapped.parts)
     return str(common), entries
 
@@ -1642,6 +1660,8 @@ def build_report(project: Path, docs: Path, docs_from: str, settings: dict, toda
             plans[name] = plan_steps(lines)
         elif TASKS_NAME.match(name):
             check_tasks(lines, adder(name), plans.get(TASKS_PAIR.sub(r"\1-PLAN-\2", name)))
+        elif STATE_NAME.match(name):
+            check_state(lines, adder(name))
         check_links(lines, int(own.group(1)), adder(name), base)
     if _present(project / AGENTS_FILE):
         lines = lines_of(AGENTS_FILE, project)

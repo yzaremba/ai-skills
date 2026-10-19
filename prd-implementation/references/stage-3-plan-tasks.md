@@ -25,7 +25,11 @@ A step may carry three optional marks besides `> Depends on:`. Each is a blockqu
   - **At most three** of its steps run at a time. A larger group is allowed; its other steps wait their turn.
   - Marking a group is a **positive claim by the PLAN's author** that its steps touch separate files and do not depend on each other. Make it only after checking both. A missing mark costs speed; a wrong one costs a merge conflict and a step done twice.
 - **`> Tag: light`** — the step may share an implementer with the light steps next to it. Such a **light run** is sequential, stays within one phase, holds about five steps at most, and ends at any failure or review finding.
-- **`> Tag: hard`** — the step asks for the stronger implementer. `hard` is for concurrency, a schema or contract change, a migration or a money path, and for nothing else.
+- **`> Tag: hard`** — the step asks for the stronger implementer, which costs several times a standard one, and the reviews and fixes of a hard step cost more again. The PLAN's author decides it while planning, by these tests, and names the one the step meets in its body:
+  - **A shared invariant.** The step must keep a rule true across several writers or readers: concurrency, locking, ordering, idempotency, or a recovery, rebuild or correction path.
+  - **A contract others build on.** A schema, a file or wire format, a migration or a public interface: a mistake in it is repeated in every later step.
+  - **An effect that cannot be undone.** A money path, a deletion, a change of production state.
+  - **Not reasons:** size, the number of files, a long test run, an unfamiliar domain with a clear spec, or a design the PLAN leaves open. A step whose design is left open is unfinished: settle the design in the step's body before the PLAN is final, and tag it only if it then meets a test. A step that meets a test and also touches more than about eight files, or has more than about six behaviours to verify, is split first, and only the part that meets the test is tagged.
 
 How they combine:
 
