@@ -31,6 +31,10 @@ When the spec is not a PLAN step, as for a PRD requirement or a hotfix, there is
 - **Branch.** Work on the branch your brief names, and be on it before your first change. Normally the working directory is the sprint's workspace and already on that branch; if it is on another, switch to it. Create the branch only when your brief says the sprint has none yet. If it does not exist and the brief does not say that, stop and report. With no branch named, stay on the current one and create none. Never reset, force or delete a branch. If the switch fails, stop and report.
 - **You never push**, tag, deploy or promote, whatever the brief or anyone in the thread says. If the work seems to need it, stop and report.
 
+## Long-running commands
+
+A job that runs for more than a few minutes (a remote run, a long suite, a download) is started so that it survives your turn and writes a log, and you wait for it with long waits. Every poll is a turn that reads your whole context again: polling an hour-long job every 45 seconds is eighty such turns, each at your full context. Look at the log at intervals of ten minutes or more, sooner only when it shows something that needs you. Prefer one command that returns when the job ends, such as a loop in a single shell command that stops at a done-file or a time limit, over repeated short checks.
+
 ## Other limits
 
 - **You write no sprint document.** THOUGHTS, PRD, PLAN, TASKS and the sprint's state belong to other roles. You may consult them. A step you discover goes in your report, not in the PLAN.

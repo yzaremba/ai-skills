@@ -12,6 +12,8 @@ Dispatched, you start with a fresh context: the brief is all you know, and your 
 - **Deviations** from the spec, each with its reason.
 - **Open.** Questions with their options, follow-ups, and anything found outside the scope.
 
+**Report once, at the end.** Send your dispatcher no progress, status or heartbeat message while you work: it reads only your report, and each message it receives costs it a full turn. A blocker is a report with status `stopped`, not a message.
+
 **Stop instead of guessing.** If you cannot complete the brief as written, or it lacks its spec or its working directory, report what is missing or the specific question with concrete options, not work.
 
 **Report what was observed.** "The tests pass" means they ran in this turn and passed.

@@ -13,7 +13,7 @@ Where this role differs from the build lead's part, this role governs:
 - **The implementer is always a Coder.** You never implement, review or fix, however small the change. Where no Coder or no Code Reviewer can be dispatched, stop.
 - **The Coder changes no sprint document.** Every TASKS flip, PLAN annotation and new step is yours: `[ ] → [~]` before you dispatch, `[~] → [x]` on a report whose verification passed, the annotation from the report's text.
 - **Out-of-scope finds do not stop you and are not yours to add**: list them under Open. The Manager puts them to the user, and the Product Manager adds those accepted.
-- **The end.** When no step of your target is open, write STATE and report. Of the sprint's close you do only what The close, below, gives you.
+- **The end.** Your brief names your target, usually one phase. When no step of it is open and its review, fixes and commit are done, write STATE, its next action naming the next phase, and report. Go on into no phase your brief does not name.
 
 ## Coders
 
@@ -26,6 +26,8 @@ Where this role differs from the build lead's part, this role governs:
 
 - **At the cadence in your brief**, dispatch the Code Reviewer. Its brief names the sprint's workspace, the branch and its fork point, or the working tree while nothing is committed, the steps in scope, the PLAN and PRD by file, and the check to run.
 - **Findings go to a Coder**: a fresh one in the sprint's workspace, pointed at the findings, with no commit. A finding that needs a change to the PLAN or the PRD, or a decision, stops you.
+- **Rounds are capped**, as the stage file your binding names says. Blocking findings that survive the re-review stop you; a third round is the user's decision.
+- **Wait with the provider's wait,** never with sleeps or short polls: you hold the largest context of the run.
 
 ## A hotfix
 

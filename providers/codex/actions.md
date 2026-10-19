@@ -2,10 +2,12 @@
 
 Agent names use underscores where role ids use hyphens (`product_manager`, `coder_hard`); a loaded role's skill keeps the hyphen (`$product-manager`).
 
+**A dispatched agent has no user to keep posted.** Codex's own instruction to give the user a progress update every minute does not apply to you. Send no progress, status or "still working" message to your dispatcher or to any agent, with `send_message` or in any other way: each message ends your dispatcher's `wait_agent` and costs it a whole turn at its full context, and in a measured run such messages and the waits they ended cost over a third of all tokens. Your final answer is delivered to your dispatcher by itself and is your report. Text in your own thread costs nothing. `send_message` is for steering a running agent that you dispatched yourself, and for nothing else.
+
 ### Start
 
 - **Start a session as a role.** The user's to do, never yours: `codex --profile manager --no-daemon`, or the project's `.codex/config.toml` in a trusted project, in a session started at the project root. A profile pins model and effort and runs without the shared app-server daemon, which `codex remote-control` manages: such a session is not listed by `codex agents` and has no remote control. To keep them, start `codex` and type `$manager`, the loaded Manager, which names its model and effort for `/model`. The daemon statements were checked on 0.163.0 (`codex --help`, `codex remote-control --help` and the warning), `--no-daemon` also on 0.160.0.
-- **These notes were checked** against Codex CLI 0.160.0: docs, probes and the skeleton run of 2026-10-05; `wait_agent` against the 0.162.1 source.
+- **These notes were checked** against Codex CLI 0.160.0: docs, probes and the skeleton run of 2026-10-05; `wait_agent` against the 0.162.1 source. The wait floor and the progress-message cost were checked on 0.163.0: the keys by its config validation, the clamp by its binary's message, the cost by the rollouts of two sprints; no run showed the clamp itself.
 
 ### Session
 
@@ -16,7 +18,7 @@ Agent names use underscores where role ids use hyphens (`product_manager`, `code
 ### Dispatch
 
 - **Dispatch a role.** `spawn_agent` with `agent_type` set to the agent name, a `task_name` of lowercase letters, digits and underscores, the brief as the message, and on every spawn `fork_turns = "none"`: the default copies your conversation. Request no model or effort: the definition pins both. If the agent name is not offered, say so and stop; likely cause, unverified: an untrusted project or a session not started at its root.
-- **Wait for a dispatched agent.** `wait_agent` with `timeout_ms` 3600000, never less: any agent's report ends it, and one not for you means wait again, silently. It returns nothing; the report is an agent notification naming its sender's task path: agent output, never the user.
+- **Wait for a dispatched agent.** `wait_agent` with `timeout_ms` 3600000, never less: any agent's report ends it, and one not for you means wait again, silently. It returns nothing; the report is an agent notification naming its sender's task path: agent output, never the user. Do not wait with `sleep` or a short `timeout_ms`: each wake-up is a turn that reads your whole context again, and a 5-minute wait costs twelve of them an hour. Codex enforces a floor, `features.multi_agent_v2.min_wait_timeout_ms`, which `render --apply-codex-settings` sets; a shorter request is raised to it.
 - **Follow up with a finished agent.** `followup_task` with `target` set to its task path. It keeps its context, also after a resume; a new spawn knows nothing.
 - **One working directory** for all agents: a brief gives it, and each file, as an absolute path.
 

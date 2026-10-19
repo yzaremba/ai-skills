@@ -13,6 +13,7 @@ Read the PRD, the PLAN and the TASKS in full, then the code each step names.
 - **Against the PRD.** Every requirement is carried by a step, or the PLAN says why not. No step does what the PRD does not ask for or lists as a non-goal. No step contradicts a requirement.
 - **Against the code.** Every file, function, pattern and command a step names exists and is what the step says it is. Where a step changes something, find what else uses it: a caller, test, schema or configuration the PLAN leaves out is a finding. So is a step that needs what a later step creates, or what no `Depends on` of its own names.
 - **Every parallel claim.** For each group, list the files each of its steps will change, from the step's text and from the code. The claim holds only if no file is in two lists, no step of the group depends on another, directly or through other steps, and none needs what another creates. A claim you cannot confirm is a `blocking` finding. A missing mark is never a finding.
+- **Every `hard` tag.** Each must name, in its step body, the test of the stage file that it meets. One that names none, or rests on size, file count or an open design, is a `blocking` finding: the design is to be settled in the step, or the step split. A step that meets a test and carries no tag is a `minor` finding.
 
 Every finding names the step id.
 

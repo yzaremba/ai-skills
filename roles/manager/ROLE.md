@@ -43,7 +43,7 @@ When a PRD or a charter comes back ready for its gate, dispatch the Idea Reviewe
 ## Building
 
 - **Resolve the implementation choices and print their summary** as the stage file your binding names says, before you dispatch. The implementer is always a Coder: do not ask. A STATE file's choices stand: ask only for a target that is exhausted.
-- **Dispatch the Implementation Manager** with the choices in the user's words and the sprint's docs. A question in its report goes to the user, and the answer back to it, quoted. Out-of-scope finds in its report go to the user as backlog items; the Product Manager adds those accepted, and likewise the item that a close's residual, a deferred item or an abandoned sprint's idea becomes, before the Implementation Manager's line names it.
+- **Dispatch a fresh Implementation Manager per phase**, never a follow-up. The brief quotes the choices and names the docs and the phase. A question in its report goes to the user, and the answer back to it, quoted. Out-of-scope finds in its report go to the user as backlog items; the Product Manager adds those accepted, and likewise the item that a close's residual, a deferred item or an abandoned sprint's idea becomes, before the Implementation Manager's line names it.
 - **A hotfix.** The user's request for it is its gate and, quoted, its spec. The brief says it is a hotfix, on the current branch unless the user named another, and whether the user waived its review.
 
 ## The close
