@@ -26,6 +26,7 @@ Run from the repository root:
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -33,7 +34,7 @@ import unittest
 from pathlib import Path
 
 import support
-from crash_support import EXIT_CODE, INTERRUPT, KILL, Disk, World, differences, orphan, stopped, tree
+from crash_support import EXIT_CODE, INTERRUPT, KILL, Disk, World, clear, differences, orphan, stopped, tree
 from wfsetup import fileops, fsio, lock
 
 STATE = ".agents/workflow-setup"
@@ -70,12 +71,28 @@ class CrashCase(unittest.TestCase):
         if scenario == "uninstall":
             self.world.everything().apply()
 
+    def restore(self, scenario: str) -> None:
+        """The starting tree of ``scenario`` again, from a copy taken the
+        first time, which is cheaper than the install ``begin`` makes. Under
+        Windows ``begin`` runs again: a copy would follow a junction into
+        its target."""
+        if os.name != "posix":
+            self.begin(scenario)
+            return
+        snapshot = self.world.root.parent / "snapshots" / scenario
+        if not snapshot.exists():
+            with Disk():
+                self.begin(scenario)
+            shutil.copytree(self.world.root, snapshot, symlinks=True)
+        clear(self.world.root)
+        shutil.copytree(snapshot, self.world.root, symlinks=True)
+
     def measure(self, scenario: str) -> tuple[dict, dict, dict, int]:
         """The tree before the user had setup, the tree the scenario starts
         from, the tree it ends with, and the number of changes it makes."""
         self.world.reset()
         pristine = tree(self.world.root)
-        self.begin(scenario)
+        self.restore(scenario)
         start = tree(self.world.root)
         counter = Disk()
         self.assertFalse(stopped(lambda: self.world.run(scenario), counter))
@@ -108,8 +125,7 @@ class CrashCase(unittest.TestCase):
 
     def one(self, scenario: str, point: int, mode: str, after: bool, pristine: dict, start: dict, end: dict) -> None:
         where = f"{scenario}, {mode} {'after' if after else 'before'} change {point}"
-        with Disk():
-            self.begin(scenario)
+        self.restore(scenario)
         disk = Disk(point, mode, after)
         self.assertTrue(stopped(lambda: self.world.run(scenario), disk), where)
         with Disk():  # not stopped any more; and not waiting for the disk to sync
@@ -143,16 +159,18 @@ class CrashCase(unittest.TestCase):
     def temporaries(self, snap: dict[str, tuple]) -> list[str]:
         return [name for name in snap if any(fsio.is_temporary(part) for part in name.split("/"))]
 
-    def every_point(self, scenario: str) -> int:
+    def every_point(self, scenario: str, mode: str, after: bool) -> int:
+        """``scenario`` stopped before each change it makes, or after it
+        with ``after``, in ``mode``. The three modes are three tests, so
+        that they run side by side."""
         pristine, start, end, count = self.measure(scenario)
         points = 0
         for point in range(1, count + 1):
-            for mode, after in ((KILL, False), (INTERRUPT, False), (INTERRUPT, True)):
-                with self.subTest(scenario=scenario, point=point, mode=mode, after=after):
-                    self.one(scenario, point, mode, after, pristine, start, end)
-                points += 1
+            with self.subTest(scenario=scenario, point=point, mode=mode, after=after):
+                self.one(scenario, point, mode, after, pristine, start, end)
+            points += 1
         # The control: the run that is not stopped, and its way back.
-        self.begin(scenario)
+        self.restore(scenario)
         self.world.run(scenario)
         if scenario != "uninstall":
             self.assertEqual(self.world.uninstall(), [])
@@ -161,19 +179,45 @@ class CrashCase(unittest.TestCase):
 
 
 class EveryPointTests(CrashCase):
-    """Each scenario stopped at every change it makes to the disk."""
+    """Each scenario stopped at every change it makes to the disk: killed,
+    interrupted before the change, and interrupted after it, each a test
+    of its own."""
 
-    def test_a_plain_render(self) -> None:
-        self.assertGreater(self.every_point("render"), 60)
+    def test_a_plain_render_killed(self) -> None:
+        self.assertGreater(self.every_point("render", KILL, False), 20)
 
-    def test_a_migration_that_replaces_a_directory_by_a_link(self) -> None:
-        self.assertGreater(self.every_point("migrate"), 150)
+    def test_a_plain_render_interrupted_before(self) -> None:
+        self.assertGreater(self.every_point("render", INTERRUPT, False), 20)
 
-    def test_a_project_render(self) -> None:
-        self.assertGreater(self.every_point("project_render"), 100)
+    def test_a_plain_render_interrupted_after(self) -> None:
+        self.assertGreater(self.every_point("render", INTERRUPT, True), 20)
 
-    def test_an_uninstall(self) -> None:
-        self.assertGreater(self.every_point("uninstall"), 150)
+    def test_a_migration_that_replaces_a_directory_by_a_link_killed(self) -> None:
+        self.assertGreater(self.every_point("migrate", KILL, False), 50)
+
+    def test_a_migration_that_replaces_a_directory_by_a_link_interrupted_before(self) -> None:
+        self.assertGreater(self.every_point("migrate", INTERRUPT, False), 50)
+
+    def test_a_migration_that_replaces_a_directory_by_a_link_interrupted_after(self) -> None:
+        self.assertGreater(self.every_point("migrate", INTERRUPT, True), 50)
+
+    def test_a_project_render_killed(self) -> None:
+        self.assertGreater(self.every_point("project_render", KILL, False), 33)
+
+    def test_a_project_render_interrupted_before(self) -> None:
+        self.assertGreater(self.every_point("project_render", INTERRUPT, False), 33)
+
+    def test_a_project_render_interrupted_after(self) -> None:
+        self.assertGreater(self.every_point("project_render", INTERRUPT, True), 33)
+
+    def test_an_uninstall_killed(self) -> None:
+        self.assertGreater(self.every_point("uninstall", KILL, False), 50)
+
+    def test_an_uninstall_interrupted_before(self) -> None:
+        self.assertGreater(self.every_point("uninstall", INTERRUPT, False), 50)
+
+    def test_an_uninstall_interrupted_after(self) -> None:
+        self.assertGreater(self.every_point("uninstall", INTERRUPT, True), 50)
 
 
 class TheUsersFilesTests(CrashCase):
@@ -329,7 +373,7 @@ class RealKillTests(CrashCase):
         points = sorted({*range(1, count + 1, self.STEP), count - 1, count})
         for number, point in enumerate(points):
             with self.subTest(scenario=scenario, point=point):
-                self.begin(scenario)
+                self.restore(scenario)
                 self.assertEqual(self.child(scenario, point, f"C{number:02d}"), EXIT_CODE)
                 locks = [lock.lock_file(self.world.roots, project) for project in self.world.roots.scopes()]
                 locked = any(file.exists() for file in locks)
