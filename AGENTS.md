@@ -56,12 +56,11 @@ python -B -m unittest discover -s tools/setup/tests
 python -B -m unittest discover -s prd-implementation/tests
 ```
 
-The setup suite samples its two longest tests (every kill point of every command, and the
-lock race). After a change to the setup tool's write path run them in full as well:
+The setup suite samples its crash test. After a change to the setup tool's write path run
+it at every kill point as well:
 
 ```bash
-WFSETUP_TEST_FULL=1 python -B -m unittest discover -s tools/setup/tests -p "test_real_crash.py"
-WFSETUP_TEST_FULL=1 python -B -m unittest discover -s tools/setup/tests -p "test_lock_race.py"
+WFSETUP_TEST_FULL=1 python -B -m unittest discover -s tools/setup/tests -p "test_crash.py"
 ```
 
 ## Conventions
