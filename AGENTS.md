@@ -52,10 +52,12 @@ Run each of these from the repository root with Python 3.11 or later. On a machi
 ```bash
 python -B multiagent-collab/tests/test_multiagent_collab.py
 python -B -m unittest discover -s tools/session-profile/tests
-python -B -m unittest discover -s tools/setup/tests
+python -B tools/setup/tests/run.py
 python -B -m unittest discover -s prd-implementation/tests
 ```
 
+`run.py` runs the setup suite in parallel processes, one test per worker, in about a minute;
+`python -B -m unittest discover -s tools/setup/tests` runs the same tests one after another.
 The setup suite samples its crash test. After a change to the setup tool's write path run
 it at every kill point as well:
 
