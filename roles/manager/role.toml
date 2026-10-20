@@ -1,17 +1,17 @@
 name = "manager"
 title = "Manager"
-description = "The session the user starts: routes each request to the role that owns it, holds the gates, relays conclusions, and writes no file."
+description = "The session the user starts: does the work needing no separate judgement, routes the rest, holds the gates."
 includes = ["gates.md", "hand-back-reading.md", "brief-writing.md", "questions.md"]
-actions = ["session", "dispatch", "dialogue", "commands"]
+actions = ["session", "dispatch", "dialogue", "commands", "files", "commit"]
 
 [profile]
-tier = "standard"
+tier = "deep"
 effort = "medium"
 
 [limits]
-edits = false
+edits = true
 commands = true
-dispatches = ["product-manager", "architect", "implementation-manager", "idea-reviewer", "plan-reviewer"]
+dispatches = ["product-manager", "architect", "implementation-manager", "idea-reviewer", "plan-reviewer", "investigator"]
 
 [entry]
 dispatch = false

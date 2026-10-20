@@ -1470,7 +1470,7 @@ class RepositoryCase(RenderCase):
     # document's table, as the sources state it. A role added later is not
     # looked at.
     DISPATCHES = {
-        "manager": ("product-manager", "architect", "implementation-manager", "idea-reviewer", "plan-reviewer"),
+        "manager": ("product-manager", "architect", "implementation-manager", "idea-reviewer", "plan-reviewer", "investigator"),
         "product-manager": ("investigator",),
         "architect": ("investigator",),
         "implementation-manager": ("coder", "coder-hard", "code-reviewer"),
@@ -1488,9 +1488,9 @@ class RepositoryCase(RenderCase):
                 # Only the Manager starts a session, and it is never dispatched.
                 self.assertEqual((entry["start"], entry["dispatch"]), (name == "manager", name != "manager"))
                 self.assertEqual(entry["load"], name in ("manager", "product-manager", "architect"))
-        # The Manager and the reviewers change no file; two reviewers run no command.
+        # The reviewers change no file; two reviewers run no command.
         writes = {name for name in self.DISPATCHES if loaded[name].data["limits"]["edits"]}
-        self.assertEqual(writes, {"product-manager", "architect", "implementation-manager", "coder"})
+        self.assertEqual(writes, {"manager", "product-manager", "architect", "implementation-manager", "coder"})
         shell = {name for name in self.DISPATCHES if not loaded[name].data["limits"]["commands"]}
         self.assertEqual(shell, {"idea-reviewer", "plan-reviewer"})
         for name in shell:
@@ -1503,7 +1503,7 @@ class RepositoryCase(RenderCase):
         found = {role: {(row.skill, row.stage, row.part) for row in mine} for role, mine in rows.items()}
         sprint, epic = "prd-implementation", "epic-implementation"
         for role, wanted in {
-            "manager": {(sprint, "deferred.md", "checks"), (sprint, "stage-3-implementation.md", "choices"),
+            "manager": {(sprint, "deferred.md", "writes"), (sprint, "stage-3-implementation.md", "choices"),
                         (sprint, "completion.md", "close-commands"), (sprint, "abandon.md", "close-commands")},
             "product-manager": {(sprint, "stage-0-backlog.md", "owns"), (sprint, "backlog-conversion.md", "owns"),
                                 (sprint, "deferred-conversion.md", "owns"), (sprint, "stage-1-thoughts.md", "owns"), (sprint, "stage-2-prd.md", "owns"),
@@ -1522,9 +1522,9 @@ class RepositoryCase(RenderCase):
         }.items():
             with self.subTest(role=role):
                 self.assertLessEqual(wanted, found.get(role, set()))
-        # The Manager writes nothing, so what the close and a deferred item
-        # write has a role that does.
-        self.assertIn((sprint, "deferred.md", "writes"), found["implementation-manager"])        # The Investigator and the Code Reviewer follow no stage file.
+        # A deferred item is the Manager's to write; the annotation and flip at a close are the Implementation Manager's.
+        self.assertNotIn((sprint, "deferred.md", "writes"), found["implementation-manager"])
+        # The Investigator and the Code Reviewer follow no stage file.
         self.assertEqual(set(found) & {"investigator", "code-reviewer"}, set())
 
     def test_every_stage_file_of_both_process_skills_has_a_row(self) -> None:
@@ -1561,7 +1561,7 @@ class RepositoryCase(RenderCase):
         self.assertLessEqual({"manager", "product-manager", "architect", "implementation-manager", "coder"}, seen)
         # The command the Manager runs at a session's start is one the skill has.
         self.assertTrue((support.REPOSITORY / "prd-implementation" / "scripts" / "check.py").is_file())
-        manager = [row for row in definitions.bindings(where)["manager"] if row.part == "checks"]
+        manager = [row for row in definitions.bindings(where)["manager"] if row.stage == "deferred.md"]
         self.assertIn("`python scripts/check.py --project <project root>`", manager[0].note)
         # ... and the section says where a skill's scripts are.
         self.assertIn("A skill's scripts are in `scripts/`, beside `references/`.", definitions.bindings_section(manager, "~"))

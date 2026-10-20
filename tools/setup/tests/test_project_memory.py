@@ -19,7 +19,7 @@ SKILL = "project-memory"
 DIRECTORY = CLONE / SKILL
 SPRINT = CLONE / "prd-implementation"
 LESSONS = (SKILL, "lifecycle.md", "lessons")
-WRITERS = ("implementation-manager", "product-manager", "architect")
+WRITERS = ("implementation-manager", "product-manager", "architect", "manager")
 
 
 def text_of(*parts: str) -> str:
@@ -135,18 +135,20 @@ class WhoWritesALesson(support.ScratchCase):
                 self.assertEqual([(row.skill, row.stage, row.part) for row in mine], [LESSONS])
                 self.assertTrue(loaded[role].data["limits"]["edits"])
                 self.assertLessEqual(len(mine[0].note), 200)
-                self.assertRegex(mine[0].note, r"\bthe user(?:'s approval| approved)\b")
+                if role in ("product-manager", "architect"):
+                    self.assertRegex(mine[0].note, r"\bthe user(?:'s approval| approved)\b")
         build_lead = bound["implementation-manager"][0].note
         # One rule for when the build lead proposes, and none from a hotfix.
         self.assertIn("only in the report of the brief that writes or deletes the last STATE; a hotfix, none.", build_lead)
         self.assertIn("if any, from STATE's candidates and your own", build_lead)
+        # It proposes and writes none: the Manager writes the approved ones.
+        self.assertIn("Write none: the Manager writes the approved ones.", build_lead)
+        self.assertIn("Write a close's approved lessons in the archive change, and one the user asks you to record.", bound["manager"][0].note)
         for role in ("product-manager", "architect"):
             self.assertIn("in a `ready for the gate` or `stopped` hand-back or, loaded, to the user", bound[role][0].note)
 
-    def test_the_manager_and_the_coder_have_none(self) -> None:
-        loaded = roles.load_all(self.where)
-        self.assertFalse(loaded["manager"].data["limits"]["edits"])
-        self.assertNotIn("manager", self.bound())
+    def test_the_manager_writes_an_approved_lesson_and_the_coder_has_none(self) -> None:
+        self.assertIn("Propose none.", self.bound()["manager"][0].note)
         self.assertNotIn("coder", self.bound())
 
     def test_the_row_reaches_each_role_with_the_skills_place(self) -> None:

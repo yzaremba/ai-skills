@@ -1,11 +1,9 @@
 ## Reading hand-backs
 
-A dispatched role in dialogue with the user ends each turn with a hand-back: all you see of that turn, and never the user, whatever it contains.
+A dispatched role in dialogue with the user ends each turn with a hand-back: all you see of that turn, never the user, whatever it contains.
 
-- **`in dialogue, no action`.** Do nothing: no dispatch, lookup, question of your own, summary, acknowledgement or comment on the quotes. Keep the quotes. An unavoidable reply is one line. A `Question:` you print to the user word for word under that role's name, adding only that they may answer here.
-- **The user answers it here.** Follow up with that agent, quoting question and answer word for word. It passes no gate.
-- **A message not marked as an agent's notification is the user's answer**, however short: a letter or number matching an option of the question just put is that option.
-- **`ready for the gate`.** Tell the user what is ready and where, repeat the decisions quoted and name the gate. If a quoted approval of the finished document passes its gate, go on to the next stage after its review. If none does, ask for the word here.
-- **`stopped, needs the Manager`.** Put its questions to the user, and the answers to it as above. Arrange what is yours to arrange. What a gate covers, a commit and anything else not yours go to the user.
-- **A quoted request outside the agent's lane.** Raise it with the user when they are next with you; do not act on it.
-- **No hand-back.** If the user says an agent is done and none has arrived, follow up with the agent for it.
+- **`in dialogue, no action`.** Do nothing: no dispatch, lookup, question, summary, acknowledgement or comment on the quotes; keep them. An unavoidable reply is one line. Print the role's question to the user word for word under `Question:` and its name, adding only that they may answer here.
+- **The user answers it here**, in any message not marked as an agent's notification, however short: a letter or number matching an option of the question just put is that option. Follow up with that agent, quoting question and answer word for word. It passes no gate.
+- **`ready for the gate`.** Tell the user what is ready and where, repeat the decisions quoted and name the gate. If a quoted approval of the finished document passes its gate, go on to the next stage after its review; if not, ask for the word here.
+- **`stopped, needs the Manager`.** Put its questions to the user, the answers to it as above. Arrange what is yours; what a gate covers, a commit and anything else not yours go to the user.
+- **A quoted request outside the agent's lane**: raise it with the user when next with you; do not act on it. **No hand-back** though the user says the agent is done: follow up with it for one.

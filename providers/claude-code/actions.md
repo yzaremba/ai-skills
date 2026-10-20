@@ -9,7 +9,7 @@ Role ids are used as written, such as `product-manager` and `coder-hard`.
 
 ### Session
 
-- **Load a role.** The user types `/<role-id>`; you never load a role yourself. In a session started as the Manager, a role that writes is dispatched, never loaded.
+- **Load a role.** The user types `/<role-id>`; you never load a role yourself.
 - **Switch the loaded role back.** There is no command: the user says it in a message, such as "back to the Manager", and it holds from that message on.
 
 ### Dispatch
