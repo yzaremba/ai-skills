@@ -49,7 +49,7 @@ ALL_MAPPINGS = [
     for argument in (flag, f"{provider}:{name}={value}")
 ]
 ALL_SETTINGS = [
-    "--docs-dir", "docs", "--questions", "one-at-a-time", "--recommend", "--roles", "--no-manager-default",
+    "--docs-dir", "docs", "--questions", "all-together", "--recommend", "--roles", "--no-manager-default",
     "--no-high-stakes", "--max-parallel-coders", "3", "--memory-dir", "docs/memory",
 ]
 
@@ -151,7 +151,7 @@ class ProposalTests(InitCase):
         code, out, err = self.show(project=False)
         self.assertEqual((code, err), (0, ""))
         self.assertIn('process.docs_dir = "sprints"  (user)\n', out)
-        self.assertIn('process.questions = "one-at-a-time"  (shipped)\n', out)
+        self.assertIn('process.questions = "all-together"  (shipped)\n', out)
         self.assertIn('providers.codex.tiers.deep = "gpt-6-astra"  (user)\n', out)
         self.assertIn('providers.claude-code.efforts.max = "max"  (user)\n', out)
         code, out, err = self.show("roles", project=False)
@@ -193,13 +193,13 @@ class FlagTests(InitCase):
             "--tier", "codex:deep=gpt-6-astra", "--tier", "claude-code:standard=opus",
             "--effort", "codex:max=ultra", "--effort", "claude-code:high=xhigh",
             "--role-model", "codex:coder-hard=gpt-6-sol",
-            "--docs-dir", "../planning/docs", "--questions", "all-together", "--no-recommend",
+            "--docs-dir", "../planning/docs", "--questions", "one-at-a-time", "--no-recommend",
             "--manager-default", "--high-stakes", "--max-parallel-coders", "5", "--memory-dir", "notes/memory",
             "--tier", "codex:fast=gpt-6-sol",
         )
         self.assertEqual(self.data(), {
             "schema_version": 1,
-            "process": {"docs_dir": "../planning/docs", "questions": "all-together", "recommend": False},
+            "process": {"docs_dir": "../planning/docs", "questions": "one-at-a-time", "recommend": False},
             "roles": {"manager_default": True, "high_stakes": True, "max_parallel_coders": 5},
             "memory": {"dir": "notes/memory"},
             "providers": {
@@ -472,7 +472,7 @@ class TerminalTests(InitCase):
     def test_answers_change_the_values(self) -> None:
         asked = self.answers(
             "deep=fable", "", "deep=gpt-6-astra fast=gpt-6-sol", "max=ultra",
-            "sprints", "all-together", "n", "", "y", "", "4", "", "y",
+            "sprints", "one-at-a-time", "n", "", "y", "", "4", "", "y",
         )
         out = self.ok()
         self.assertEqual(asked.call_count, 13)
@@ -480,7 +480,7 @@ class TerminalTests(InitCase):
         self.assertEqual(data["providers"]["claude-code"]["tiers"]["deep"], "fable")
         self.assertEqual(data["providers"]["codex"]["tiers"], {**CODEX_TIERS, "deep": "gpt-6-astra", "fast": "gpt-6-sol"})
         self.assertEqual(data["providers"]["codex"]["efforts"]["max"], "ultra")
-        self.assertEqual(data["process"], {"docs_dir": "sprints", "questions": "all-together", "recommend": False})
+        self.assertEqual(data["process"], {"docs_dir": "sprints", "questions": "one-at-a-time", "recommend": False})
         self.assertEqual(data["roles"], {"manager_default": True, "max_parallel_coders": 4})
         self.assertNotIn("memory", data)
         # The choices are the offered entries: the hidden one is not among them.

@@ -174,7 +174,7 @@ DOCS_DIR = "process.docs_dir"
 # The process group of scripts/settings.py and of tools/setup/defaults.toml.
 BUILT_IN = {
     "process.docs_dir": "docs",
-    "process.questions": "one-at-a-time",
+    "process.questions": "all-together",
     "process.recommend": True,
 }
 BUILT_IN_LAYER = "built-in"

@@ -23,7 +23,7 @@ from wfsetup.errors import EXIT_PIPE
 
 PROCESS_TEXT = (
     'process.docs_dir = "docs"  (shipped)\n'
-    'process.questions = "one-at-a-time"  (shipped)\n'
+    'process.questions = "all-together"  (shipped)\n'
     "process.recommend = true  (shipped)\n"
 )
 ROLES_TEXT = (
@@ -51,7 +51,7 @@ class ShowTextTests(support.ScratchCase):
         self.assertEqual(
             out,
             'process.docs_dir = "u"  (user)\n'
-            'process.questions = "one-at-a-time"  (shipped)\n'
+            'process.questions = "all-together"  (shipped)\n'
             "process.recommend = true  (shipped)\n"
             "roles.enabled = true  (shipped)\n"
             "roles.manager_default = false  (shipped)\n"
@@ -225,7 +225,7 @@ class ShowJsonTests(support.ScratchCase):
                 "schema_version": 1,
                 "settings": {
                     "process.docs_dir": {"value": "docs", "layer": "shipped", "file": shipped},
-                    "process.questions": {"value": "one-at-a-time", "layer": "shipped", "file": shipped},
+                    "process.questions": {"value": "all-together", "layer": "shipped", "file": shipped},
                     "process.recommend": {"value": False, "layer": "user", "file": str(self.user_file)},
                     "roles.enabled": {"value": True, "layer": "shipped", "file": shipped},
                     "roles.manager_default": {"value": False, "layer": "shipped", "file": shipped},
@@ -294,7 +294,7 @@ class ShowErrorTests(support.ScratchCase):
             (
                 0,
                 'process.docs_dir = "notes"  (user)\n'
-                'process.questions = "one-at-a-time"  (shipped)\n'
+                'process.questions = "all-together"  (shipped)\n'
                 "process.recommend = true  (shipped)\n",
                 "",
             ),
@@ -564,7 +564,7 @@ class EntryPointTests(support.ScratchCase):
         self.assertEqual(done.returncode, 0)
         report = json.loads(done.stdout.decode("utf-8"))
         self.assertEqual(report["settings"]["process.questions"], {
-            "value": "one-at-a-time", "layer": "shipped", "file": str(self.defaults_file),
+            "value": "all-together", "layer": "shipped", "file": str(self.defaults_file),
         })
 
     def test_an_error_has_no_traceback_and_exit_code_two(self) -> None:
@@ -654,7 +654,7 @@ class RepositoryTests(support.ScratchCase):
         # The defaults the plan names (P3.1).
         for line in (
             'process.docs_dir = "docs"  (shipped)',
-            'process.questions = "one-at-a-time"  (shipped)',
+            'process.questions = "all-together"  (shipped)',
             "process.recommend = true  (shipped)",
             "roles.manager_default = false  (shipped)",
             "roles.high_stakes = false  (shipped)",

@@ -1859,7 +1859,7 @@ class Command(Case):
         self.assertEqual(Path(report["project"]).resolve(), self.project.resolve())
 
 
-DEFAULTS = 'schema_version = 1\n[process]\ndocs_dir = "docs"\nquestions = "one-at-a-time"\nrecommend = true\n' \
+DEFAULTS = 'schema_version = 1\n[process]\ndocs_dir = "docs"\nquestions = "all-together"\nrecommend = true\n' \
            '[roles]\nmanager_default = false\n[memory]\ndir = "docs/memory"\n'
 PROCESS_KEYS = ["process.docs_dir", "process.questions", "process.recommend"]
 
@@ -1909,13 +1909,13 @@ class Settings(Case):
         self.assertEqual(Path(report["docs"]), self.docs)
         self.assertEqual(list(report["settings"]), PROCESS_KEYS)  # the process group, and no other
         self.assertEqual({key: (entry["value"], entry["layer"]) for key, entry in report["settings"].items()}, {
-            "process.docs_dir": ("docs", "shipped"), "process.questions": ("one-at-a-time", "shipped"),
+            "process.docs_dir": ("docs", "shipped"), "process.questions": ("all-together", "shipped"),
             "process.recommend": (True, "shipped"),
         })
         for entry in report["settings"].values():
             self.assertEqual(Path(entry["file"]), self.setup_dir / "defaults.toml")
         text = check.run(self.arguments())[1]
-        self.assertIn('process.docs_dir = "docs"  (shipped)\nprocess.questions = "one-at-a-time"  (shipped)\n'
+        self.assertIn('process.docs_dir = "docs"  (shipped)\nprocess.questions = "all-together"  (shipped)\n'
                       "process.recommend = true  (shipped)\n", text)
         self.assertNotIn("memory", text)
 
@@ -2111,7 +2111,7 @@ class Settings(Case):
         self.assertEqual(Path(report["docs"]), self.docs)
         self.assertEqual(report["settings"], {
             "process.docs_dir": {"value": "docs", "layer": "built-in", "file": None},
-            "process.questions": {"value": "one-at-a-time", "layer": "built-in", "file": None},
+            "process.questions": {"value": "all-together", "layer": "built-in", "file": None},
             "process.recommend": {"value": True, "layer": "built-in", "file": None},
         })
         self.assertEqual([v["file"] for v in report["violations"]], [TASKS])

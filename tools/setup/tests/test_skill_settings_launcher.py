@@ -376,7 +376,7 @@ class CopiedOnItsOwn(LauncherCase):
         group = json.loads(self.launcher("memory", "--json", script=script).stdout.decode("utf-8"))
         self.assertEqual(list(group["settings"]), ["memory.dir"])
         key = self.launcher("process.questions", script=script)
-        self.assertEqual(key.stdout, b'process.questions = "one-at-a-time"  (built-in)\n')
+        self.assertEqual(key.stdout, b'process.questions = "all-together"  (built-in)\n')
 
     def test_the_memory_skill_on_its_own_gives_the_memory_directory(self) -> None:
         script = self.lone_copy("project-memory")

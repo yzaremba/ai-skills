@@ -58,7 +58,7 @@ DEFAULT_GROUPS = ("process", "memory")
 SCHEMA_VERSION = 1
 BUILT_IN = {
     "process.docs_dir": "docs",
-    "process.questions": "one-at-a-time",
+    "process.questions": "all-together",
     "process.recommend": True,
     "memory.dir": "docs/memory",
     "roles.enabled": True,

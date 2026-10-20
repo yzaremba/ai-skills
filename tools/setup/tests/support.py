@@ -56,7 +56,7 @@ FIXTURE_DEFAULTS = '''schema_version = 1
 
 [process]
 docs_dir = "docs"
-questions = "one-at-a-time"
+questions = "all-together"
 recommend = true
 
 [roles]

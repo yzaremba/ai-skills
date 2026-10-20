@@ -23,7 +23,7 @@ python scripts/settings.py process --project <project root>
 
 - **The project root is the main working tree of the project's repository**, never a sprint's or a group member's worktree: the first entry of `git worktree list`. Name it with `--project` from wherever the session works. The project's own settings files are there and may be absent from a worktree, and `process.docs_dir` resolves against it.
 - **In a sprint's worktree** the sprint's own docs are at that same path inside the worktree, when the directory is inside the repository. A directory outside the repository is one place, the same from every worktree.
-- **If the script exits with an error, stop and report it**: a settings file is wrong, and the defaults would hide that. The defaults (`docs`, `one-at-a-time`, `true`) are used only when no Python 3.11 or later can start the script; say so then.
+- **If the script exits with an error, stop and report it**: a settings file is wrong, and the defaults would hide that. The defaults (`docs`, `all-together`, `true`) are used only when no Python 3.11 or later can start the script; say so then.
 
 File names below are written without a directory. Each is in the sprint docs directory, and `DONE/` is the archive directory inside it.
 
@@ -160,7 +160,7 @@ THOUGHTS, PRD, PLAN and TASKS never record an approval or a review: no "approved
 
 Whenever this process puts open questions to the user — at a gate, with the material findings of a critical pass, when a stage needs a decision, when stopping on trouble — two settings say how. They come from the same run of `scripts/settings.py` as the sprint docs directory.
 
-- **`process.questions`** — `one-at-a-time` (the default): put one question, wait for the answer, then put the next; a later question may be dropped or changed by an earlier answer. That holds for open questions in every form: the same message does not list the others, as bullets or in prose, and does not give your leaning on each. At most it says how many remain. The one exception is a list the user asked for. `all-together`: put every open question in one message, numbered, so the user can answer them in one reply.
+- **`process.questions`** — `all-together` (the default): put every open question in one message, numbered, so the user can answer them in one reply. `one-at-a-time`: put one question, wait for the answer, then put the next; a later question may be dropped or changed by an earlier answer. That holds for open questions in every form: the same message does not list the others, as bullets or in prose, and does not give your leaning on each. At most it says how many remain. The one exception is a list the user asked for.
 - **`process.recommend`** — `true` (the default): give your recommendation with each question, and its reason in a line. `false`: give the options without one.
 - **The implementation choices are one question, not several.** [stage-3-implementation.md](stage-3-implementation.md) asks for a single consolidated prompt that holds every choice the user has not yet stated. That stays so under either value of `process.questions`: do not split it into one prompt per choice. `process.recommend` applies to it: when `false`, leave out the *(recommended)* marks.
 - **The lessons and backlog finds of a close are one list.** [completion.md](completion.md) puts them in one message under either value of `process.questions`. `process.recommend` applies to each.

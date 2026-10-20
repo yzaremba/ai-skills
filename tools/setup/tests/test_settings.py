@@ -21,7 +21,7 @@ class ShippedDefaultsTests(support.ScratchCase):
             {key: entry.value for key, entry in entries.items()},
             {
                 "process.docs_dir": "docs",
-                "process.questions": "one-at-a-time",
+                "process.questions": "all-together",
                 "process.recommend": True,
                 "roles.enabled": True,
                 "roles.manager_default": False,

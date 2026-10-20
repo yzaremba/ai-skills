@@ -13,7 +13,7 @@ python scripts/settings.py process --project <project root>
 `scripts/settings.py` is in this skill's directory; run it by its path, with the Python the session has. The project is only the directory named with `--project`, never the working directory. The same run gives `process.questions` and `process.recommend` (see "Questions to the user" below).
 
 - **The project root is the main working tree of the project's repository**, never a sprint's or a group member's worktree: the first entry of `git worktree list`. Name it with `--project` from wherever the session works. The project's own settings files are there and may be absent from a worktree, and `process.docs_dir` resolves against it.
-- **If the script exits with an error, stop and report it**: a settings file is wrong, and the defaults would hide that. The defaults (`docs`, `one-at-a-time`, `true`) are used only when no Python 3.11 or later can start the script; say so then.
+- **If the script exits with an error, stop and report it**: a settings file is wrong, and the defaults would hide that. The defaults (`docs`, `all-together`, `true`) are used only when no Python 3.11 or later can start the script; say so then.
 
 File names below are written without a directory. Each is in the epic docs directory, and `DONE/` is the archive directory inside it.
 
@@ -111,6 +111,6 @@ An epic has no worktree of its own. Its docs are shared between its sprints, so 
 
 Whenever this process puts open questions to the user — at a gate, with the material findings of the critical pass over a charter, when the decomposition needs a decision — two settings say how. They come from the same run of `scripts/settings.py` as the epic docs directory.
 
-- **`process.questions`** — `one-at-a-time` (the default): put one question, wait for the answer, then put the next; a later question may be dropped or changed by an earlier answer. That holds for open questions in every form: the same message does not list the others, as bullets or in prose, and does not give your leaning on each. At most it says how many remain. The one exception is a list the user asked for. `all-together`: put every open question in one message, numbered, so the user can answer them in one reply.
+- **`process.questions`** — `all-together` (the default): put every open question in one message, numbered, so the user can answer them in one reply. `one-at-a-time`: put one question, wait for the answer, then put the next; a later question may be dropped or changed by an earlier answer. That holds for open questions in every form: the same message does not list the others, as bullets or in prose, and does not give your leaning on each. At most it says how many remain. The one exception is a list the user asked for.
 - **`process.recommend`** — `true` (the default): give your recommendation with each question, and its reason in a line. `false`: give the options without one.
 - How a question physically reaches the user differs by provider: the provider notes of the `prd-implementation` skill say how.

@@ -60,7 +60,7 @@ The stage files describe actions and name no tool, and nothing in them differs b
 The process reads three settings, all in the `process` group, the same ones the `prd-implementation` skill reads:
 
 - `process.docs_dir` — **the epic docs directory**, which is what the stage files call it. It is the sprint docs directory: a path relative to the project root, `docs/` by default.
-- `process.questions` — `one-at-a-time` (default) or `all-together`: how open questions are put to the user.
+- `process.questions` — `all-together` (default) or `one-at-a-time`: how open questions are put to the user.
 - `process.recommend` — `true` (default): each question comes with a recommendation.
 
 Read them with `python scripts/settings.py process --project <project root>`, the script being in this skill's directory. The project root is the main working tree of the project's repository, never a sprint's or a group member's worktree. [references/conventions.md](references/conventions.md) says what each means.

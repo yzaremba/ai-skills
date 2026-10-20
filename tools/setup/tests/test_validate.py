@@ -48,7 +48,7 @@ import sys
 
 BUILT_IN = {
     "process.docs_dir": "docs",
-    "process.questions": "one-at-a-time",
+    "process.questions": "all-together",
     "process.recommend": True,
     "memory.dir": "docs/memory",
     "roles.enabled": True,
@@ -63,7 +63,7 @@ import argparse
 
 BUILT_IN = {
     "process.docs_dir": "docs",
-    "process.questions": "one-at-a-time",
+    "process.questions": "all-together",
     "process.recommend": True,
 }
 '''
@@ -1758,7 +1758,7 @@ class LauncherTests(TreeCase):
                 self.assertIn(said, problems[0].message)
 
     def test_the_check_script_holds_the_process_group(self) -> None:
-        self.put("beta/scripts/check.py", CHECK.replace('"one-at-a-time"', '"all-together"'))
+        self.put("beta/scripts/check.py", CHECK.replace('"all-together"', '"one-at-a-time"'))
         self.assertEqual(self.found(), [("beta/scripts/check.py", "launcher-defaults")])
         self.put("beta/scripts/check.py", CHECK.replace("}", '    "memory.dir": "docs/memory",\n}'))
         self.assertEqual(self.found(), [("beta/scripts/check.py", "launcher-defaults")])

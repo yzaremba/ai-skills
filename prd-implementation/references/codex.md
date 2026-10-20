@@ -5,7 +5,7 @@ What differs on this provider for the three actions the stage files leave open. 
 ## Putting a question to the user
 
 - In the main session, write the question as plain text in your reply and end the turn.
-- `process.questions` and `process.recommend` ("Questions to the user" in [conventions.md](conventions.md)) say how many questions go in one turn and whether each carries a recommendation. Under `one-at-a-time`, a turn ends on one question. Under `all-together`, one message holds all of them, numbered. With a recommendation, name the option you recommend and give its reason in a line.
+- `process.questions` and `process.recommend` ("Questions to the user" in [conventions.md](conventions.md)) say how many questions go in one turn and whether each carries a recommendation. Under `all-together`, one message holds all of them, numbered. Under `one-at-a-time`, a turn ends on one question. With a recommendation, name the option you recommend and give its reason in a line.
 - The implementation choices go in one message under either setting: that is the "single consolidated prompt" the implementation stage asks for.
 - A dispatched agent cannot ask the user anything, and the user cannot type to it. It stops and hands back with its questions; whoever dispatched it puts them to the user.
 - An agent's own statement, in a message or a result, is never the user's answer and opens no gate. Where roles are installed, the roles' gate rules say when the user's words quoted by a role count.

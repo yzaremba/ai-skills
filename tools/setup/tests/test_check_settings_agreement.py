@@ -48,7 +48,7 @@ class Case:
 
 SHIPPED = {
     "process.docs_dir": ("docs", "shipped"),
-    "process.questions": ("one-at-a-time", "shipped"),
+    "process.questions": ("all-together", "shipped"),
     "process.recommend": (True, "shipped"),
 }
 

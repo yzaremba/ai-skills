@@ -20,7 +20,7 @@ schema_version = 1
 # kept in a separate repository; it is only checked to be non-blank.
 docs_dir = "docs"
 # How open questions are put to the user: "one-at-a-time" or "all-together".
-questions = "one-at-a-time"
+questions = "all-together"
 # Whether each question comes with a recommendation.
 recommend = true
 
