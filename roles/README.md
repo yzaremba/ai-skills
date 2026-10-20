@@ -108,13 +108,14 @@ note = "<optional: what the part covers>"
 
 ## Action notes
 
-`providers/<provider>/actions.md` says how that provider performs each action the role text names. It opens with a level-two heading and a short head, which every role is given, and goes on in sections under level-three headings. A section's id is its heading in lower case with hyphens: "In dialogue" is `in-dialogue`. Both providers' files have the same sections, and a role's `actions` names the ones it needs:
+`providers/<provider>/actions.md` says how that provider performs each action the role text names. It opens with a level-two heading and a short head, which every role is given, and goes on in sections under level-three headings. A section's id is its heading in lower case with hyphens: "In dialogue" is `in-dialogue`. Both providers' files have the same sections, except a record-only one that a single provider holds, and a role's `actions` names the ones it needs:
 
 | Section | For a role that |
 |---|---|
 | `start` | none: how the user starts a session as a role, and what the notes were checked against, kept as the record |
 | `session` | is loaded into the user's session, or tells the user to load one |
 | `dispatch` | dispatches |
+| `prompt-cache` | none: how a dispatched agent's cache lives, and what the notes were checked against, kept as the record; Claude Code only |
 | `dialogue` | dispatches a role the user talks to |
 | `in-dialogue` | is dispatched and talks to the user |
 | `read` | reads and runs no command: the Idea and Plan Reviewers |

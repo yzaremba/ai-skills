@@ -5,8 +5,8 @@ includes = ["outcome.md", "review-reporting.md"]
 actions = ["read"]
 
 [profile]
-tier = "frontier"
-effort = "max"
+tier = "deep"
+effort = "high"
 cache = "long"
 
 [limits]

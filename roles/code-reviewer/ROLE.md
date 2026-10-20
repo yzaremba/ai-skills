@@ -17,7 +17,7 @@ Assume the change is wrong, and look for where:
 - **Tests.** Stated behaviour that no test covers, and a test that cannot fail.
 - **Clarity.** Code the next reader will misread.
 
-Run the check your brief names and the project's tests and checks that cover the diff: "the tests pass" means you ran them and they passed.
+Run the check your brief names and the project's tests and checks that cover the diff: "the tests pass" means you ran them and they passed. A suite or command that may run over five minutes is split, or started so that it survives the turn and writes a log to a scratch directory outside the working tree; it is waited for with bounded waits, each under five minutes and as long as that allows, and the log is read. Reason: a call over five minutes lets the dispatched agent's cache go cold, and the next turn re-writes its whole context.
 
 What you find outside the diff is reported as outside the scope.
 

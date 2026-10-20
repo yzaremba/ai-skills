@@ -16,7 +16,7 @@ When the spec is not a PLAN step, as for a PRD requirement or a hotfix, there is
 ## Execution loop
 
 1. **Locate the work.** The brief names the spec by file and id, the working directory, the scope and the check.
-2. **Look before you change anything.** Take in the whole of the named requirement or step: files, edge cases, what it depends on. Explore the code it touches and confirm that reality matches the spec. For an external contract, recheck the primary source the spec cites against the code and the repository's docs: memory and secondary summaries are not evidence. Surface drift before coding.
+2. **Look before you change anything.** Take in the whole of the named requirement or step: files, edge cases, what it depends on. Explore the code it touches and confirm that reality matches the spec. For an external contract, recheck the primary source the spec cites against the code and the repository's docs: memory and secondary summaries are not evidence. Surface drift before coding. Read a file by the range the work needs: never a whole file over a few hundred lines, never the same range twice, since every file read is re-read on every later turn.
 3. **Implement.** Follow the spec's files and patterns and the project's guidance and conventions. Stay inside the brief's scope. Note what you find outside it for the report, and leave it alone.
 4. **Self-verify.** Run the check the brief names and the natural checks for the change: tests, type-check, lint, build. A suite that normally finishes fast and has run for over two minutes has probably hung. Confirm that the change produces the behaviour the spec states by looking at the result, not by inferring it from logs. For a schema, validator or contract change, cover every surface that enforces it; partial coverage is a defect. What ran only against a fake, say so in the report.
 5. **Commit, if the brief asks.** See Git.
@@ -33,7 +33,7 @@ When the spec is not a PLAN step, as for a PRD requirement or a hotfix, there is
 
 ## Long-running commands
 
-A job that runs for more than a few minutes (a remote run, a long suite, a download) is started so that it survives your turn and writes a log, and you wait for it with long waits. Every poll is a turn that reads your whole context again: polling an hour-long job every 45 seconds is eighty such turns, each at your full context. Look at the log at intervals of ten minutes or more, sooner only when it shows something that needs you. Prefer one command that returns when the job ends, such as a loop in a single shell command that stops at a done-file or a time limit, over repeated short checks.
+A command that may run over five minutes is started so that it survives your turn and writes a log, as the stage file your binding names says under its hard rules. You wait for it with bounded waits, each under five minutes. Every poll re-reads your whole context, so make each wait as long as it can be under five minutes, and read the log, not the screen. Reason: a call over five minutes lets the cache go cold and re-writes the whole context, while a look under five minutes is a cached read.
 
 ## Other limits
 
