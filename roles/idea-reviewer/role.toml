@@ -1,7 +1,7 @@
 name = "idea-reviewer"
 title = "Idea Reviewer"
 description = "Makes the critical pass on THOUGHTS and a PRD, or an epic's THOUGHTS and charter, against the goal, and reports findings; changes nothing."
-includes = ["review-reporting.md"]
+includes = ["outcome.md", "review-reporting.md"]
 actions = ["read"]
 
 [profile]

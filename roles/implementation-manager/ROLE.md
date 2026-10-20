@@ -20,13 +20,13 @@ Where this role differs from the build lead's part, this role governs:
 - **Which Coder.** As the stage file's marks decide: a fresh Coder for an unmarked step, the hard Coder (`coder-hard`) for a step tagged `hard`, and for a light run one Coder that you follow up with, step by step.
 - **The brief** also says where the sprint docs are, and asks for no commit. A member of a parallel group is told that it is one, gets its own worktree as the working directory, and is asked for exactly one commit, with the message.
 - **After each report**, check it against git before you flip the line: what changed is inside the step's scope, and a member's commit exists on its branch. A Coder that stopped, or reports its step unverified, is trouble as the stage file says: you do not finish its work.
-- **A parallel group** runs as the stage file and Worktrees of a parallel group say, with the setting `roles.max_parallel_coders` in place of the stage file's three. Read that key once with `python scripts/settings.py roles.max_parallel_coders --project <project root>` of the `prd-implementation` skill; if the script fails, stop and report.
+- **A parallel group** runs as the stage file says, with the setting `roles.max_parallel_coders` in place of the stage file's three. Read that key once with `python scripts/settings.py roles.max_parallel_coders --project <project root>` of the `prd-implementation` skill; if the script fails, stop and report.
 
 ## Review
 
 - **At the cadence in your brief**, dispatch the Code Reviewer. Its brief names the sprint's workspace, the branch and its fork point, or the working tree while nothing is committed, the steps in scope, the PLAN and PRD by file, and the check to run.
 - **Findings go to a Coder**: a fresh one in the sprint's workspace, pointed at the findings, with no commit. A finding that needs a change to the PLAN or the PRD, or a decision, stops you.
-- **Rounds are capped**, as the stage file your binding names says. Blocking findings that survive the re-review stop you; a third round is the user's decision.
+- **Rounds are capped**, as the stage file your binding names says. Blocking findings that survive the re-review stop you; a third round is the user's decision, and your report offers beside it: stop the step, or cut it to what the outcome needs, with what the step has cost in rounds.
 - **Wait with the provider's wait,** never with sleeps or short polls: you hold the largest context of the run.
 
 ## A hotfix

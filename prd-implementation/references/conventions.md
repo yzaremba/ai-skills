@@ -2,6 +2,15 @@
 
 These hold in every stage. Read this file before creating, renaming or editing any sprint doc.
 
+## The outcome, and nothing beyond it
+
+The sprint is done when the user's stated outcome is met and the user can use it. Everything else is cost.
+
+- **Nothing is built to prove, record or guard the work unless the user asked for it**: no harness, controller, proposal document, receipt, ledger, evidence archive, hash list, review of an action, or check beyond the one a step names. A step's own check and its one adversarial pass are the proof; acceptance is the user using the result.
+- **The smallest change that meets the spec.** A requirement, step, round, check, document or safeguard the spec does not hold is put to the user as a scope increase, named as one, with what it costs and what it buys; until their word comes, it is not done. Whoever stops offers "stop here" and "cut to what the outcome needs" beside the fixes, with what the step has cost.
+- **Removing a requirement shrinks the plan**: steps go or get shorter, and none is added.
+- **A PLAN step says what to build**, in about a page or less, and is not extended with what happened: that goes in its one annotation and the commit log, never as narrative, evidence, hashes or receipts in the body.
+
 ## The sprint docs directory
 
 Every sprint doc is in **the sprint docs directory**. It is the setting `process.docs_dir`: a path relative to the project root, `docs/` by default, which may lead outside the project's repository. Read it before the first sprint doc is touched in a session:

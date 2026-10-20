@@ -14,6 +14,8 @@ Backlog -> THOUGHTS -> PRD -> PLAN + TASKS -> Implementation -> Completion
 
 A sprint may stand alone or belong to a larger multi-sprint **epic** (the `epic-implementation` skill). When it does, tag its THOUGHTS header with `Epic: NN`. That line is the only coupling; the rest of this flow is unchanged.
 
+The sprint delivers the user's stated outcome and nothing beyond it: "The outcome, and nothing beyond it" in [references/conventions.md](references/conventions.md) holds in every stage.
+
 ## Read before you act
 
 - **Before acting in a stage, read that stage's file** from the table below, in full. This file is only the map: the rules are in the stage files, and they are worded to stop mistakes that keep recurring. Do not act on a stage from memory of an earlier read in another session.

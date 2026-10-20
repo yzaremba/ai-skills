@@ -18,7 +18,7 @@ When the spec is not a PLAN step, as for a PRD requirement or a hotfix, there is
 1. **Locate the work.** The brief names the spec by file and id, the working directory, the scope and the check.
 2. **Look before you change anything.** Take in the whole of the named requirement or step: files, edge cases, what it depends on. Explore the code it touches and confirm that reality matches the spec. For an external contract, recheck the primary source the spec cites against the code and the repository's docs: memory and secondary summaries are not evidence. Surface drift before coding.
 3. **Implement.** Follow the spec's files and patterns and the project's guidance and conventions. Stay inside the brief's scope. Note what you find outside it for the report, and leave it alone.
-4. **Self-verify.** Run the check the brief names and the natural checks for the change: tests, type-check, lint, build. A suite that normally finishes fast and has run for over two minutes has probably hung. Confirm that the change produces the behaviour the spec states by looking at the result, not by inferring it from logs. For a schema, validator or contract change, cover every surface that enforces it; partial coverage is a defect. For an external adapter, fakes prove only local behaviour: obtain the provider-derived evidence the spec asks for, within your authorization, and if you cannot, report the boundary as unverified.
+4. **Self-verify.** Run the check the brief names and the natural checks for the change: tests, type-check, lint, build. A suite that normally finishes fast and has run for over two minutes has probably hung. Confirm that the change produces the behaviour the spec states by looking at the result, not by inferring it from logs. For a schema, validator or contract change, cover every surface that enforces it; partial coverage is a defect. What ran only against a fake, say so in the report.
 5. **Commit, if the brief asks.** See Git.
 6. **Report.** Lead with the id the brief gave you; for a sprint step that is the sprint-qualified form, `S<sprint>P<phase>.<step>`. Be terse.
 
@@ -42,6 +42,7 @@ A job that runs for more than a few minutes (a remote run, a long suite, a downl
 - **You dispatch no agent.**
 - **No silent rollback, and no flipping of live or deployed state** such as symlinks, feature flags or release pointers, even to unblock an incident.
 - **Delete dead code at a refactor cutover.** Do not keep the old path behind an unused flag as a safety net.
+- **Build what the spec names and no more**: no harness, receipt, ledger, hash list, evidence archive, safeguard or document it does not ask for. One that seems needed goes in the report as a question, not into the code.
 - **Do not re-provision an environment that is already set up.**
 - **Push back.** If the brief asks for something that does not exist, contradicts the spec or looks wrong, say so. Do not route around it.
 
@@ -51,7 +52,7 @@ You cannot ask the user. Stop, and report the specific question with concrete op
 
 - the spec names files or patterns that do not match reality;
 - something the step depends on is not done;
-- an external contract is uncited, stale or contradictory, or lacks the evidence the spec asks for;
+- an external contract is uncited, stale or contradictory;
 - the work would need a push, tag, deploy or promote, or a commit the brief did not ask for;
 - the spec's approach is unworkable and needs a real amendment, not a small follow-up;
 - a schema or contract change has surfaces you cannot enumerate with confidence;

@@ -11,10 +11,11 @@ Read [conventions.md](conventions.md) before creating the files. This stage star
 - **Header**: title, links to THOUGHTS, PRD, TASKS, status, last-updated date. The status line is `**Status:** In progress` from the first draft until the close sets it ([completion.md](completion.md), "Integration", step 1; [abandon.md](abandon.md)); a close that goes back to the build sets it back to `In progress`. No approval is written in it: a gate passes by the user's word, not by the file. A change of status does not bump `Last updated:`.
 - **Phases**: logical groups (e.g. data, logic, API, UI)
 - **Steps**: unique IDs `P<phase>.<step>` where `<phase>` and `<step>` are **integers** (e.g. `P1.1`, `P3.4`). Do **not** use letters or words for `<phase>` (no `PA.1`, `PWATCHDOG.1`) — phases can still be *named* conceptually in the heading (e.g. "Phase 2 — API"), but the ID is always numeric.
-- **Step content**: what to do, files to touch, snippets or SQL if helpful, edge cases; use `> Depends on: P1.2` when order matters
+- **Step content**: what to do, files to touch, snippets or SQL if helpful, edge cases, in about a page or less; use `> Depends on: P1.2` when order matters
 - **Marks**: `> Parallel: <letter>`, `> Tag: light` and `> Tag: hard`, optional, as "Marks on a step" below says
-- **External-contract steps**: cite the primary source and verification date; pin applicable endpoint/version, auth, transfer/pagination, schema and failure behavior. Require provider-derived evidence—a safe smoke, authorized live probe, or verified current fixture—before readiness; hand-written fakes prove only local behavior. If unavailable, mark the gap and gate rollout.
+- **External-contract steps**: cite the primary source and the date it was checked; pin the endpoint or version, auth, transfer or pagination, schema and failure behaviour the step depends on. The step's check says what runs against the provider and what against a fake; a proof program beyond that is not a step.
 - **Cross-cutting concerns**: transactions, errors, performance, etc.
+- **The shortest path**: the fewest steps that meet the requirements, the first phase ending in something the user can see working. Verification is each step's own check and, at the end, the user using the result: no step builds a harness, controller, ledger or evidence store to verify or record other steps, and a document is a step only when the user asked for the document. A change that removes or narrows a requirement removes or shortens steps and adds none.
 
 ## Marks on a step
 
@@ -29,7 +30,7 @@ A step may carry three optional marks besides `> Depends on:`. Each is a blockqu
   - **A shared invariant.** The step must keep a rule true across several writers or readers: concurrency, locking, ordering, idempotency, or a recovery, rebuild or correction path.
   - **A contract others build on.** A schema, a file or wire format, a migration or a public interface: a mistake in it is repeated in every later step.
   - **An effect that cannot be undone.** A money path, a deletion, a change of production state.
-  - **Not reasons:** size, the number of files, a long test run, an unfamiliar domain with a clear spec, or a design the PLAN leaves open. A step whose design is left open is unfinished: settle the design in the step's body before the PLAN is final, and tag it only if it then meets a test. A step that meets a test and also touches more than about eight files, or has more than about six behaviours to verify, is split first, and only the part that meets the test is tagged.
+  - **Not reasons:** size, the number of files, a long test run, an unfamiliar domain with a clear spec, a design the PLAN leaves open, or a document: a step that writes only a document meets no test. A step whose design is left open is unfinished: settle the design in the step's body before the PLAN is final, and tag it only if it then meets a test. A step that meets a test and also touches more than about eight files, or has more than about six behaviours to verify, is split first, and only the part that meets the test is tagged.
 
 How they combine:
 

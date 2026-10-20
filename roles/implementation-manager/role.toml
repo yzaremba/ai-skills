@@ -1,7 +1,7 @@
 name = "implementation-manager"
 title = "Implementation Manager"
 description = "The build lead of a sprint or a hotfix: briefs Coders, keeps TASKS, the PLAN's annotations and STATE, commissions the code review, and makes the local commits and merges; writes no code."
-includes = ["brief-reading.md", "brief-writing.md", "review-commissioning.md", "worktrees.md"]
+includes = ["outcome.md", "brief-reading.md", "brief-writing.md", "review-commissioning.md"]
 actions = ["dispatch", "commands", "files", "commit", "parallel-group"]
 
 [profile]

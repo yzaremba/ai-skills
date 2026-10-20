@@ -1587,15 +1587,15 @@ class RepositoryCase(RenderCase):
         manager = read("roles", "manager", "ROLE.md")
         self.assertIn("Asked to check the deferred items, also run each named check it lists yourself", manager)
         self.assertIn("except one that plainly would change something: name that one to the user", manager)
-        self.assertIn("a commit the user asks for of files you moved or a role wrote and reported, each staged and "
+        self.assertIn("a commit of files you moved or a role wrote and reported, each staged and "
                       "committed by name, never all", manager)
         self.assertIn("**Write or edit a file**", manager)
         # The Manager's own mechanical steps: exact commands of a stage file, on the user's word; judgement is the owner's.
         self.assertIn("a move, rename or deletion of a whole file by the `git mv`, `git rm`, `mv` or `rm` a stage file "
                       "of your bindings gives, with creating the folder it names", manager)
-        self.assertIn("What needs judgement, such as which file, what text or a conflict, goes to the role that owns "
-                      "it, or to the user.", manager)
-        self.assertIn("Such a move you run, never dispatch.", manager)
+        self.assertIn("What needs judgement, which file, what text, a conflict, goes to the role that owns "
+                      "it or to the user", manager)
+        self.assertIn("which you run and never dispatch", manager)
         bindings = read("roles", "bindings.toml")
         self.assertIn('stage = "backlog-conversion.md"\npart = "moves"', bindings)
         self.assertNotIn("by whoever ran the check", read("prd-implementation", "references", "deferred.md"))
@@ -1657,7 +1657,7 @@ class RepositoryCase(RenderCase):
                     text = texts[role, provider]
                     self.assertIn("<one line>\nQuestion:\n<what you asked the user>\nQuotes:\n", text)
                     self.assertIn("**The user reads your thread first, and it may close before they do.**", text)
-                    self.assertIn("goes there first, in full, as ordinary text", text)
+                    self.assertIn("goes there first, in full: the question, the answer, the refusal", text)
                     self.assertIn("A question is then repeated under `Question:`, word for word with its options and any "
                                   "recommendation, for the Manager to print; so is your reply, when the "
                                   "Manager's follow-up started the turn", text)
@@ -1679,7 +1679,7 @@ class RepositoryCase(RenderCase):
                 # A quote that passes nothing leaves the user to be asked, not waiting.
                 self.assertIn("If none does, ask for the word here.", text)
                 # The rules the reader no longer repeats are the gates section's.
-                self.assertIn("passes nothing and triggers nothing", text)
+                self.assertIn("passes nothing, and no document but STATE records an approval", text)
                 self.assertIn("only on the user's word", text)
                 # The gate rule the relay leans on: a follow-up ends the quote's standing.
                 self.assertIn("have sent the agent nothing since, not even a follow-up", text)

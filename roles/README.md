@@ -28,8 +28,8 @@ roles/
   | `review-commissioning.md` | commissions a review |
   | `review-reporting.md` | reviews: the three reviewers |
   | `specialists.md` | no shipped role; a project's own specialist carries it (`SPECIALISTS.md`) |
-  | `worktrees.md` | runs a parallel group of Coders |
   | `questions.md` | puts questions to the user |
+  | `outcome.md` | does or judges the work: every role but the Manager and the Investigator |
 - **A role's full text** is `ROLE.md` followed by its includes, in the order `role.toml` lists them. A provider's definition adds the role's rows of `bindings.toml` and that provider's action notes after it: the whole file, or the sections the role's `actions` names.
 
 ## `role.toml`

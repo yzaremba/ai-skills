@@ -1,7 +1,7 @@
 name = "code-reviewer"
 title = "Code Reviewer"
 description = "Makes the adversarial pass on a code change: tries to break the diff, checks it against its PLAN steps and PRD requirements, runs the tests, and reports findings; changes nothing."
-includes = ["review-reporting.md"]
+includes = ["outcome.md", "review-reporting.md"]
 actions = ["commands"]
 
 [profile]

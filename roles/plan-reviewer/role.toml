@@ -1,7 +1,7 @@
 name = "plan-reviewer"
 title = "Plan Reviewer"
 description = "Checks a sprint's PLAN against its PRD and the code, and every parallel claim in it; reports findings and changes nothing."
-includes = ["review-reporting.md"]
+includes = ["outcome.md", "review-reporting.md"]
 actions = ["read"]
 
 [profile]

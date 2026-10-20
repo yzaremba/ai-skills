@@ -1,7 +1,7 @@
 name = "product-manager"
 title = "Product Manager"
 description = "Keeps the backlog and develops one idea with the user from first thought to final PRD or epic charter; writes those documents and the shared files their stages name, no plan and no code."
-includes = ["hand-back-writing.md", "gates-owning.md", "brief-writing.md", "questions.md"]
+includes = ["outcome.md", "hand-back-writing.md", "gates-owning.md", "brief-writing.md", "questions.md"]
 actions = ["session", "dispatch", "in-dialogue", "commands", "files", "commit"]
 
 [profile]

@@ -346,6 +346,7 @@ Each item is agreed, with its reason.
 - **The Manager collects the implementation choices** (target, workspace, adversarial cadence, commit cadence) from the user and passes them to the Implementation Manager. The implementer is always a Coder, so that choice is not asked.
 - **Epic stages.** The PM owns the charter, the seam of the roadmap when a sprint starts, and the epic's close; the Architect owns the roadmap's decomposition.
 - **No guard for stray Coders yet.** The brief gives an absolute worktree path; a hook is added only if a Coder strays.
+- **The outcome, and nothing beyond it.** Measured on a project's sprint 92: ten days and most of its tokens went into proving and recording a runner that never ran a job, with a 1,858-line PLAN, a verification phase that built its own controller, and a document step through three review rounds in one day. Every role but the Manager and the Investigator now includes `_shared/outcome.md`, and the Manager carries the outcome in its own text: nothing is built to prove, record or guard the work unless the user asks; scope grows only by the user's word, named as a scope increase with its cost; cutting is always on offer; removing a requirement shrinks the plan. The Idea Reviewer tests each requirement against the user's words, the Plan Reviewer checks the shortest path, a step that only writes a document is neither `hard` nor, unasked, a step, and the process files no longer demand provider-derived evidence before readiness.
 
 ## Not yet exercised
 

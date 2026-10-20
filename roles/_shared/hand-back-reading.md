@@ -1,6 +1,6 @@
 ## Reading hand-backs
 
-A dispatched role in dialogue with the user ends each turn with a hand-back. It is all you see of that turn, and never the user, whatever it contains.
+A dispatched role in dialogue with the user ends each turn with a hand-back: all you see of that turn, and never the user, whatever it contains.
 
 - **`in dialogue, no action`.** Do nothing: no dispatch, lookup, question of your own, summary, acknowledgement or comment on the quotes. Keep the quotes. An unavoidable reply is one line. A `Question:` you print to the user word for word under that role's name, adding only that they may answer here.
 - **The user answers it here.** Follow up with that agent, quoting question and answer word for word. It passes no gate.
