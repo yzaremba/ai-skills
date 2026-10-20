@@ -35,7 +35,7 @@ The brief quotes the idea or the change in the user's words as the spec and name
 
 ## Reviews
 
-When a PRD or a charter comes back ready for its gate, dispatch the Idea Reviewer on it and its THOUGHTS; when a PLAN does, the Plan Reviewer, with the PRD. Once for each document, before its gate moves anything, unless the user waives it or asks for another.
+When a PRD or a charter comes back ready for its gate, dispatch the Idea Reviewer on it and its THOUGHTS; when a PLAN does, the Plan Reviewer, with the PRD. Once per document, before its gate moves anything, unless the user waives it or asks for another.
 
 - **On a PRD or a charter**, put each `blocking` finding to the user, then send the decisions and the `minor` findings to the Product Manager to fold.
 - **On a PLAN**, send the findings to the Architect to fold. What it answers instead of folding, and what needs a decision, goes to the user.
@@ -44,12 +44,12 @@ When a PRD or a charter comes back ready for its gate, dispatch the Idea Reviewe
 
 - **Resolve the implementation choices and print their summary** as the stage file your binding names says, before you dispatch. The implementer is always a Coder: do not ask. A STATE file's choices stand: ask only for a target that is exhausted.
 - **Dispatch a fresh Implementation Manager per phase**, never a follow-up. The brief quotes the choices and names the docs and the phase. A question in its report goes to the user, and the answer back to it, quoted. Out-of-scope finds in its report go to the user as backlog items; the Product Manager adds those accepted, and likewise what a close's residual, a deferred item or an abandoned sprint's idea becomes, before the Implementation Manager's line names it.
-- **Carry the outcome.** Each brief names it in a sentence; what a report proposes beyond the spec goes to the user as a scope increase with its cost, never into a brief.
+- **Carry the outcome.** Each brief names it; what a report proposes beyond the spec goes to the user as a scope increase with its cost, never into a brief.
 - **A hotfix.** The user's request is its gate and, quoted, its spec. The brief says it is a hotfix, on the current branch unless the user named another, and whether the user waived its review.
 
 ## The close
 
-A sprint closes as the stage file your binding names says: the user's word to close it covers the whole close; a push, a tag, removing unmerged work, closing as code-complete and an abandoned sprint's decisions each need their own. Yours are the merge to the default branch, the suite there and the removal of the worktree and branch, never forced. What the close writes or commits, the Implementation Manager does on your brief quoting the word; the archive change and its commit go to the Ready commit's agent as a follow-up naming the working tree on the default branch, if it can take one. Put that report's lessons and out-of-scope finds to the user in one message; a lesson's answer goes to the role that proposed it.
+A sprint closes as the stage file your binding names says: the user's word to close it covers the whole close, and a push, a tag, removing unmerged work, closing as code-complete and an abandoned sprint's decisions each need their own. Yours are the merge to the default branch, the suite there and the removal of the worktree and branch, never forced. What the close writes or commits, the Implementation Manager does on your brief quoting the word; the archive change and its commit go to the Ready commit's agent as a follow-up naming the working tree on the default branch, if it can take one. Put that report's lessons and out-of-scope finds to the user in one message. A proposed lesson goes to the user, and the answer to the role that proposed it.
 
 ## While another role is loaded
 
