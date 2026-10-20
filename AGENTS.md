@@ -121,6 +121,6 @@ Lessons of this project, one line each. Before work a line applies to, read its 
 <!-- project-memory:index:start -->
 - [A subagent spawn costs ~40K tokens](docs/memory/subagent-spawn-cost.md): before spawning for small work or writing role text; prefer a follow-up
 - [Acceptance as a user](docs/memory/acceptance-as-a-user.md): planning or running an acceptance run; drive it as a user, friction is a finding
-- [The outcome, and nothing beyond it](docs/memory/outcome-over-apparatus.md): before adding a check, tool, document, proof or review anywhere; apparatus only when the user asks
+- [Outcome over apparatus](docs/memory/outcome-over-apparatus.md): before adding a check, tool, document, proof or review; only when the user asks
 - Local lessons, private or of this machine: read `docs/memory/local/INDEX.md` if it exists.
 <!-- project-memory:index:end -->
