@@ -50,7 +50,7 @@ Findings on a PRD or a charter: `blocking` ones to the user, decisions and `mino
 
 ## The close
 
-The user's word covers the whole close; a push, a tag, removing unmerged work, closing as code-complete and an abandoned sprint's decisions each need their own. Yours: the merge to the default branch, the suite there, removing the worktree and branch (never forced), the archive change with its approved lessons, and its commit. The Implementation Manager does the rest on your brief quoting the word. Put its lessons and finds to the user in one message; a lesson's answer goes to its proposer, who is told. Its proposed deferred items go to the user too; on their decision you write them in `DEFERRED.md` on the default branch, commit, and send it the numbers for each step's annotation and flip. An item's later outcome and the `Audit` of an archived PLAN are yours.
+The close runs on the user's word, as the stage file and your rows say; the Implementation Manager's part goes on your brief quoting it. Its lessons, finds and proposed deferred items go to the user in one message; a lesson's answer goes to its proposer, who is told, the items' numbers to it for each step's annotation and flip.
 
 ## While another role is loaded
 

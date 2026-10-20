@@ -861,6 +861,67 @@ and each skill's `SKILL.md`.
   2026-10-11). Codex's role definitions stay unproven there, as under "Discovery cannot
   be shown for everything" above.
 
+## FAQ
+
+- **Why is a role's text limited to 5,000 tokens, and what do I do when a role is over?**
+  After a compaction Claude Code keeps the first 5,000 tokens of an invoked skill (see
+  "A loaded role in a long Claude Code session" above). It binds the three roles that can
+  be loaded into a running session: Manager, Product Manager, Architect. A dispatched or
+  started role is not limited. The size shows in `doctor` (the check `loaded-skill-size`)
+  and in `validate --json`. When a role is over, cut wording in its `ROLE.md`, in the
+  `roles/_shared` sections it includes, or in its binding notes in `roles/bindings.toml`:
+  what would be lost is the end, the binding rows and action notes. Or set `load = false`
+  in the role's `[entry]`: that drops its skill and the limit with it, at the price of the
+  mid-session switch (`/manager` on Claude Code, `$manager` on Codex); you then start a
+  Manager session instead. The Manager is at the limit today (2026-10-20): a sentence
+  added costs a sentence cut.
+
+- **Does the one-hour rule hold on an API key or on usage credits?** Not by default. The
+  Manager follows up with a waiting Implementation Manager in under an hour because the
+  long cache lives an hour. Claude Code's prompt-caching page (code.claude.com/docs/en/prompt-caching,
+  read 2026-10-20, Claude Code 2.1.304) gives the main conversation one hour on a
+  subscription within plan usage, and five minutes on an API key, a cloud provider, or a
+  subscription that has gone over plan usage and draws on usage credits. The setting
+  `promptCacheTtl` (or the variable `CLAUDE_CODE_PROMPT_CACHE_TTL`, `5m` or `1h`, Claude
+  Code 2.1.242 or later) overrides it: the page names `1h` there for an API key and as the
+  way "to keep the one-hour TTL" on usage credits. Where the main session has
+  only five minutes, a waiting dispatched role goes cold during the wait and the Manager's
+  follow-up re-writes its context: set `promptCacheTtl` to `1h`, or expect the re-write.
+  The dispatched agents' side is under "Prompt cache" in `providers/claude-code/actions.md`.
+
+- **When does a review run on the frontier tier (Fable)?** Only when you choose it:
+  `[roles.<id>] tier = "frontier"` in `~/.agents/workflow.toml` or the project's
+  `.agents/workflow.toml`, then `render`. No brief names a model. Not the default because
+  the frontier quota runs out before the normal limits (the user's experience, 2026-10-20),
+  and the reviewers' default has been deep at high effort since sprint 02.
+
+- **The Manager now writes files. What can it still not do?** It does what needs no
+  separate judgement: deferred items, a backlog line, the sprint index, the archive
+  change, commits of named files on the user's word, a rebase. It cannot author a gated
+  document, write code or tests, dispatch a Coder, review what it briefed, or change state
+  outside the repository; a push, tag, merge to trunk, deploy or history rewrite needs the
+  user's word. The list and the reasons are in
+  [`docs/agent-roles-framework.md`](docs/agent-roles-framework.md).
+
+- **`doctor` warns that the dictionary was checked on an older version. What do I do?**
+  Nothing, unless something misbehaves. The dictionary records the provider version its
+  facts were read on, and a newer provider usually changes nothing it names. When a fact
+  changes, the dictionary's comment is updated with the new read date. `doctor` stops
+  warning once `checked_on_version` in `providers/<name>/dictionary.toml` is raised
+  after a check.
+
+- **Which clone do I run `render` from, and on which side?** The homes link to the clone
+  `render` was run from (the symlinks under `~/.claude/skills` show it). A render from
+  another clone or from a sprint worktree re-points them, and a worktree is removed at the
+  close. So render from the clone the homes link to, after it has pulled. On a machine with
+  Windows and WSL each side renders its own homes; see
+  [Windows and WSL together](#windows-and-wsl-together).
+
+- **A project answered questions one at a time; now it gets them all together. Why?** The
+  shipped default of `process.questions` changed to `all-together` in sprint 02
+  (2026-10-20). A project that wants the other sets `questions = "one-at-a-time"` in its
+  `.agents/workflow.toml`; `show` prints the effective value.
+
 ## The slides
 
 Two one-page overviews, each a single HTML file in `docs/` with a preview image beside it.
