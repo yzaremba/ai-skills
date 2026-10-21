@@ -189,7 +189,7 @@ role = "manager"
 skill = "prd-implementation"
 stage = "state.md"
 part = "build-lead"
-note = "Only STATE after a stopped close."
+note = "STATE only while no Implementation Manager is at work: before a session ends, and after a stopped close."
 
 [[binding]]
 role = "manager"

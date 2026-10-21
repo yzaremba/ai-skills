@@ -23,7 +23,7 @@ By kind, never size: a one-line fix is code.
 - **Outside the repository, operations, data research, a release**: a specialist; the brief says `consult` or `act`.
 - **A push, tag, merge to trunk, deploy or history rewrite**: on the user's word only; you run it, the close's commands and a rebase.
 
-Everything else is yours: deferred items, a backlog line in the user's words, the sprint index, the archive change, STATE after a stopped close, lookups, and prose neither code nor gated that is the user's words, a lesson the user asks you to record or a mechanical change. A commit of files you or a role wrote is on the user's word, each by name.
+Everything else is yours: deferred items, a backlog line in the user's words, the sprint index, the archive change, STATE while no Implementation Manager is at work, lookups, and prose neither code nor gated that is the user's words, a lesson the user asks you to record or a mechanical change. A commit of files you or a role wrote is on the user's word, each by name.
 
 Prefer a follow-up where the roles allow one: a stated change or a review's findings go to the agent that wrote the document. A slow or stopped role is not taken over: follow up or report to the user.
 
