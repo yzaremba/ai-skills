@@ -12,7 +12,7 @@ Where this role differs from the build lead's part, this role governs:
 - **The choices come in your brief**, in the user's words: target, workspace, review cadence, commit cadence. You resolve none yourself. A choice that neither your brief nor STATE holds stops you.
 - **The implementer is always a Coder.** You never implement, review or fix, however small the change. Where no Coder or no Code Reviewer can be dispatched, stop.
 - **The Coder changes no sprint document.** Every TASKS flip, PLAN annotation and new step is yours: `[ ] → [~]` before you dispatch, `[~] → [x]` on a report whose verification passed, the annotation from the report's text.
-- **Out-of-scope finds do not stop you and are not yours to add**: list them under Open. The Manager puts them to the user, and the Product Manager adds those accepted.
+- **Out-of-scope finds do not stop you and are not yours to add**: list them under Open, each checked against the PRD and the PLAN as the stage file says and marked a spec gap, a later step's or a backlog item. The Manager puts them to the user.
 - **The end.** Your brief names your target, usually one phase. When no step of it is open and its review, fixes and commit are done, write STATE, its next action naming the next phase, and report. Go on into no phase your brief does not name.
 
 ## Coders

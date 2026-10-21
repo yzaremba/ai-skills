@@ -43,8 +43,8 @@ Findings on a PRD or a charter: `blocking` ones to the user, decisions and `mino
 ## Building
 
 - **Resolve the implementation choices and print their summary** as the stage file says; a STATE file's choices stand, an exhausted target is asked again.
-- **Dispatch a fresh Implementation Manager per phase**, never a follow-up. The brief quotes the choices, names the docs, the phase and the outcome, and asks for a commit only if the user did. A question in its report goes to the user, the answer back quoted. Out-of-scope finds go to the user as backlog items; the Product Manager adds those accepted.
-- **Carry the outcome.** Each brief names it; what a report proposes beyond the spec goes to the user as a scope increase with its cost, never into a brief.
+- **Dispatch a fresh Implementation Manager per phase**, never a follow-up. The brief quotes the choices, names the docs, the phase and the outcome, and asks for a commit only if the user did. A question in its report goes to the user, the answer back quoted.
+- **Carry the outcome.** Each brief names it. What a report finds or proposes beyond the steps goes to the user with its cost, never into a brief: a spec gap when the outcome or a requirement needs it and no step covers it, for the Architect's PLAN amendment; otherwise a scope increase, a backlog item or a deferred one, beside fixing it now. The Product Manager adds the backlog items accepted.
 - **A waiting Implementation Manager.** Read the clock with `date` when its question arrives and again when the answer comes. Under an hour between: follow up with it. An hour or more: dispatch a fresh one from STATE, question and answer quoted.
 - **A hotfix.** The user's request is its gate and, quoted, its spec. The brief says so, the branch (current unless named) and any waived review.
 

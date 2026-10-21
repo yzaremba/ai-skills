@@ -5,7 +5,7 @@
 
 ## What
 
-Build what the user's stated outcome needs and nothing that proves, records or guards it, unless the user asks: no harness, proposal document, receipt, ledger, evidence archive, hash list or extra review. Any increase of scope is put to the user as one, with what it costs and what it buys, and cutting is always on offer. This holds for this repository's own work too: a change here is the smallest that meets the ask, and tooling, tests of the tooling, manifests, documents and slides grow only when the user asks for them.
+Build what the user's stated outcome needs and nothing that proves, records or guards it, unless the user asks: no harness, proposal document, receipt, ledger, evidence archive, hash list or extra review. Any increase of scope is put to the user as one, with what it costs and what it buys, and cutting is always on offer. A gap the outcome needs is not an increase of scope: it is fixed in the sprint, not sent to the backlog. This holds for this repository's own work too: a change here is the smallest that meets the ask, and tooling, tests of the tooling, manifests, documents and slides grow only when the user asks for them.
 
 ## Why
 
