@@ -51,7 +51,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import definitions, dictionary, entry, paths, roles, schema, tomlio
+from . import definitions, dictionary, entry, paths, roles, schema, settings, tomlio
 from .errors import SetupError
 from .locations import Locations
 
@@ -1572,6 +1572,24 @@ def _check_defaults(run: _Run) -> None:
     run.loader(file, "defaults", lines)
     if not lines:
         run.defaults = data
+        _check_lists(run, file, data.get("setup", {}))
+
+
+def _check_lists(run: _Run, file: Path, setup: dict[str, Any]) -> None:
+    """The shipped ``setup.enabled`` and ``setup.disabled`` hold each skill
+    and rule of the clone once, as ``render`` requires of them: a skill or
+    rule added to the clone is added to a list in the same change."""
+    given = {key: settings.Entry(setup[key], "shipped", file) for key in ("enabled", "disabled") if key in setup}
+    if not given:
+        return
+    try:
+        bound = definitions.bound_skills(run.where)
+    except SetupError:
+        bound = set()  # the check of the binding table says why
+    for _, message in definitions.list_problems(
+        given.get("enabled"), given.get("disabled"), definitions.units(run.where, run.skills), bound,
+    ):
+        run.add(file, "defaults", message)
 
 
 # --- The launchers ---------------------------------------------------------------

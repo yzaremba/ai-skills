@@ -711,10 +711,11 @@ def expected(context: Any, provider: homes.Provider) -> list[Item]:
     name = provider.name
     skills = provider.place(homes.SKILLS).path
     agents = provider.place(homes.AGENTS).path
+    off = definitions.disabled(where, context.sources.skills)
     items = [
         Item(name, SKILL, skill.name, skills / skill.name, invoke_only=skill.invoke_only)
         for skill in context.sources.skills.values()
-        if name in skill.providers and not skill.own_setup
+        if name in skill.providers and not skill.own_setup and skill.name not in off
     ]
     items += [
         Item(name, LOADED, made.role, skills / made.role, invoke_only=True)

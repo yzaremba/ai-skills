@@ -671,11 +671,15 @@ class RepositoryTests(support.ScratchCase):
         self.write(self.user_file, "[roles]\nenabled = false\n[setup]\nallow_unshared_clone = true\n")
         code, out, err = self.show_repository("roles.enabled", "setup")
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(out, "roles.enabled = false  (user)\nsetup.allow_unshared_clone = true  (user)\n")
+        self.assertEqual(out.splitlines()[:2], ["roles.enabled = false  (user)", "setup.allow_unshared_clone = true  (user)"])
+        self.assertTrue(out.splitlines()[2].startswith('setup.enabled = ["prd-implementation", '), out)
+        self.assertEqual(out.splitlines()[3:], ['setup.disabled = ["csv-tools", "json-tools", "usage-cost", "avoid-bash-injection-heuristics"]  (shipped)'])
         report = json.loads(self.show_repository("setup", "--json")[1])
-        self.assertEqual(report["settings"], {
-            "setup.allow_unshared_clone": {"value": True, "layer": "user", "file": str(self.user_file)},
-        })
+        self.assertEqual(report["settings"]["setup.allow_unshared_clone"],
+                         {"value": True, "layer": "user", "file": str(self.user_file)})
+        self.assertEqual(report["settings"]["setup.disabled"],
+                         {"value": ["csv-tools", "json-tools", "usage-cost", "avoid-bash-injection-heuristics"], "layer": "shipped",
+                          "file": str(support.DEFAULTS)})
         # A project may turn its roles off; it may not hold [setup].
         self.write(self.project_file, "[roles]\nenabled = true\n")
         with mock.patch.object(locations, "CLONE", support.REPOSITORY):

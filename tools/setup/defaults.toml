@@ -61,3 +61,14 @@ dir = "docs/memory"
 # for one: only where the other side does not install from this clone (one
 # side used alone, or a clone for each side).
 allow_unshared_clone = false
+
+# The skills and rules of the clone, each in one of the two lists: `render`
+# installs those in enabled, none of those in disabled, and removes the link
+# an earlier run made to one that is disabled. One in neither list or in both
+# stops `render` with an error. To change them, write both lists in
+# ~/.agents/workflow.toml: a key there replaces the shipped one whole. A
+# process skill (one roles/bindings.toml names) cannot be disabled, and the
+# collaboration skill, which has a setup of its own, is in neither. The roles
+# are roles.enabled, above.
+enabled = ["prd-implementation", "epic-implementation", "project-memory", "self-reflection"]
+disabled = ["csv-tools", "json-tools", "usage-cost", "avoid-bash-injection-heuristics"]

@@ -41,7 +41,9 @@ the tag `v1.0`; [Moving from v1](#moving-from-v1) says how to get from there to 
 There are two installers. The collaboration skill, `multiagent-collab`, has its own,
 described after the quick start; the setup tool leaves that skill alone, whatever is at its path.
 Everything else (the other seven skills, the rule and the roles) is installed by the setup
-tool: [Quick start](#quick-start) gives the steps for each kind of machine, and
+tool, each skill and the rule as the setting `setup.enabled` lists them (`csv-tools`,
+`json-tools`, `usage-cost` and the rule are off by default; see Settings):
+[Quick start](#quick-start) gives the steps for each kind of machine, and
 [Skills](#skills) below says what each command does. The two may use one clone or two:
 `doctor` reports a collaboration skill linked from another clone as information, not as a
 fault.
@@ -86,8 +88,8 @@ python3 tools/setup/workflow_setup.py doctor
   or deleting the clone breaks the install
   (`uninstall --help` says how to take back an install whose clone moved, with
   `--clone-was`).
-- **What `render` does.** It links each skill into `~/.claude/skills` and, for Codex,
-  `~/.agents/skills`; links the rule into `~/.claude/rules`; and generates the role
+- **What `render` does.** It links each enabled skill into `~/.claude/skills` and, for Codex,
+  `~/.agents/skills`; links the rule, when enabled, into `~/.claude/rules`; and generates the role
   definitions and the entry points of a session, which its output lists under "entry
   points". `doctor` checks all of it and writes nothing; exit code 1 means an error. It
   starts the providers' programs (`--version`, Codex's model list), which may write state
@@ -251,8 +253,9 @@ python3 tools/setup/workflow_setup.py render
 python3 tools/setup/workflow_setup.py doctor
 ```
 
-- **What you get.** Every skill linked for each provider it names (`usage-cost` is for
-  Claude Code only), and the rule on Claude Code, as above. `init --no-roles` writes
+- **What you get.** Every enabled skill linked for each provider it names, and the rule on
+  Claude Code when it is enabled, as above. `csv-tools`, `json-tools`, `usage-cost` and the
+  rule are disabled by default; `setup.enabled` under Settings turns them on. `init --no-roles` writes
   `roles.enabled = false` in `~/.agents/workflow.toml` (or write that line yourself, under
   `[roles]`), and every later `render` installs the process alone: no role definition and
   no entry point, in a home or a project. Its output says the roles are off and which file
@@ -486,8 +489,8 @@ python tools/setup/workflow_setup.py doctor
   `render` would otherwise need an option for on every run: whether the roles are
   installed (`--roles`, `--no-roles`), and, asked only where this side's clone is one the
   other side cannot read, whether to accept it (`--allow-unshared-clone`; proposed: no).
-- `render` links each skill into the skills directory of each provider it names
-  (`~/.claude/skills`, and `~/.agents/skills` for Codex), links the rule into
+- `render` links each enabled skill into the skills directory of each provider it names
+  (`~/.claude/skills`, and `~/.agents/skills` for Codex), links the rule, when enabled, into
   `~/.claude/rules`, and generates the role definitions and the entry points of a
   session. One conflict (a file, a directory or a foreign link where a link would go)
   stops the run before anything is written. Exit code 3 means the rest was done and
@@ -759,6 +762,32 @@ Both are newer than the first version 2 tools: an older clone's setup tool, and 
 `check.py` of an older `prd-implementation`, refuse a user file that holds `roles.enabled`
 or `[setup]` as an unknown key, so update every clone that reads `~/.agents/workflow.toml`
 before writing either.
+
+**Which skills and rules are installed** is two lists under `[setup]`, read from the
+user's file alone, that hold every skill and rule of the clone between them:
+
+```toml
+[setup]
+enabled = [
+    "prd-implementation", "epic-implementation", "project-memory",
+    "self-reflection", "usage-cost",
+]
+disabled = ["csv-tools", "json-tools", "avoid-bash-injection-heuristics"]
+```
+
+The shipped defaults enable the process skills and `self-reflection`, and disable
+`csv-tools`, `json-tools`, `usage-cost` and the rule. `render` installs what `enabled` names,
+nothing that `disabled` names, and removes the link an earlier run made to a disabled
+one; a link removed by hand comes back at the next `render` unless it is disabled. A
+name in both lists, a skill or rule in neither (one the clone gained since the lists
+were written, say), a name that is no skill or rule of the clone, and a process skill
+in `disabled` stop `render`, and `doctor` reports them. A key in the user's file
+replaces the shipped one whole, so write both lists there. The collaboration skill has a
+setup of its own and is in neither list; the roles are `roles.enabled`. Each side of a
+Windows and WSL machine reads its own `~/.agents/workflow.toml`, and the side that
+writes a place decides for it: where the WSL home's rules directory is a link to the
+Windows one, the rule is the Windows side's setting. A clone older than these keys
+refuses them as unknown.
 
 On Claude Code the definitions of the Product Manager, the Architect, the
 Implementation Manager and the Idea and Plan Reviewers also name the one-hour prompt

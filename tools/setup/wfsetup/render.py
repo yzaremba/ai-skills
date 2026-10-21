@@ -339,6 +339,8 @@ class Run:
         self._emptied: list[Path] = []
         self._ignore_always = False
         self._roles: Roles | None = None           # whether the roles are generated; see ``roles``
+        self._disabled: frozenset[str] | None = None   # what setup.disabled keeps out; see ``disabled``
+        self._disabled_read = False
         self.notes: list[str] = []                 # what a part says beside its items; printed as notes
 
     # --- For the parts ---------------------------------------------------------
@@ -1063,37 +1065,49 @@ def _has_place(provider: homes.Provider, name: str) -> bool:
     return any(place.name == name for place in provider.places)
 
 
+def disabled(run: Run) -> frozenset[str] | None:
+    """The skills and rules ``setup.disabled`` keeps out of the home, read
+    once. None where the two lists are at fault: the first part to ask
+    reports it, and the run then writes nothing."""
+    if not run._disabled_read:
+        run._disabled_read = True
+        try:
+            run._disabled = definitions.disabled(_locations(run, None), run.sources.skills)
+        except SetupError as exc:
+            run.fail(*exc.lines)
+    return run._disabled
+
+
 def fill_skills(run: Run) -> None:
     """Every skill into the skills place of each installed provider its
-    ``compatibility`` line names (R6.2). A skill with a setup of its own is
-    skipped, whatever is at its path (R1.2)."""
+    ``compatibility`` line names (R6.2), but those ``setup.disabled`` names.
+    A skill with a setup of its own is skipped, whatever is at its path
+    (R1.2)."""
+    off = disabled(run)
+    if off is None:
+        return
     for provider in run.homes.installed():
         if not _has_place(provider, homes.SKILLS):
             continue
         place = provider.place(homes.SKILLS)
         for name, skill in run.sources.skills.items():
-            if provider.name in skill.providers:
+            if provider.name in skill.providers and name not in off:
                 run.link(provider, place, name, run.homes.clone / name, own_setup=skill.own_setup)
-
-
-def rule_directories(clone: Path) -> list[Path]:
-    """The rules of the clone: each directory in ``rules/``. A rule is a
-    directory because setup links directories only (see ``homes``)."""
-    return [
-        entry for entry in paths.entries(clone / homes.RULES)
-        if not entry.name.startswith(".") and fsio.look(entry).kind == fsio.DIRECTORY
-    ]
 
 
 def fill_rules(run: Run) -> None:
     """Every rule directory into the rules place of each installed provider
-    that has one: Claude Code (R2.2)."""
-    rules = rule_directories(run.homes.clone)
+    that has one: Claude Code (R2.2), but those ``setup.disabled`` names."""
+    off = disabled(run)
+    if off is None:
+        return
+    rules = homes.rule_directories(run.homes.clone)
     for provider in run.homes.installed():
         if _has_place(provider, homes.RULES):
             place = provider.place(homes.RULES)
             for rule in rules:
-                run.link(provider, place, rule.name, rule)
+                if rule.name not in off:
+                    run.link(provider, place, rule.name, rule)
 
 
 def configure_roles(parser: Any) -> None:

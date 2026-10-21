@@ -430,8 +430,17 @@ class RememberedChoiceTests(support.ScratchCase):
             ('[roles]\nenabled = "no"\n', "roles.enabled: expected a boolean, got a string"),
             ("[roles]\nenabled = 0\n", "roles.enabled: expected a boolean, got an integer"),
             ("[setup]\nallow_unshared_clone = 1\n", "setup.allow_unshared_clone: expected a boolean, got an integer"),
-            ("[setup]\nshared = true\n", "setup.shared: unknown key; known here: allow_unshared_clone"),
+            ("[setup]\nshared = true\n", "setup.shared: unknown key; known here: allow_unshared_clone, enabled, disabled"),
             ("setup = true\n", "setup: expected a table, got a boolean"),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.problems(self.user_file, text), [f"{self.user_file}: {line}"])
+
+    def test_the_two_lists_take_arrays_of_names(self) -> None:
+        for text, line in (
+            ('[setup]\ndisabled = "usage-cost"\n', "setup.disabled: expected an array of strings, got a string"),
+            ('[setup]\nenabled = ["alpha", "alpha"]\n', 'setup.enabled: "alpha" is given twice'),
+            ('[setup]\nenabled = [""]\n', "setup.enabled: item 1 must not be empty"),
         ):
             with self.subTest(text=text):
                 self.assertEqual(self.problems(self.user_file, text), [f"{self.user_file}: {line}"])

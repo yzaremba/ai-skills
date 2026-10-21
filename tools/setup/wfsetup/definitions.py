@@ -359,6 +359,71 @@ def bindings(where: Locations) -> dict[str, tuple[Binding, ...]]:
     return {role: tuple(rows) for role, rows in found.items()}
 
 
+ENABLED_KEY = "setup.enabled"
+DISABLED_KEY = "setup.disabled"
+
+
+def units(where: Locations, skills: Iterable[str]) -> set[str]:
+    """What setup installs from the clone, by name: its skills, but one with
+    a setup of its own, and its rules. ``skills`` are the clone's."""
+    return {name for name in skills if name not in homes.OWN_SETUP_SKILLS} | {
+        rule.name for rule in homes.rule_directories(where.clone)
+    }
+
+
+def bound_skills(where: Locations) -> set[str]:
+    """The process skills: those a row of ``roles/bindings.toml`` names."""
+    return {row.skill for rows in bindings(where).values() for row in rows}
+
+
+def list_problems(enabled: settings.Entry | None, disabled: settings.Entry | None, units: set[str],
+                  bound: set[str]) -> list[tuple[Path, str]]:
+    """What is wrong with ``setup.enabled`` and ``setup.disabled`` against
+    the clone's ``units``, as (file, message): a name that is no unit, a
+    process skill in ``disabled``, and, where a layer gives ``enabled``, a
+    unit in both lists or in neither. Without ``enabled``, every unit that
+    ``disabled`` does not name is installed."""
+    found: list[tuple[Path, str]] = []
+    for key, entry in ((ENABLED_KEY, enabled), (DISABLED_KEY, disabled)):
+        for name in [] if entry is None else entry.value:
+            if name in homes.OWN_SETUP_SKILLS:
+                found.append((entry.file, f"{key}: {name} has a setup of its own, which installs it; it is in "
+                                          "neither list"))
+            elif name not in units:
+                found.append((entry.file, f"{key}: {name} is no skill or rule of this clone"))
+            elif key == DISABLED_KEY and name in bound:
+                found.append((entry.file, f"{key}: {name} is a process skill, which roles/bindings.toml binds roles "
+                                          "to; it cannot be disabled"))
+    if enabled is None:
+        return found
+    on, off = set(enabled.value), set(() if disabled is None else disabled.value)
+    for name in sorted(on & off):
+        assert disabled is not None
+        if disabled.file == enabled.file:
+            found.append((enabled.file, f"setup: {name} is in both {ENABLED_KEY} and {DISABLED_KEY}; keep it in one"))
+        else:
+            found.append((disabled.file, f"{DISABLED_KEY}: {name} is also in {ENABLED_KEY}, which {enabled.file} "
+                                         f"gives ({enabled.layer} layer); write both lists in one file, each skill "
+                                         "and rule in one of them"))
+    for name in sorted(units - on - off):
+        found.append((enabled.file, f"setup: {name} is in neither {ENABLED_KEY} nor {DISABLED_KEY}; put it in one"))
+    return found
+
+
+def disabled(where: Locations, skills: Iterable[str]) -> frozenset[str]:
+    """The skills and rules ``setup.disabled`` keeps out of a home, read
+    from the user's file and the shipped defaults; ``skills`` are the
+    clone's. Any fault of the two lists (``list_problems``) is a
+    ``SetupError``, so that no skill or rule is installed or left out
+    unnoticed."""
+    found = settings.resolve(user_level(where), ("setup",))
+    on, off = found.get(ENABLED_KEY), found.get(DISABLED_KEY)
+    problems = list_problems(on, off, units(where, skills), bound_skills(where))
+    if problems:
+        raise SetupError(*[f"{file}: {message}" for file, message in problems])
+    return frozenset(() if off is None else off.value)
+
+
 def skills_place(where: Locations, provider: str, found: homes.Homes | None = None) -> str:
     """Where ``provider`` reads the user's skills in the home of ``where``,
     as a role is told it: from ``~`` when it is inside the user's home, as

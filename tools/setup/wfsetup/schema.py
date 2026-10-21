@@ -106,7 +106,10 @@ PROVIDER = Table({
 # ``[setup]`` is read by the setup tool alone, and from the user's file
 # alone (``USER_ONLY``): it holds facts of this machine, not of a project.
 # ``setup.allow_unshared_clone`` is what ``--allow-unshared-clone`` says for
-# one run, decided once.
+# one run, decided once. ``setup.enabled`` and ``setup.disabled`` name the
+# skills and rules a home installs and goes without; which names they may
+# hold is checked against the clone where they are read
+# (``definitions.list_problems``).
 SCHEMA: dict[str, Table] = {
     "process": Table({
         "docs_dir": _STRING,
@@ -132,6 +135,8 @@ SCHEMA: dict[str, Table] = {
     "providers": Table(each=PROVIDER, each_name="provider name"),
     "setup": Table({
         "allow_unshared_clone": _BOOLEAN,
+        "enabled": Strings(),
+        "disabled": Strings(),
     }),
 }
 GROUPS = tuple(SCHEMA)

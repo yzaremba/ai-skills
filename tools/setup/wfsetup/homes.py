@@ -677,6 +677,15 @@ class CloneAllowance:
         return ""
 
 
+def rule_directories(clone: Path) -> list[Path]:
+    """The rules of the clone: each directory in ``rules/``. A rule is a
+    directory because setup links directories only."""
+    return [
+        entry for entry in paths.entries(clone / RULES)
+        if not entry.name.startswith(".") and fsio.look(entry).kind == fsio.DIRECTORY
+    ]
+
+
 def clone_allowance(where: Locations, option: bool = False) -> CloneAllowance:
     """Whether a clone only this side reads is allowed: by the setting
     ``setup.allow_unshared_clone``, read from the user's file (a project's

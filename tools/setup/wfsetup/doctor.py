@@ -735,6 +735,10 @@ def check_duplicate_skills(context: Context) -> list[Finding]:
         loaded = entry.loaded_roles(context.user_level) if enabled is None or enabled.value is not False else []
     except SetupError:
         loaded = []  # the check `sources` or `profiles` says why
+    try:
+        off = definitions.disabled(context.user_level, context.sources.skills)
+    except SetupError:
+        off = frozenset()  # the check `missing` says why: render cannot plan the install
     project = context.homes.project
     findings = []
     looked = 0
@@ -744,7 +748,7 @@ def check_duplicate_skills(context: Context) -> list[Finding]:
         install = provider.place(homes.SKILLS).path
         names = sorted({
             name for name, skill in context.sources.skills.items()
-            if provider.name in skill.providers and not skill.own_setup
+            if provider.name in skill.providers and not skill.own_setup and name not in off
         } | set(loaded))
         others: list[tuple[Path, str]] = []
         if any(place.name == homes.OLD_SKILLS for place in provider.places):

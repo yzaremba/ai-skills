@@ -1721,6 +1721,22 @@ class SettingsTests(TreeCase):
         (self.clone / "tools" / "setup" / "defaults.toml").unlink()
         self.assertEqual(self.found(), [("tools/setup/defaults.toml", "defaults")])
 
+    def test_the_shipped_lists_hold_each_skill_and_rule_once(self) -> None:
+        def lists(enabled: str, disabled: str = "") -> list[str]:
+            self.put("tools/setup/defaults.toml",
+                     support.FIXTURE_DEFAULTS + f"enabled = [{enabled}]\ndisabled = [{disabled}]\n")
+            return [p.message for p in self.check().problems]
+
+        self.assertEqual(lists('"alpha", "beta", "solo", "sample"'), [])
+        self.assertEqual(lists('"alpha", "beta", "sample"', '"solo"'), [])
+        self.assertEqual(lists('"alpha", "beta", "sample"'),
+                         ["setup: solo is in neither setup.enabled nor setup.disabled; put it in one"])
+        self.assertEqual(lists('"alpha", "beta", "solo", "sample", "multiagent-collab"', '"alpha"'), [
+            "setup.disabled: alpha is a process skill, which roles/bindings.toml binds roles to; it cannot be disabled",
+            "setup.enabled: multiagent-collab has a setup of its own, which installs it; it is in neither list",
+            "setup: alpha is in both setup.enabled and setup.disabled; keep it in one",
+        ])
+
 
 class LauncherTests(TreeCase):
     def test_the_launchers_are_byte_identical(self) -> None:

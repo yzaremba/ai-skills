@@ -580,6 +580,79 @@ class StaleCase(RenderCase):
         self.assertLinked(self.claude_skills / "solo", self.clone / "solo")
 
 
+class ListsCase(RenderCase):
+    """``setup.enabled`` and ``setup.disabled``: each skill and rule of the
+    clone in one of them. In the fixture clone alpha is a process skill (the
+    binding table names it), beta and solo are optional, and the rule is
+    sample; multiagent-collab has a setup of its own and is in neither."""
+
+    ALL = ("alpha", "beta", "solo", "sample")
+
+    def lists(self, *disabled: str, enabled: tuple[str, ...] | None = None) -> None:
+        enabled = tuple(name for name in self.ALL if name not in disabled) if enabled is None else enabled
+        quoted = lambda names: ", ".join(f'"{name}"' for name in names)
+        self.write(self.user_file, f"[setup]\nenabled = [{quoted(enabled)}]\ndisabled = [{quoted(disabled)}]\n")
+
+    def test_a_disabled_skill_and_rule_are_not_linked(self) -> None:
+        self.lists("beta", "sample")
+        code, out, err = self.render()
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(sorted(os.listdir(self.claude_skills)), ["alpha", "solo"])
+        self.assertEqual(sorted(os.listdir(self.codex_skills)), ["alpha"])
+        self.assertNothingAt(self.rules / "sample")
+
+    def test_a_link_an_earlier_run_made_is_removed_and_comes_back_when_enabled(self) -> None:
+        self.assertEqual(self.render()[0], 0)
+        self.lists("solo", "sample")
+        code, out, err = self.render()
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("  remove link home:.claude/skills/solo", out.splitlines())
+        self.assertIn("  remove link home:.claude/rules/sample", out.splitlines())
+        self.assertNothingAt(self.claude_skills / "solo")
+        self.assertNothingAt(self.rules / "sample")
+        self.assertLinked(self.claude_skills / "beta", self.clone / "beta")
+        self.lists()
+        self.assertEqual(self.render()[0], 0)
+        self.assertLinked(self.claude_skills / "solo", self.clone / "solo")
+        self.assertLinked(self.rules / "sample", self.clone / "rules" / "sample")
+
+    def test_a_link_removed_by_hand_stays_removed(self) -> None:
+        self.assertEqual(self.render()[0], 0)
+        fsio.remove_link(self.rules / "sample")
+        self.lists("sample")
+        code, out, err = self.render()
+        self.assertEqual((code, err), (0, ""))
+        self.assertNothingAt(self.rules / "sample")
+        self.assertNotIn("rules/sample", self.manifest_file.read_text(encoding="utf-8"))
+
+    def test_a_fault_of_the_lists_stops_the_run_before_anything_is_written(self) -> None:
+        self.assertEqual(self.render()[0], 0)
+        for disabled, enabled, line in (
+            (("alpha",), None, "setup.disabled: alpha is a process skill, which roles/bindings.toml binds roles to"),
+            ((), (*self.ALL, "multiagent-collab"), "setup.enabled: multiagent-collab has a setup of its own"),
+            (("gamma",), None, "setup.disabled: gamma is no skill or rule of this clone"),
+            (("beta",), self.ALL, "setup: beta is in both setup.enabled and setup.disabled; keep it in one"),
+            ((), ("alpha", "solo", "sample"), "setup: beta is in neither setup.enabled nor setup.disabled; put it in one"),
+        ):
+            with self.subTest(line=line):
+                self.lists(*disabled, enabled=enabled)
+                before = tree(self.root)
+                code, out, err = self.render()
+                self.assertNotEqual(code, 0)
+                self.assertIn(f"{self.user_file}: {line}", out + err)
+                self.assertEqual(tree(self.root), before)
+
+    def test_disabled_alone_in_the_users_file_meets_the_shipped_enabled(self) -> None:
+        # The shipped file of the real clone lists every unit as enabled: a
+        # key of the user's replaces it whole, so both lists go in one file.
+        self.write(self.defaults_file, support.FIXTURE_DEFAULTS + 'enabled = ["alpha", "beta", "solo", "sample"]\n')
+        self.write(self.user_file, '[setup]\ndisabled = ["sample"]\n')
+        code, out, err = self.render()
+        self.assertNotEqual(code, 0)
+        self.assertIn(f"{self.user_file}: setup.disabled: sample is also in setup.enabled, which {self.defaults_file} "
+                      "gives (shipped layer); write both lists in one file, each skill and rule in one of them", out + err)
+
+
 class GateCase(RenderCase):
     def test_a_source_problem_stops_the_run_before_any_write(self) -> None:
         self.skill("alpha", name="name: other")
