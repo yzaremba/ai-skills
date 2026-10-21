@@ -1,7 +1,0 @@
-# Project settings of the sprint process. The sprint docs of this repository are
-# kept in the sibling planning repository, skills-planning, beside this clone.
-[process]
-docs_dir = "../skills-planning/docs"
-# Open questions go to the user in one message, each with a recommendation.
-questions = "all-together"
-recommend = true

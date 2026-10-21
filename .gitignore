@@ -1,3 +1,5 @@
 **__pycache__**
 *.pyc
 .cursor/
+/.agents/workflow.local.toml
+/docs/memory/local
