@@ -76,7 +76,7 @@ The stage files describe actions and name no tool. How a question is put to the 
 
 ## Settings
 
-The process reads three settings, all in the `process` group:
+The process reads four settings, all in the `process` group:
 
 - `process.docs_dir` — **the sprint docs directory**, which is what the stage files call it: a path relative to the project root, `docs/` by default.
 - `process.questions` — `all-together` (default) or `one-at-a-time`: how open questions are put to the user.

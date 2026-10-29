@@ -41,7 +41,7 @@
 - Review: <after each phase | after each task | at completion | none>
 - Commits: <after each phase | after each task | at completion | don't commit>
 - Implementer: <a separate implementer | the build lead's own session>
-- Stated settings: <none | each `process` value the user stated in the session, and still holds: "recommend = accept">
+- Stated settings: <none | each `process` value the user stated in this session or that is carried from STATE, and still holds: "recommend = accept">
 
 ## Who holds the work
 
@@ -96,7 +96,7 @@
 
 <the user's request and decisions, quoted>
 
-- Stated settings: <none | each `process` value the user stated in the session, and still holds>
+- Stated settings: <none | each `process` value the user stated in this session or that is carried from STATE, and still holds>
 
 ## Waits on the user
 

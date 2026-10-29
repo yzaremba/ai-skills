@@ -1,6 +1,6 @@
 # On Claude Code
 
-What differs on this provider for the three actions the stage files leave open. Read against the docs of Claude Code 2.1.289 on 2026-10-05.
+What differs on this provider for the four actions the stage files leave open. Read against the docs of Claude Code 2.1.289 on 2026-10-05.
 
 ## Putting a question to the user
 

@@ -57,7 +57,7 @@ The stage files describe actions and name no tool, and nothing in them differs b
 
 ## Settings
 
-The process reads three settings, all in the `process` group, the same ones the `prd-implementation` skill reads:
+The process reads four settings, all in the `process` group, the same ones the `prd-implementation` skill reads:
 
 - `process.docs_dir` — **the epic docs directory**, which is what the stage files call it. It is the sprint docs directory: a path relative to the project root, `docs/` by default.
 - `process.questions` — `all-together` (default) or `one-at-a-time`: how open questions are put to the user.

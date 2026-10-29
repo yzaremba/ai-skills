@@ -116,6 +116,8 @@ TABLE = [
          ("process.density: expected a string, got a boolean",)),
     Case("a wrong type: an integer for a boolean", {USER: "[process]\nrecommend = 1\n"}, USER,
          ("process.recommend: 1 is not allowed", "allowed values: true, false, accept")),
+    Case("a wrong type: an integer outside 64 bits for a boolean", {USER: "[process]\nrecommend = 100000000000000000000\n"}, USER,
+         ("process.recommend: 100000000000000000000 is not allowed", "allowed values: true, false, accept")),
     Case("a wrong type: a boolean for a string", {LOCAL: "[process]\nquestions = true\n"}, LOCAL,
          ("process.questions: expected a string, got a boolean",)),
     Case("a wrong type: an array", {LOCAL: '[process]\ndocs_dir = ["docs"]\n'}, LOCAL,

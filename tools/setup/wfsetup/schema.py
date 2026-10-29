@@ -208,7 +208,7 @@ def _validate(node: Node, value: Any, path: tuple[str, ...], file: Any, problems
     if isinstance(node, Value):
         if node.type == "boolean" and node.choices:
             if actual != "boolean" and value not in node.choices:
-                shown = tomlio.format_value(value) if actual in ("string", "integer") else tomlio.article(actual)
+                shown = (str(value) if actual == "integer" else tomlio.format_value(value)) if actual in ("string", "integer") else tomlio.article(actual)
                 problems.append(
                     f"{where}: {shown} is not allowed; allowed values: true, false, {', '.join(node.choices)}"
                 )

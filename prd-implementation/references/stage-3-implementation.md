@@ -112,7 +112,7 @@ These hold in every repo — anything genuinely particular to one project belong
 - **No silent rollbacks, and no flipping live/deployed state** (symlinks, feature flags, release pointers) — even to unblock an incident.
 - **Hard-delete dead code at refactor cutover** — do not preserve legacy behind unused flags or as a "safety net."
 - **Build what the step names and no more** — no harness, receipt, ledger, hash list, evidence archive, safeguard or document the step does not ask for. One that seems needed is a question for the build lead, not code.
-- **No command that outlasts one wait.** A suite or command that may is split, or started so that it survives the turn and writes a log, and waited for as "Waiting on a long command" in [claude-code.md](claude-code.md) or [codex.md](codex.md) says, reading the log, not the screen.
+- **No command that outlasts one wait.** A suite or command that may outlast one wait is split, or started so that it survives the turn and writes a log, and waited for as "Waiting on a long command" in [claude-code.md](claude-code.md) or [codex.md](codex.md) says, reading the log, not the screen.
 - **Prefer `git -C <dir> <subcmd>`** over `cd <dir> && git ...` when operating on a repo other than the cwd.
 - **Don't re-provision the environment** the session already set up — e.g. don't re-activate an already-active virtualenv or toolchain.
 - **Push back** rather than silently routing around contradictions: if the user asks for something that doesn't exist, contradicts the PLAN, or appears wrong, surface it.

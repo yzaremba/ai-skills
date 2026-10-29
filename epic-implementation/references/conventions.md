@@ -109,7 +109,7 @@ An epic has no worktree of its own. Its docs are shared between its sprints, so 
 
 ## Questions to the user
 
-Whenever this process puts open questions to the user — at a gate, with the material findings of the critical pass over a charter, when the decomposition needs a decision — two settings say how. They come from the same run of `scripts/settings.py` as the epic docs directory.
+Whenever this process puts open questions to the user — at a gate, with the material findings of the critical pass over a charter, when the decomposition needs a decision — three settings say how. They come from the same run of `scripts/settings.py` as the epic docs directory.
 
 - **`process.questions`** — `all-together` (the default): put every open question in one message, numbered, so the user can answer them in one reply. `one-at-a-time`: put one question, wait for the answer, then put the next; a later question may be dropped or changed by an earlier answer. That holds for open questions in every form: the same message does not list the others, as bullets or in prose, and does not give your leaning on each. At most it says how many remain. The one exception is a list the user asked for.
 - **`process.recommend`** — `true` (the default): give your recommendation with each question, and its reason in a line. `false`: give the options without one. `accept`: as "`accept`" below says.
