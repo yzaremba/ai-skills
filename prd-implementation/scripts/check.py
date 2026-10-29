@@ -30,6 +30,8 @@ What it reads, all as UTF-8:
     earlier place, reported in one note, to be moved into the folder
     SPRINTNN-THOUGHTS-*.md, SPRINTNN-PRD-*.md, SPRINTNN-PLAN-*.md,
     SPRINTNN-TASKS-*.md and SPRINTNN-STATE-*.md there; never DONE/
+    HOTFIX-STATE-*.md in the sprint docs directory, each checked as a
+    sprint's STATE is and listed by name after the sprint workspaces
     AGENTS.md in the project root, for the lesson index: the block between
     the lines <!-- project-memory:index:start --> and
     <!-- project-memory:index:end -->
@@ -211,6 +213,7 @@ INDEX_END = "<!-- project-memory:index:end -->"
 PLAN_NAME = re.compile(r"^SPRINT[0-9]{2,}-PLAN-.+\.md$")
 TASKS_NAME = re.compile(r"^SPRINT[0-9]{2,}-TASKS-.+\.md$")
 STATE_NAME = re.compile(r"^SPRINT[0-9]{2,}-STATE-.+\.md$")
+HOTFIX_STATE_NAME = re.compile(r"^HOTFIX-STATE-.+\.md$")
 # A sprint's own doc in the sprint docs directory: its number and its kind.
 SPRINT_DOC_NAME = re.compile(r"^SPRINT([0-9]{2,})-(THOUGHTS|PRD|PLAN|TASKS|STATE)-.+\.md$")
 # The last part of a link's target: a doc of a sprint, or of an epic.
@@ -1655,6 +1658,11 @@ def build_report(project: Path, docs: Path, docs_from: str, settings: dict, toda
     # A PLAN's name sorts before the name of the TASKS of the same sprint.
     plans: dict[str, dict] = {}
     base = _below(docs, project)
+    hotfix_states = [name for name in names if HOTFIX_STATE_NAME.match(name)]
+    for name in hotfix_states:
+        lines = lines_of(name, docs)
+        if lines is not None:
+            check_state(lines, adder(name))
     for name in names:
         own = SPRINT_DOC_NAME.match(name)
         if own is None:
@@ -1704,6 +1712,7 @@ def build_report(project: Path, docs: Path, docs_from: str, settings: dict, toda
         "deferred": deferred,
         "git": git,
         "sprint_workspaces": workspaces,
+        "hotfix_states": hotfix_states,
         "violations": violations,
         "notes": notes,
         "summary": {
@@ -1799,6 +1808,10 @@ def render_text(report: dict) -> str:
         out.append("")
         out.append(f"Sprint workspaces: {len(report['sprint_workspaces'])}")
         out.extend(_workspace_line(entry) for entry in report["sprint_workspaces"])
+    if report["hotfix_states"]:
+        out.append("")
+        out.append(f"Hotfix STATE files: {len(report['hotfix_states'])}")
+        out.extend(shown(name) for name in report["hotfix_states"])
     for title, key in (("Violations", "violations"), ("Notes", "notes")):
         out.append("")
         out.append(f"{title}: {summary[key]}")

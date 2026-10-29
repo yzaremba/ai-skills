@@ -74,5 +74,37 @@ class StateLimits(Case):
         self.assertIn(f"8001 characters; the limit is 8000; {CUT}", text)
 
 
+HOTFIX = "HOTFIX-STATE-sample.md"
+
+
+class HotfixState(Case):
+    def test_limits_apply(self):
+        self.write(HOTFIX, state(70, 8000))
+        self.assertEqual([r for r in self.rules() if r[0] == HOTFIX], [])
+        self.write(HOTFIX, state(71, 8001))
+        self.assertEqual([(line, rule) for file, line, rule in self.rules() if file == HOTFIX],
+                         [(None, "state-too-long"), (71, "state-too-many-lines")])
+
+    def test_listed_by_name(self):
+        self.write("HOTFIX-STATE-b.md", state(3, 100))
+        self.write("HOTFIX-STATE-a.md", state(3, 100))
+        self.write("HOTFIX-NOTES-c.md", state(3, 100))
+        _, report = self.run_check()
+        self.assertEqual(report["hotfix_states"], ["HOTFIX-STATE-a.md", "HOTFIX-STATE-b.md"])
+        _, text = check.run(self.arguments())
+        self.assertIn("\nHotfix STATE files: 2\nHOTFIX-STATE-a.md\nHOTFIX-STATE-b.md\n", text)
+
+    def test_none_present(self):
+        _, report = self.run_check()
+        self.assertEqual(report["hotfix_states"], [])
+        _, text = check.run(self.arguments())
+        self.assertNotIn("Hotfix STATE", text)
+
+    def test_one_in_done_is_not_read(self):
+        self.write("DONE/" + HOTFIX, state(80, 9000))
+        _, report = self.run_check()
+        self.assertEqual((report["hotfix_states"], report["violations"]), ([], []))
+
+
 if __name__ == "__main__":
     unittest.main()
