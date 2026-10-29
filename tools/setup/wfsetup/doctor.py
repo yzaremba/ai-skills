@@ -145,7 +145,7 @@ PERMISSIONS_KEY = "default_permissions"
 DOC_BYTES_KEY = "project_doc_max_bytes"
 # The wait floor of ``wait_agent`` and its companions (``codexsettings``).
 WAIT_MIN_KEY, WAIT_DEFAULT_KEY, WAIT_MAX_KEY = codexsettings.WAIT_KEYS
-CODEX_KEYS = (THREADS_KEY, SANDBOX_KEY, PERMISSIONS_KEY, DOC_BYTES_KEY, *codexsettings.WAIT_KEYS)
+CODEX_KEYS = (THREADS_KEY, SANDBOX_KEY, PERMISSIONS_KEY, DOC_BYTES_KEY, *codexsettings.WAIT_KEYS, *codexsettings.PIN_KEYS)
 # The Manager's session is the primary thread, which the limit does not
 # count; below it run an Implementation Manager, three Coders and a
 # reviewer, with room for a second reviewer and a specialist.
@@ -310,7 +310,8 @@ class Context:
             return None
         probe = Probe(self.homes, self.sources)
         for part in render.PARTS:
-            part.fill(probe)
+            if part.name != render.MODEL_LIST_PART:  # a note, not a plan; the check `models` reads the list
+                part.fill(probe)
         probe.sweep()
         probe.finish()
         return probe
@@ -918,6 +919,23 @@ def mapping_in_effect(context: Context, provider: str) -> dict[str, str]:
     return found
 
 
+def user_tier_overrides(context: Context, name: str, known: Any) -> list[Finding]:
+    """An info line for each tier whose effective model comes from the user's
+    file and differs from the clone's dictionary. A project layer is not
+    compared; nothing is changed."""
+    found = []
+    for tier, ours in known.tiers.items():
+        key = f"providers.{name}.tiers.{tier}"
+        entry = context.provider_settings.get(key)
+        if entry is None or entry.layer != "user" or not isinstance(entry.value, str) or entry.value == ours:
+            continue
+        found.append(info(
+            f"{name}: tiers.{tier} = {json.dumps(entry.value)} in {entry.file}; the clone's dictionary maps it to "
+            f"{json.dumps(ours)}; change {key} to follow it", f"tiers.{tier}",
+        ))
+    return found
+
+
 def check_models(context: Context) -> list[Finding]:
     """Each installed provider's own model list beside its mapping (G11)."""
     findings = []
@@ -930,6 +948,7 @@ def check_models(context: Context) -> list[Finding]:
         if known is None:
             findings.append(info(f"{name}: the clone has no dictionary for it; nothing to check"))
             continue
+        findings.extend(user_tier_overrides(context, name, known))
         if known.model_list.command is None:
             findings.append(info(f"{name}: {modellist.read(known, context.environ).describe()}"))
             continue
@@ -975,10 +994,15 @@ def check_models(context: Context) -> list[Finding]:
                     f"effort {profile.effort}, which the provider's list does not give that model", profile.definition,
                 ))
         problems = len(findings) > before
+        compared = modellist.compare(known, reading, {})
+        new_line = compared.new_models_line()
+        if new_line is not None:
+            findings.append(warning(f"{name}: {new_line} (the dictionary may be stale)"))
         other = [
-            line for line in modellist.compare(known, reading, {}).lines()
-            if not any(line.startswith(f"{difference.model}: the dictionary has the efforts")
-                       for difference in found.effort_differences)
+            line for line in compared.lines()
+            if line != new_line
+            and not any(line.startswith(f"{difference.model}: the dictionary has the efforts")
+                        for difference in found.effort_differences)
         ]
         findings.extend(info(f"{name}: {line} (the dictionary may be stale)") for line in other)
         if reading.source == modellist.OFFLINE:

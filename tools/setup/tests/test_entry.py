@@ -1462,7 +1462,7 @@ class ProjectEffortCase(EntryCase):
         (point,) = self.effort_points(report)
         self.assertEqual((point["provider"], point["how"], point["status"]),
                          (CLAUDE, f'"effortLevel": "medium" in {SETTINGS}', render.CREATE))
-        out = self.with_project()
+        out = self.with_project("--no-model-list")
         lines = out.splitlines()
         self.assertIn(f'  {SETTINGS}: key effortLevel: up to date: is "medium"', lines)
         self.assertIn(

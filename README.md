@@ -93,7 +93,10 @@ python3 tools/setup/workflow_setup.py doctor
   definitions and the entry points of a session, which its output lists under "entry
   points". `doctor` checks all of it and writes nothing; exit code 1 means an error. It
   starts the providers' programs (`--version`, Codex's model list), which may write state
-  of their own into their homes.
+  of their own into their homes. `render` too starts Codex's model list (`codex debug
+  models`), also with `--dry-run`, where it renders the Codex home, and ends its output with a
+  note on any model the list offers and the dictionary lacks; a list it cannot read is one
+  line, and neither changes the exit code. `--no-model-list` leaves it out.
 - **WSL used alone.** Setup sees WSL as one side of a Windows machine and, by default,
   refuses a clone that the Windows side cannot read, which is any clone inside WSL's own
   file system. Where nothing on the Windows side uses these skills, allow it once: `init`
@@ -152,7 +155,12 @@ python3 tools/setup/workflow_setup.py doctor
   option the profile is written, unselected, only where your file sets
   `default_permissions` itself, and is otherwise printed as text. While the file sets
   `sandbox_mode` no profile is written, and a file that defines `features.multi_agent_v2`
-  itself gets no floor: its values are reported and the lines to add are printed. It helps
+  itself gets no floor: its values are reported and the lines to add are printed. Where
+  the Manager is a loaded role on Codex, it also pins the Manager's model and effort as
+  `model` and `model_reasoning_effort` in the block at the head of the file, so every plain
+  `codex` session in that home starts on them, the Manager's or not: that cost is accepted.
+  Where your file sets either key itself, neither is written, and `render` and `doctor` name
+  the lines to delete. It helps
   the process alone too: its sprint worktree and commits meet
   the same sandbox ("The sprint worktree" in `prd-implementation/references/codex.md`).
   `doctor --only codex-settings` says what the option would do, and

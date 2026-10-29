@@ -190,7 +190,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from . import blocks, carried, definitions, entry, fileops, fsio, homes, jsonkeys, paths, settings
+from . import blocks, carried, definitions, dictionary, entry, fileops, fsio, homes, jsonkeys, modellist, paths, settings
 from . import codexsettings
 from . import migrate
 from .errors import EXIT_ERROR, SetupError
@@ -342,6 +342,7 @@ class Run:
         self._disabled: frozenset[str] | None = None   # what setup.disabled keeps out; see ``disabled``
         self._disabled_read = False
         self.notes: list[str] = []                 # what a part says beside its items; printed as notes
+        self.model_notes: list[str] = []           # the model-list note (R3.2): printed after every other note
 
     # --- For the parts ---------------------------------------------------------
 
@@ -1555,6 +1556,46 @@ def _keys_outside(path: Path, content: str) -> list[str]:
     return [key for key in mine if key in there]
 
 
+NO_MODEL_LIST_OPTION = "--no-model-list"
+MODEL_LIST_PART = "model-list"
+
+
+def configure_model_list(parser: Any) -> None:
+    parser.add_argument(
+        NO_MODEL_LIST_OPTION,
+        action="store_true",
+        help="do not start Codex's list command (`codex debug models`); the note on a model that Codex lists and the "
+        "dictionary lacks is left out",
+    )
+
+
+def fill_model_list(run: Run) -> None:
+    """Where this run renders the Codex home, a note on the models Codex's own
+    list offers and the dictionary lacks (R3.2), as ``doctor`` warns of them
+    (R3.1). It writes nothing and never changes the exit code: a list that
+    cannot be read is one line, also where the program is not on PATH.
+    Nothing is started where Codex is not installed (no home, no program) or
+    the dictionary names no list command. The note goes last of all notes."""
+    if run.option("no_model_list", False) or run.errors:
+        return
+    provider = run.homes.provider(homes.CODEX)
+    if not provider.installed:
+        return
+    try:
+        known = dictionary.load_all(_locations(run, None)).get(provider.name)
+    except SetupError:
+        return
+    if known is None or known.model_list.command is None:
+        return
+    reading, found = modellist.check(known, homes.child_environment(run.homes), program_file=provider.program_file)
+    if found is None:
+        run.model_notes.append(f"{provider.name}: {reading.describe()}")
+        return
+    line = found.new_models_line()
+    if line is not None:
+        run.model_notes.append(f"{provider.name}: {line} (the dictionary may be stale)")
+
+
 PARTS: tuple[Part, ...] = (
     Part("skills", fill_skills),
     Part("rules", fill_rules),
@@ -1564,6 +1605,7 @@ PARTS: tuple[Part, ...] = (
     # Its removals are planned when the first link asks (``migrate.cleared``),
     # so they come before the links whatever this part's place is.
     Part("migrate", migrate.fill, migrate.configure),
+    Part(MODEL_LIST_PART, fill_model_list, configure_model_list),
 )
 
 
@@ -1715,7 +1757,7 @@ def _report(run: Run, result: fileops.Result | None, errors: list[str], dry_run:
         "migration": migrate.report(run),
         "stale": [item.as_json() for item in run.stale],
         "plan": list(result.lines) if changed else [],
-        "notes": [*run.notes, *(result.notes if result else [])],
+        "notes": [*run.notes, *(result.notes if result else []), *run.model_notes],
         "errors": list(errors),
         "counts": counts,
     }

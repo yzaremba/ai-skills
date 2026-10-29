@@ -818,10 +818,46 @@ class ModelsCase(DoctorCase):
         self.codex_stub.answer(LIVE, provider_stub.fixture("model-list-new-model.json"))
         code, findings = self.models()
         self.assertEqual(code, 0)
-        self.assertQuiet(findings)
-        self.assertFinding(findings, doctor.INFO, "in the list and not in the dictionary: gpt-7-nova",
+        self.assertFinding(findings, doctor.WARNING, "codex: in the list and not in the dictionary: gpt-7-nova",
                            "the dictionary may be stale")
         self.assertFinding(findings, doctor.INFO, "hidden entries and not in the dictionary: gpt-internal")
+        self.assertEqual([found["severity"] for found in findings if "not in the dictionary: gpt-internal" in found["detail"]],
+                         [doctor.INFO])
+
+    def test_a_model_gone_from_the_list_is_info(self) -> None:
+        listed = json.loads(provider_stub.fixture("model-list-equal.json"))
+        listed["models"] = [model for model in listed["models"] if model["slug"] != "gpt-5.5"]
+        self.codex_stub.answer(LIVE, json.dumps(listed))
+        _, findings = self.models()
+        gone = [found for found in findings if "in the dictionary and not in the list" in found["detail"]]
+        self.assertEqual([found["severity"] for found in gone], [doctor.INFO] * len(gone))
+
+    def tier_findings(self, text: str | None) -> list[dict]:
+        self.codex_stub.answer(LIVE, provider_stub.fixture("model-list-equal.json"))
+        if text is not None:
+            self.write(self.user_file, text)
+        _, findings = self.models()
+        return [found for found in findings if "tiers." in found["detail"] and "the clone's dictionary" in found["detail"]]
+
+    def test_a_user_tier_that_differs_is_info(self) -> None:
+        found = self.tier_findings('[providers.codex.tiers]\ndeep = "gpt-6-sol"\n')
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["severity"], doctor.INFO)
+        for text in ('codex: tiers.deep = "gpt-6-sol" in', str(self.user_file),
+                     'the clone\'s dictionary maps it to "gpt-6.1-sol"', "change providers.codex.tiers.deep"):
+            self.assertIn(text, found[0]["detail"])
+
+    def test_a_user_tier_equal_to_the_dictionary_says_nothing(self) -> None:
+        self.assertEqual(self.tier_findings('[providers.codex.tiers]\ndeep = "gpt-6.1-sol"\n'), [])
+
+    def test_no_user_tier_says_nothing(self) -> None:
+        self.assertEqual(self.tier_findings(None), [])
+
+    def test_a_project_tier_is_not_compared(self) -> None:
+        self.write(self.project_file, '[providers.codex.tiers]\ndeep = "gpt-6-sol"\n')
+        self.codex_stub.answer(LIVE, provider_stub.fixture("model-list-equal.json"))
+        _, findings = self.models(*self.project_arg)
+        self.assertEqual([found for found in findings if "the clone's dictionary maps" in found["detail"]], [])
 
     def test_an_effort_the_list_does_not_give_a_mapped_model(self) -> None:
         listed = json.loads(provider_stub.fixture("model-list-equal.json"))

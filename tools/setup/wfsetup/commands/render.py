@@ -4,7 +4,7 @@ and with --project what a project gets.
 
     render [--dry-run] [--home DIR] [--project DIR] [--json] [--no-roles]
            [--overwrite-edited] [--follow-config-symlinks]
-           [--allow-unshared-clone]
+           [--allow-unshared-clone] [--no-model-list]
            [--apply-codex-settings [--worktree-root DIR]
             [--default-codex-permissions]] [--remove-codex-settings]
            [--migrate-v1 [--remove-stale PATH]...]
@@ -30,6 +30,14 @@ how), settles the changes from the disk, removes those temporary files, and
 says so. It removes no backup, and no file that is only named like one of
 its temporaries. A lock taken on another system (a project on a Windows
 drive, used from Windows and from WSL) is never cleared from here.
+
+Where the run renders the Codex home (Codex installed, its program on PATH),
+it starts the list command of Codex's dictionary (`codex debug models`, also
+with --dry-run), a program of the provider's that may write state of its own
+into its home, and ends the output with a note on the models the list offers
+and the dictionary lacks (the line `doctor` warns of). A list that cannot be
+read is one line, and neither changes the exit code. --no-model-list starts
+nothing and leaves the note out.
 
 Whatever the options, nothing is written, removed or linked inside the
 clone setup runs from, outside the home and the project of the run (a
@@ -328,6 +336,12 @@ file, and every byte outside the markers stays as it is:
       block that defines the profile with no default_permissions beside it
       is an error of "doctor --only codex-settings"; a run without the
       option takes the profile out of it.
+    - The Manager's pin: where the Manager is installed for Codex as a
+      loadable role, model and model_reasoning_effort, its resolved Codex
+      model and effort, in the block at the head of the file. Every plain
+      codex session in the home then starts on them. A file that sets
+      either key itself gets neither, and the lines to delete are named by
+      their numbers. With no Manager to pin, a run takes them out again.
 
 The blocks stay: a later render without the option does not touch them, and
 --remove-codex-settings takes them out where they still hold what setup

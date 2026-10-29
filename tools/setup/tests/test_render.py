@@ -19,6 +19,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import provider_stub
 import support
 from fileops_support import POSIX, SYMLINKS
 from test_validate import TreeCase
@@ -890,6 +891,95 @@ class UnsharedCloneSettingCase(RenderCase):
             for word in words:
                 with self.subTest(command=command, word=word):
                     self.assertIn(" ".join(word.split()), flat)
+
+
+
+class ModelListCase(RenderCase):
+    """``render`` reads Codex's list and prints the new-model note (R3.2)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        for provider, text in support.FIXTURE_DICTIONARIES.items():
+            file = self.clone / "providers" / provider / "dictionary.toml"
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(text.encode("utf-8"))
+            (file.parent / "actions.md").write_bytes(
+                f"## How actions are done on {provider}\n\n- Dispatch a role.\n".encode("utf-8"))
+        self.stub = provider_stub.StubProgram(self.root / "stubs" / "codex", "codex")
+        self.at = homes.Host(SIDE, {**os.environ, "PATH": str(self.stub.bin)}, ())
+
+    def note(self, *argv: str, host: homes.Host | None = None) -> tuple[int, str]:
+        code, out, err = self.render(*argv, host=host or self.at)
+        self.assertEqual(err, "", out)
+        return code, out
+
+    def test_a_new_model_prints_the_line_at_the_end(self) -> None:
+        self.stub.answer(provider_stub.LIVE, provider_stub.fixture("model-list-new-model.json"))
+        code, out = self.note()
+        self.assertEqual(code, 0)
+        lines = out.splitlines()
+        self.assertEqual(lines[-2], "note: codex: in the list and not in the dictionary: gpt-7-nova "
+                                    "(the dictionary may be stale)")
+        self.assertEqual(self.stub.calls(), [["debug", "models"]])
+
+    def test_a_dry_run_reads_it_too(self) -> None:
+        self.stub.answer(provider_stub.LIVE, provider_stub.fixture("model-list-new-model.json"))
+        code, out = self.note("--dry-run")
+        self.assertEqual(code, 0)
+        self.assertIn("gpt-7-nova", out)
+        self.assertEqual(self.stub.calls(), [["debug", "models"]])
+
+    def test_a_list_that_equals_the_dictionary_prints_nothing(self) -> None:
+        self.stub.answer(provider_stub.LIVE, provider_stub.fixture("model-list-equal.json"))
+        code, out = self.note()
+        self.assertEqual(code, 0)
+        self.assertNotIn("dictionary may be stale", out)
+        self.assertNotIn("note: codex", out)
+
+    def test_an_unreadable_list_is_one_line_and_exit_0(self) -> None:
+        self.stub.answer(provider_stub.LIVE, "", code=1, stderr="boom")
+        self.stub.answer(provider_stub.BUNDLED, "", code=1, stderr="boom")
+        code, out = self.note()
+        self.assertEqual(code, 0)
+        self.assertEqual(len([line for line in out.splitlines() if line.startswith("note: codex")]), 1)
+
+    def test_no_model_list_starts_nothing(self) -> None:
+        self.stub.answer(provider_stub.LIVE, provider_stub.fixture("model-list-new-model.json"))
+        code, out = self.note("--no-model-list")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.stub.calls(), [])
+        self.assertNotIn("gpt-7-nova", out)
+
+    def test_a_home_with_no_program_on_path_is_one_line_and_exit_0(self) -> None:
+        code, out = self.note(host=self.host)  # the home exists, no codex program on PATH
+        self.assertEqual(code, 0)
+        self.assertEqual(self.stub.calls(), [])
+        lines = [line for line in out.splitlines() if line.startswith("note: codex")]
+        self.assertEqual(len(lines), 1, out)
+        self.assertIn("not on PATH", lines[0])
+
+    def test_the_note_comes_after_every_other_note(self) -> None:
+        self.stub.answer(provider_stub.LIVE, provider_stub.fixture("model-list-new-model.json"))
+        real = fileops.Plan.run
+
+        def with_a_note(plan, dry_run):
+            result = real(plan, dry_run)
+            result.notes.append("a note of the plan")
+            return result
+
+        with mock.patch.object(fileops.Plan, "run", with_a_note):
+            code, out = self.note()
+        self.assertEqual(code, 0)
+        lines = [line for line in out.splitlines() if line.startswith("note: ")]
+        self.assertIn("a note of the plan", lines[-2], out)
+        self.assertIn("gpt-7-nova", lines[-1], out)
+
+    def test_a_run_with_no_codex_home_starts_nothing(self) -> None:
+        shutil.rmtree(self.codex)
+        code, out = self.note(host=self.host)  # Codex: no home, and no program on PATH
+        self.assertEqual(code, 0)
+        self.assertEqual(self.stub.calls(), [])
+        self.assertNotIn("note: codex", out)
 
 
 if __name__ == "__main__":

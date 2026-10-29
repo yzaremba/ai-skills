@@ -120,7 +120,9 @@ The checks, in the order they run:
                          uses it and ignores default_permissions: info) and
                          default_permissions. No other key is read out of
                          the file (but project_doc_max_bytes, for the check
-                         instruction-files) and no other value is printed.
+                         instruction-files, and model and
+                         model_reasoning_effort, the Manager's pin below)
+                         and no other value is printed.
                          A file that cannot be read is a warning that says
                          where the fault is, not what the line holds. Then,
                          as info:
@@ -141,6 +143,11 @@ The checks, in the order they run:
                          session, started by you, that shows whether this
                          Codex ignores a `-c default_permissions=...`
                          override while sandbox_mode is set.
+                         The Manager's pin, model and model_reasoning_effort
+                         in the block at the head: a warning where the block
+                         holds other values than the Manager resolves to
+                         now, or where the file sets either key itself
+                         beside setup's blocks, with the lines to delete.
     profiles             what the settings set for something that is not
                          there (a role id no definition has, a provider with
                          no dictionary): warnings. A profile that does not

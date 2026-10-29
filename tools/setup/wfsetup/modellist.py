@@ -190,6 +190,14 @@ class Comparison:
     def equal(self) -> bool:
         return self.dictionary_equal and not self.missing_mapped and not self.hidden_mapped
 
+    def new_models_line(self) -> str | None:
+        """The line for the models the list offers and the dictionary lacks,
+        or None when there is none. Doctor makes it a warning; render prints
+        it."""
+        if not self.new_models:
+            return None
+        return f"in the list and not in the dictionary: {', '.join(self.new_models)}"
+
     def lines(self) -> list[str]:
         """Every difference, one line each; empty when there is none."""
         show = tomlio.format_value
@@ -200,7 +208,7 @@ class Comparison:
             f"{key} = {show(model)}: the list holds the model as a hidden entry" for key, model in self.hidden_mapped
         ]
         if self.new_models:
-            lines.append(f"in the list and not in the dictionary: {', '.join(self.new_models)}")
+            lines.append(self.new_models_line())
         if self.new_hidden:
             lines.append(f"in the list as hidden entries and not in the dictionary: {', '.join(self.new_hidden)}")
         if self.gone_models:

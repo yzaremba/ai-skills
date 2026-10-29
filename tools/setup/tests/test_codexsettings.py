@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tomllib
 import unittest
 from pathlib import Path
@@ -1139,6 +1140,175 @@ class DoctorReportCase(SettingsCase):
         self.run_doctor(*MINE, "--codex-probe")
         self.run_doctor(*MINE, "--json")
         self.assertEqual(tree(self.root), before)
+
+
+# The Manager's model and effort in the head block (R2.1 to R2.3 of sprint 03).
+SOL = '"gpt-6.1-sol"'
+PINNED = f'model = {SOL}, model_reasoning_effort = "medium"'
+USERS = 'model = "gpt-6-luna"\nmodel_reasoning_effort = "high"\n\n[features]\nfast = true\n'
+
+
+class PinCase(SettingsCase):
+    """A Manager loaded on both providers, deep tier and medium effort:
+    on Codex gpt-6.1-sol at medium. These runs render the roles."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.source(self.clone, "manager", tier="deep", load="true")
+
+    def go(self, *argv: str, host: homes.Host | None = None) -> tuple[int, str, str]:
+        return self.render(*argv, host=host)
+
+    def pin(self) -> tuple:
+        loaded = self.loaded()
+        return loaded.get("model"), loaded.get("model_reasoning_effort")
+
+    def line(self, number: int) -> str:
+        return self.config.read_bytes().decode("utf-8").split("\n")[number - 1]
+
+    def test_written_into_a_file_with_no_head_block_and_read_back(self) -> None:
+        original = self.user('approval_policy = "never"\n\n[features]\nfast = true\n\n[agents.reviewer]\ndescription = "r"\n')
+        out = self.apply()
+        self.assertTrue(self.config.read_bytes().startswith(b"# workflow-setup:start codex-settings-top\n"))
+        self.assertEqual(self.pin(), ("gpt-6.1-sol", "medium"))
+        self.assertEqual(self.loaded()["features"], {"fast": True, "multi_agent_v2": FLOOR})
+        self.assertEqual(self.loaded()["agents"], {"reviewer": {"description": "r"}, KEY: 8})
+        self.assertEqual(self.without_blocks(), original)
+        top = self.block(codexsettings.TOP_BLOCK).decode("utf-8")
+        self.assertIn("# Pins the Manager's model and effort: every plain `codex` session in this home starts on "
+                      f"them.\nmodel = {SOL}\nmodel_reasoning_effort = \"medium\"\n", top)
+        self.assertIn(f"model: the Manager's {PINNED}, set in setup's block at the head of the file: every plain "
+                      "codex session in this home starts on them", out)
+        findings = self.settings()
+        self.assertQuiet(findings)
+        self.assertFinding(findings, doctor.INFO, "would change nothing")
+        self.assertEqual(self.statuses(self.as_json(APPLY)), {
+            codexsettings.BLOCK: render.UP_TO_DATE, codexsettings.TOP_BLOCK: render.UP_TO_DATE,
+        })
+
+    def test_written_beside_a_head_block_of_the_others(self) -> None:
+        original = self.user('model_provider = "x"\nagents.enabled = true\n\n[permissions.other]\nextends = ":workspace"\n')
+        self.apply(DEFAULT)
+        self.assertEqual(self.pin(), ("gpt-6.1-sol", "medium"))
+        self.assertEqual(self.loaded()["default_permissions"], "workflow")
+        self.assertEqual(self.loaded()["agents"], {"enabled": True, KEY: 8})
+        self.assertEqual(self.without_blocks(), original)
+        top = self.block(codexsettings.TOP_BLOCK).decode("utf-8")
+        self.assertLess(top.index("model = "), top.index("default_permissions = "))
+        self.assertLess(top.index("model = "), top.index(f"{LIMIT} = 8"))
+        self.assertQuiet(self.settings())
+
+    def test_the_users_own_keys_at_the_top_are_left_and_quoted(self) -> None:
+        # The Windows home: lines 1 and 2 set both keys.
+        original = self.user(USERS)
+        out = self.apply()
+        self.assertIsNone(self.block(codexsettings.TOP_BLOCK))
+        self.assertEqual(self.pin(), ("gpt-6-luna", "high"))
+        self.assertEqual(self.without_blocks(), original)
+        self.assertIn(
+            "model: the Manager's model is not pinned. Your file sets model and model_reasoning_effort outside "
+            "setup's blocks, and a key given twice is not valid TOML, so setup writes neither. Delete these "
+            'lines yourself and run render --apply-codex-settings again: line 1: model = "gpt-6-luna"; line 2: '
+            f'model_reasoning_effort = "high". Until they are gone the Manager\'s {PINNED.replace(", ", " and ")} are not pinned', out)
+        findings = self.settings()
+        detail = self.assertFinding(findings, doctor.WARNING, "the Manager's model is not pinned",
+                                    'line 1: model = "gpt-6-luna"', 'line 2: model_reasoning_effort = "high"')
+        self.assertEqual(len([found for found in findings if found["detail"] == detail]), 1)
+        self.assertFalse(any("would now: model:" in found["detail"] for found in findings))
+        # With a head block written above them, the numbers are those of the file the run leaves.
+        out = self.apply(DEFAULT)
+        self.assertIsNotNone(self.block(codexsettings.TOP_BLOCK))
+        numbers = [int(word) for word in re.findall(r"line (\d+): model", out)]
+        self.assertEqual(len(numbers), 2, out)
+        self.assertEqual(self.line(numbers[0]), 'model = "gpt-6-luna"')
+        self.assertEqual(self.line(numbers[1]), 'model_reasoning_effort = "high"')
+        self.assertFinding(self.settings(), doctor.WARNING, f"line {numbers[0]}: model", f"line {numbers[1]}: model")
+        self.assertEqual(self.pin(), ("gpt-6-luna", "high"))
+
+    def test_before_any_block_doctor_says_what_a_run_would_leave(self) -> None:
+        self.user(USERS)
+        findings = self.settings()
+        self.assertFinding(findings, doctor.INFO, "would now: model: the Manager's model is not pinned",
+                           'line 1: model = "gpt-6-luna"')
+        self.assertFalse(any("not pinned" in detail for detail in self.details(findings, doctor.WARNING)))
+
+    def test_one_key_of_the_users_stops_both_and_no_comment_of_the_line_is_printed(self) -> None:
+        original = self.user(f'# mine\nmodel_reasoning_effort = "high"  # {SECRET}\n')
+        out = self.apply()
+        self.assertEqual(self.pin(), (None, "high"))
+        self.assertEqual(self.without_blocks(), original)
+        self.assertIn("model_reasoning_effort is yours, setup pins the model and the effort together, and a key "
+                      "given twice is not valid TOML, so setup writes neither", out)
+        self.assertNotIn("second top-level", out)
+        self.assertIn('Delete this line yourself and run render --apply-codex-settings again: line 2: '
+                      'model_reasoning_effort = "high". Until it is gone', out)
+        self.assertNotIn(SECRET, out)
+        for argv in ((), ("--json",)):
+            code, report, err = self.run_doctor(*MINE, *argv)
+            self.assertNotIn(SECRET, report + err)
+
+    def test_no_manager_writes_none_and_takes_them_out_of_an_earlier_block(self) -> None:
+        original = self.user("[features]\nfast = true\n")
+        self.apply()
+        self.assertEqual(self.pin(), ("gpt-6.1-sol", "medium"))
+        self.write(self.user_file, "[roles]\nenabled = false\n")
+        detail = self.assertFinding(self.settings(), doctor.WARNING, f"setup's block codex-settings-top pins {PINNED}",
+                                    "the Manager is not installed for Codex as a loadable role now")
+        self.assertIn("render --apply-codex-settings takes model and model_reasoning_effort out", detail)
+        out = self.apply()
+        self.assertEqual(self.pin(), (None, None))
+        self.assertIsNone(self.block(codexsettings.TOP_BLOCK))
+        self.assertEqual(self.without_blocks(), original)
+        self.assertIn(f"the earlier block pinned the Manager's {PINNED}, and in this run the Manager is not "
+                      "installed for Codex as a loadable role", out)
+        self.assertQuiet(self.settings())
+        # A Manager whose entry.load is false is none to pin either, and --no-roles asks for none.
+        self.user_file.unlink()
+        self.apply()
+        self.assertEqual(self.pin(), ("gpt-6.1-sol", "medium"))
+        self.assertIn("taken out", self.apply("--no-roles"))
+        self.assertEqual(self.pin(), (None, None))
+        self.source(self.clone, "manager", tier="deep", load="false")
+        self.apply()
+        self.assertEqual(self.pin(), (None, None))
+
+    def test_a_changed_effort_is_a_doctor_warning_until_the_next_run(self) -> None:
+        self.user("")
+        self.apply()
+        self.write(self.user_file, '[roles.manager]\neffort = "high"\n')
+        findings = self.settings()
+        self.assertFinding(findings, doctor.WARNING, f"setup's block codex-settings-top pins {PINNED}",
+                           f'the Manager now resolves to model = {SOL}, model_reasoning_effort = "high"',
+                           "render --apply-codex-settings writes the Manager's current ones")
+        self.assertFinding(findings, doctor.INFO, "would now: model: the Manager's", '"high"')
+        self.apply()
+        self.assertEqual(self.pin(), ("gpt-6.1-sol", "high"))
+        self.assertQuiet(self.settings())
+
+    def test_a_pin_changed_in_the_block_by_hand_is_the_hand_edit_report(self) -> None:
+        # What Codex's /model does where the key is: it changes it in place.
+        self.user("")
+        self.apply()
+        self.config.write_bytes(self.config.read_bytes().replace(b'"medium"', b'"xhigh"'))
+        self.assertEqual(self.pin(), ("gpt-6.1-sol", "xhigh"))
+        findings = self.settings()
+        self.assertFinding(findings, doctor.INFO, "setup's block codex-settings-top: in the file, and changed by hand")
+        self.assertFalse(any("pins" in detail for detail in self.details(findings, doctor.WARNING)))
+        code, edits = self.only("hand-edits")
+        self.assertFinding(edits, doctor.WARNING, "config.toml: block codex-settings-top", "changed by hand")
+
+    def test_removal_takes_them_out_with_the_block(self) -> None:
+        original = self.user('approval_policy = "never"\n')
+        self.apply()
+        self.assertEqual(self.pin(), ("gpt-6.1-sol", "medium"))
+        code, out, err = self.go(REMOVE)
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertEqual(self.recorded(), {})
+
+    def test_the_pin_keys_are_keys_doctor_may_print(self) -> None:
+        self.assertLessEqual(set(codexsettings.PIN_KEYS), set(doctor.CODEX_KEYS))
+        self.assertLessEqual(set(codexsettings.PIN_KEYS), set(codexsettings.KEYS))
 
 
 class ProbeCase(SettingsCase):

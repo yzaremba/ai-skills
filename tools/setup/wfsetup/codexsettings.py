@@ -119,9 +119,33 @@ The two blocks, and why two
                              limit, ``[features.multi_agent_v2]`` with the
                              floor, and the tables of the profile.
     ``codex-settings-top``   at the head of the file, and only where it is
-                             needed: ``default_permissions``, and the limit
-                             as a dotted key where the end form is not
-                             valid TOML and this one is.
+                             needed: ``model`` and ``model_reasoning_effort``,
+                             the Manager's pin; ``default_permissions``; and
+                             the limit as a dotted key where the end form is
+                             not valid TOML and this one is.
+
+The Manager's model and effort (R2.1 to R2.3 of sprint 03)
+    Where the Manager is installed for Codex as a loadable role (the
+    home's roles on, its ``entry.load`` true, Codex installed), the head
+    block sets ``model`` and ``model_reasoning_effort`` to the Manager's
+    resolved Codex model and effort: every plain ``codex`` session in the
+    home starts on them, which is the accepted cost. ``doctor`` warns where
+    the block's values are no longer the Manager's resolution.
+
+    either key set outside setup's blocks    nothing: a key is set once, and
+                                             a second top-level ``model``
+                                             makes the file one Codex does
+                                             not load. Each such line is
+                                             named by its number, as the
+                                             lines to delete; until they go
+                                             the Manager is not pinned
+    no Manager to pin                        nothing; an earlier block that
+                                             held them loses them, and the
+                                             run says so
+
+    Codex 0.165.0's ``/model`` writes both keys back: in place where the key
+    is, inside the block among them (a hand edit, reported as every one is),
+    else after the last top-level key. Nothing is built for that.
 
 The limit, by what the user's file holds outside setup's blocks
     (``tomllib`` decides; ``_valid`` asks it for every case)
@@ -234,7 +258,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import blocks, carried, fileops, fsio, homes, locations, paths, tomlio
+from . import blocks, carried, entry, fileops, fsio, homes, locations, paths, profiles, tomlio
 from .errors import SetupError
 
 # The two blocks of setup's in the user's Codex ``config.toml``.
@@ -266,6 +290,11 @@ WAIT_CODEX = {WAIT_MIN: 10000, WAIT_DEFAULT: 30000, WAIT_MAX: 3600000}
 SANDBOX_KEY = "sandbox_mode"
 PERMISSIONS_KEY = "default_permissions"
 PERMISSIONS_TABLE = "permissions"
+# The Manager's pin, in the head block.
+MANAGER = "manager"
+MODEL_KEY = "model"
+EFFORT_KEY = "model_reasoning_effort"
+PIN_KEYS = (MODEL_KEY, EFFORT_KEY)
 WORKSPACE_ROOTS = ":workspace_roots"
 PARENT = ":workspace"
 
@@ -296,6 +325,7 @@ THEIRS = "theirs"            # the user defines a profile of that name
 NOT_ASKED = "not-asked"
 NO_PROFILE = "no-profile"    # nothing of setup's to select
 NO_DEFAULT = "no-default"    # not written: default_permissions would not be set after the run
+NO_MANAGER = "no-manager"    # the pin: the Manager is not installed for Codex as a loadable role
 
 REFUSES = (
     f"Codex (0.163.0) refuses to load a config that defines a [{PERMISSIONS_TABLE}] profile and sets no "
@@ -326,7 +356,9 @@ def configure(parser: Any) -> None:
         f"{THREADS_KEY} = {THREADS_NEEDED}; the wait floor {WAIT_MIN_KEY} = {WAIT_MIN_NEEDED} with "
         f"{WAIT_DEFAULT} = {WAIT_DEFAULT_WANTED}, unless the file defines {WAIT_TABLE} itself; and, unless the "
         f"file sets {SANDBOX_KEY}, the permission profile `{PROFILE}`, where {PERMISSIONS_KEY} is set after the "
-        f"run (by {DEFAULT_OPTION}, or by your file). A key the file already sets is reported and left alone. "
+        f"run (by {DEFAULT_OPTION}, or by your file); and, where the Manager is installed for Codex as a loadable "
+        f"role, its model and effort as {MODEL_KEY} and {EFFORT_KEY}, which every plain codex session in that home "
+        "then starts on. A key the file already sets is reported and left alone. "
         f"Once written, the blocks stay until {REMOVE_OPTION}",
     )
     parser.add_argument(
@@ -414,14 +446,18 @@ def worktree_root(text: str) -> str:
 
 @dataclass(frozen=True)
 class Want:
-    """What a run asks for: the worktree root, as it is written, and
-    whether the profile is selected. As what setup's blocks hold
-    (``Facts.held``), ``profile`` says whether the end block defines the
-    profile; a run does not ask for that."""
+    """What a run asks for: the worktree root, as it is written, whether
+    the profile is selected, and the Manager's Codex model and effort (None
+    where there is no Manager to pin, and an effort None for a model that
+    takes none). As what setup's blocks hold (``Facts.held``), ``profile``
+    says whether the end block defines the profile; a run does not ask for
+    that."""
 
     root: str | None = None
     default: bool = False
     profile: bool = False
+    model: str | None = None
+    effort: str | None = None
 
 
 # --- Reading the file --------------------------------------------------------------
@@ -442,6 +478,7 @@ class Facts:
     wait: Any = UNSET              # features.multi_agent_v2 outside the blocks; never printed
     found: dict[str, bytes | None] = field(default_factory=dict)   # each block, as it is in the file
     held: Want | None = None       # what setup's blocks hold now
+    lines: dict[str, int] = field(default_factory=dict)   # the line number of each of PIN_KEYS set outside
 
 
 def _dig(table: Any, *parts: str) -> Any:
@@ -451,7 +488,7 @@ def _dig(table: Any, *parts: str) -> Any:
 
 
 # The keys whose values setup reads; each is in ``doctor.CODEX_KEYS``.
-KEYS = (THREADS_KEY, SANDBOX_KEY, PERMISSIONS_KEY, *WAIT_KEYS)
+KEYS = (THREADS_KEY, SANDBOX_KEY, PERMISSIONS_KEY, *WAIT_KEYS, *PIN_KEYS)
 
 
 def _three(parsed: dict[str, Any]) -> dict[str, Any]:
@@ -499,17 +536,50 @@ def analyse(data: bytes | None) -> Facts:
         alias=_dig(outside, THREADS_TABLE, THREADS_ALIAS) is not UNSET,
         profile_theirs=_dig(outside, PERMISSIONS_TABLE, PROFILE) is not UNSET,
         wait=_dig(outside, *WAIT_PATH),
-        found=found, held=_held(found),
+        found=found, held=_held(found), lines=key_lines(data),
     )
 
 
+_PIN_LINE = {key: re.compile(rf"""[ \t]*(?:{key}|"{key}"|'{key}')[ \t]*=""") for key in PIN_KEYS}
+_HEADER = re.compile(r"[ \t]*\[")
+
+
+def key_lines(data: bytes | None) -> dict[str, int]:
+    """The number of the line (from 1, in the whole of ``data``) on which
+    the user's file sets each of ``PIN_KEYS`` at its top level, outside
+    setup's blocks. A key whose line is not found this way (before the
+    first table header, outside a multi-line string) is not in it."""
+    if data is None:
+        return {}
+    try:
+        blocks.check_text(data)
+        _, body = blocks.split_bom(data)
+        spans = list(blocks.scan(body, blocks.TOML).values())
+    except blocks.Refusal:
+        return {}
+    lines = blocks._lines(body)
+    inside = blocks._toml_string_lines(lines)
+    found: dict[str, int] = {}
+    for index, line in enumerate(lines):
+        if index in inside or any(first <= index < after for first, after in spans):
+            continue
+        text = blocks._bare(line).decode("utf-8", "replace")
+        if _HEADER.match(text):
+            break
+        for key, pattern in _PIN_LINE.items():
+            if key not in found and pattern.match(text):
+                found[key] = index + 1
+    return found
+
+
 def _held(found: dict[str, bytes | None]) -> Want | None:
-    """What setup's blocks hold now: the worktree root of the profile and
-    whether it is selected. None where there is no block, or none that can
-    be read (one edited into something else)."""
+    """What setup's blocks hold now: the worktree root of the profile,
+    whether it is selected, and the Manager's pin. None where there is no
+    block, or none that can be read (one edited into something else)."""
     if all(block is None for block in found.values()):
         return None
     root, default, profile = None, False, False
+    model = effort = None
     for name, block in found.items():
         if block is None:
             continue
@@ -518,13 +588,15 @@ def _held(found: dict[str, bytes | None]) -> Want | None:
             continue
         if name == TOP_BLOCK:
             default = parsed.get(PERMISSIONS_KEY) == PROFILE
+            model, effort = (value if isinstance(value, str) else None for value in
+                             (parsed.get(MODEL_KEY), parsed.get(EFFORT_KEY)))
         else:
             profile = isinstance(_dig(parsed, PERMISSIONS_TABLE, PROFILE), dict)
             files = _dig(parsed, PERMISSIONS_TABLE, PROFILE, "filesystem")
             if isinstance(files, dict):
                 roots = [key for key, value in files.items() if key != WORKSPACE_ROOTS and value == "write"]
                 root = roots[0] if roots else None
-    return Want(root, default, profile)
+    return Want(root, default, profile, model, effort)
 
 
 # --- What to write -----------------------------------------------------------------
@@ -603,6 +675,48 @@ def default_lines() -> list[str]:
     return [f"{PERMISSIONS_KEY} = {tomlio.format_value(PROFILE)}"]
 
 
+def pin_lines(model: str, effort: str | None) -> list[str]:
+    lines = [f"{MODEL_KEY} = {tomlio.format_value(model)}"]
+    if effort is not None:
+        lines.append(f"{EFFORT_KEY} = {tomlio.format_value(effort)}")
+    return lines
+
+
+def _pin_expect(model: str, effort: str | None) -> dict[tuple[str, ...], Any]:
+    expect: dict[tuple[str, ...], Any] = {(MODEL_KEY,): model}
+    if effort is not None:
+        expect[(EFFORT_KEY,)] = effort
+    return expect
+
+
+def manager_pin(where: Any, roles_on: bool) -> tuple[str | None, str | None]:
+    """The Manager's resolved Codex model and effort, from the settings of
+    ``where`` (the user level); (None, None) where it is not installed for
+    Codex as a loadable role: ``roles_on`` false, or its ``entry.load`` not
+    true. The caller has found Codex installed. A fault of the sources or
+    the settings is a ``SetupError``."""
+    if not roles_on or MANAGER not in entry.loaded_roles(where):
+        return None, None
+    found = profiles.resolve(where, MANAGER, homes.CODEX)
+    return found.model, found.effort
+
+
+def _pinned(model: str | None, effort: str | None) -> str:
+    """The pin, as it is printed."""
+    if model is None:
+        return "nothing"
+    return f"{MODEL_KEY} = {shown(model)}, " + (
+        f"{EFFORT_KEY} = {shown(effort)}" if effort is not None else f"no {EFFORT_KEY}"
+    )
+
+
+def _unpinned(model: str, effort: str | None) -> str:
+    """What the Manager is not pinned to, for the user-set case."""
+    if effort is None:
+        return f"the Manager's {MODEL_KEY} = {shown(model)} is not pinned (the Manager takes no effort)"
+    return f"the Manager's {MODEL_KEY} = {shown(model)} and {EFFORT_KEY} = {shown(effort)} are not pinned"
+
+
 def _lines(text: str) -> list[str]:
     """The lines of a block's text, split at LF and nowhere else:
     ``str.splitlines`` also splits at U+2028, U+0085 and their like, which
@@ -632,6 +746,8 @@ class Decision:
     wait: str = CANNOT
     profile: str = SANDBOX
     selected: str = NOT_ASKED
+    pin: str = NO_MANAGER
+    pin_line: str | None = None                          # the line of ``lines`` that says what became of the pin
     lines: list[str] = field(default_factory=list)       # what is done, and what is left to the user
     printed: list[str] = field(default_factory=list)     # the profile as text, where it is not written
     expect: dict[tuple[str, ...], Any] = field(default_factory=dict)
@@ -840,6 +956,9 @@ def decide(facts: Facts, want: Want) -> Decision:
         found.selected = CANNOT
         found.lines.append(f"{PERMISSIONS_KEY}: not set: the key cannot be added to your file as it is")
 
+    # The Manager's pin, first in the head block.
+    top[:0] = _decide_pin(found, facts, want)
+
     if end:
         found.end = "\n".join([*_notice("the end"), *end]) + "\n"
     if top:
@@ -916,6 +1035,56 @@ def _decide_wait(found: Decision, facts: Facts, end: list[str]) -> None:
         if order:
             text += f". {'With those lines' if add else 'As it is'}, {order}: change your values so that they hold"
         found.lines.append(text)
+
+
+def _decide_pin(found: Decision, facts: Facts, want: Want) -> list[str]:
+    """The Manager's model and effort, into ``found``; the lines of the
+    head block it writes for them. See the module."""
+    if want.model is None:
+        found.pin = NO_MANAGER
+        return []
+    theirs = [key for key in PIN_KEYS if facts.outside[key] is not UNSET]
+    if theirs:
+        found.pin = USER_SET
+        quoted = "; ".join(
+            (f"line {facts.lines[key]}: " if key in facts.lines else "")
+            + f"{key} = {shown(facts.outside[key])}"
+            for key in theirs
+        )
+        one = len(theirs) == 1
+        if one:
+            why = (
+                f"{theirs[0]} is yours, setup pins the model and the effort together, and a key given twice is not "
+                "valid TOML, so setup writes neither"
+            )
+        else:
+            why = "a key given twice is not valid TOML, so setup writes neither"
+        found.pin_line = (
+            f"{MODEL_KEY}: the Manager's model is not pinned. Your file sets {' and '.join(theirs)} outside setup's "
+            f"blocks, and {why}. Delete "
+            f"{'this line' if one else 'these lines'} yourself and run render {APPLY_OPTION} again: {quoted}. Until "
+            f"{'it is' if one else 'they are'} gone {_unpinned(want.model, want.effort)}"
+        )
+        found.lines.append(found.pin_line)
+        return []
+    lines = pin_lines(want.model, want.effort)
+    expect = _pin_expect(want.model, want.effort)
+    if not _valid(facts.outside_text, lines, [], expect):
+        found.pin = CANNOT
+        found.pin_line = f"{MODEL_KEY}: not written: the Manager's model cannot be added to your file as it is"
+        found.lines.append(found.pin_line)
+        return []
+    found.pin = WRITTEN
+    found.expect.update(expect)
+    found.pin_line = (
+        f"{MODEL_KEY}: the Manager's {_pinned(want.model, want.effort)}, set in setup's block at the head of the "
+        "file: every plain codex session in this home starts on them"
+    )
+    found.lines.append(found.pin_line)
+    return [
+        "# Pins the Manager's model and effort: every plain `codex` session in this home starts on them.",
+        *lines,
+    ]
 
 
 def _no_root() -> str:
@@ -1043,14 +1212,24 @@ def fill(run: Any) -> None:
             run.notes.append(f"codex settings: the record lists no block of setup's in {path}; nothing to remove")
         return
 
-    want = Want(root, default)
+    from . import render
+
+    try:
+        model, effort = manager_pin(render._locations(run, None), render.roles(run).home)
+    except SetupError as exc:
+        run.fail(*exc.lines)
+        return
+    want = Want(root, default, model=model, effort=effort)
     found = decide(facts, want)
+    if found.pin == USER_SET:
+        # The lines to delete, numbered in the file as this run leaves it.
+        facts.lines = key_lines(_as_left(data, found))
+        found = decide(facts, want)
     top = "" if found.top is None else found.top
     end = "" if found.end is None else found.end
     if not _valid(facts.outside_text, _lines(top), _lines(end), found.expect):
         run.fail(f"{path}: setup's blocks would not read back as intended beside the file's own text; nothing is written")
         return
-    from . import render
 
     absent = _absent_options(facts.held, want, found)
     for name, content, place in ((BLOCK, found.end, fileops.END), (TOP_BLOCK, found.top, fileops.HEAD)):
@@ -1077,6 +1256,22 @@ def fill(run: Any) -> None:
     run.notes.extend(found.printed)
     if want.root is not None and not want.root.startswith("~") and not os.path.isdir(want.root):
         run.notes.append(f"codex settings: the worktree root {want.root} is not a directory on this machine yet")
+
+
+def _as_left(data: bytes | None, found: Decision) -> bytes | None:
+    """``data`` with setup's blocks as ``found`` writes them: the file as
+    the run leaves it, where no block of it was edited by hand."""
+    after = data
+    try:
+        for name, content, place in ((BLOCK, found.end, blocks.END), (TOP_BLOCK, found.top, blocks.HEAD)):
+            if content is not None:
+                after = blocks.put(after, blocks.TOML, name, content, place)
+            elif after is not None:
+                dropped = blocks.drop(after, blocks.TOML, name)
+                after = after if dropped is None else dropped
+    except blocks.Refusal:
+        return data
+    return after
 
 
 def _absent_options(held: Want | None, want: Want, found: Decision) -> dict[str, str]:
@@ -1120,6 +1315,12 @@ def _taken_out(held: Want | None, want: Want, found: Decision) -> list[str]:
         lines.append(
             f"codex settings: the earlier run selected the profile, and this run was given no {DEFAULT_OPTION}, "
             f"so {PERMISSIONS_KEY} is taken out again; give the option again to keep it"
+        )
+    if held is not None and held.model is not None and found.pin == NO_MANAGER:
+        lines.append(
+            f"codex settings: the earlier block pinned the Manager's {_pinned(held.model, held.effort)}, and in this "
+            "run the Manager is not installed for Codex as a loadable role (the home's roles are off, or its "
+            f"entry.load is not true), so {MODEL_KEY} and {EFFORT_KEY} are taken out"
         )
     return lines
 
@@ -1178,7 +1379,8 @@ def check(context: Any) -> list[Any]:
     if facts.fault is not None:
         return findings + [doctor.warning(f"{path}: {facts.fault}; setup's blocks cannot be checked", path)]
 
-    findings.extend(_block_findings(context, path, facts))
+    block_findings, edited = _block_findings(context, path, facts)
+    findings.extend(block_findings)
     if facts.held is not None and facts.held.profile and facts.values[PERMISSIONS_KEY] is UNSET \
             and facts.values[SANDBOX_KEY] is UNSET:
         # Written so by an earlier setup, which defined the profile unselected.
@@ -1190,13 +1392,23 @@ def check(context: Any) -> list[Any]:
             f"{path}: block {BLOCK}",
         ))
     held = facts.held or Want()
-    found = decide(facts, held)
+    from . import render
+
+    try:
+        on = render.home_roles_setting(context.where)
+        model, effort = manager_pin(context.user_level, on is None or on.value is not False)
+    except SetupError:
+        model, effort = held.model, held.effort  # the checks `sources` and `profiles` say why
+    found = decide(facts, Want(held.root, held.default, held.profile, model, effort))
     asked = f"render {APPLY_OPTION}"
     if held.root is not None:
         asked += f" {WORKTREE_OPTION} <the same directory>"
     if held.default:
         asked += f" {DEFAULT_OPTION}"
     whose = context.whose(path)
+    # Where setup's blocks are there, a pin the user's own lines stop is a
+    # warning of its own; it is not repeated among what a run would do.
+    unpinned = found.pin == USER_SET and facts.held is not None and not whose
     if whose:
         findings.append(doctor.info(f"{asked}, run on this side, would skip the file:{whose}"))
     elif any(facts.found.values()) and _as_decided(facts, found):
@@ -1204,7 +1416,24 @@ def check(context: Any) -> list[Any]:
             f"{asked} would change nothing: setup's blocks hold what that run writes"
         ))
     else:
-        findings.extend(doctor.info(f"{asked} would now: {line}") for line in found.lines if line != UNCERTAIN)
+        findings.extend(
+            doctor.info(f"{asked} would now: {line}") for line in found.lines
+            if line != UNCERTAIN and not (unpinned and line == found.pin_line)
+        )
+    if unpinned:
+        findings.append(doctor.warning(str(found.pin_line), MODEL_KEY))
+    if not whose and held.model is not None and TOP_BLOCK not in edited \
+            and (held.model, held.effort) != (model, effort):
+        now = (
+            f"the Manager now resolves to {_pinned(model, effort)}" if model is not None else
+            "the Manager is not installed for Codex as a loadable role now (the home's roles are off, or its "
+            "entry.load is not true)"
+        )
+        findings.append(doctor.warning(
+            f"setup's block {TOP_BLOCK} pins {_pinned(held.model, held.effort)}, and {now}; {asked} "
+            + ("writes the Manager's current ones" if model is not None else f"takes {MODEL_KEY} and {EFFORT_KEY} out"),
+            f"{path}: block {TOP_BLOCK}",
+        ))
     if not whose:
         if found.printed:
             findings.append(doctor.info(
@@ -1240,15 +1469,19 @@ def _either_ending(block: bytes) -> set[str]:
     return {fsio.sha256(block), fsio.sha256(plain), fsio.sha256(plain.replace(b"\n", b"\r\n"))}
 
 
-def _block_findings(context: Any, path: Path, facts: Facts) -> list[Any]:
+def _block_findings(context: Any, path: Path, facts: Facts) -> tuple[list[Any], set[str]]:
+    """The findings on each of setup's blocks by the record, and the names
+    of those changed by hand since setup wrote them (all of them where the
+    record cannot be read)."""
     from . import doctor
 
     try:
-        entry = context.record.get(context.roots.key(path) or "")
+        recorded = context.record.get(context.roots.key(path) or "")
     except SetupError as exc:
-        return [doctor.warning(f"setup's blocks: the install record cannot be read ({exc.lines[0]})")]
-    listed = (entry or {}).get("blocks") or {} if (entry or {}).get("kind") == "text" else {}
+        return [doctor.warning(f"setup's blocks: the install record cannot be read ({exc.lines[0]})")], set(BLOCK_NAMES)
+    listed = (recorded or {}).get("blocks") or {} if (recorded or {}).get("kind") == "text" else {}
     findings = []
+    edited: set[str] = set()
     for name in BLOCK_NAMES:
         there, known = facts.found.get(name), listed.get(name)
         wrote = known.get("sha256") if isinstance(known, dict) else known
@@ -1271,13 +1504,14 @@ def _block_findings(context: Any, path: Path, facts: Facts) -> list[Any]:
                 "holds exactly what setup writes, and otherwise keeps it and reports it", subject,
             ))
         elif wrote not in _either_ending(there):
+            edited.add(name)
             findings.append(doctor.info(
                 f"setup's block {name}: in the file, and changed by hand since setup wrote it (the check "
                 "`hand-edits` says what render does with it)", subject,
             ))
         else:
             findings.append(doctor.fine(f"setup's block {name}: in the file, as setup wrote it", subject))
-    return findings
+    return findings, edited
 
 
 def probe_lines(sandbox: Any = UNSET) -> list[str]:
