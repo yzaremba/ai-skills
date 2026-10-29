@@ -25,6 +25,7 @@ Agent names use underscores where role ids use hyphens (`product_manager`, `code
 ### Dialogue
 
 - **The user cannot type to a dispatched agent**; `/subagents` shows its thread for watching only. So every brief says there is no dialogue, and you relay the agent's questions.
+- **Wait on a long job** (in a brief): a yield of 10 minutes or more; read the log.
 
 ### In dialogue
 

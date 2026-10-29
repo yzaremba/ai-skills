@@ -22,6 +22,7 @@ Role ids are used as written, such as `product-manager` and `coder-hard`.
 
 - **The user can also type to a dispatched agent**, an option you may name; you relay its questions either way. How: select its row in the agent panel under the prompt while it runs, or in `/tasks` for 30 seconds after it finishes, and press Enter to open its transcript; type there. An open transcript stays open when the turn ends; otherwise, after those 30 seconds, only your follow-up resumes it.
 - **Its hand-backs reach you by themselves.** Each turn the user drives there sends you a completion notification with the hand-back: observed on 2.1.289, not documented.
+- **Wait on a long job** (in a brief): each wait just under 5 minutes; read the log.
 
 ### In dialogue
 

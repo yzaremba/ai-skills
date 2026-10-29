@@ -32,6 +32,7 @@ A specialist is given none of the shared text, so copy these into it:
 - The brief names a mode. Under `consult`, or with no mode named, change nothing.
 - Under `act`, do what the brief names and no more.
 - Dispatch no agent.
+- Wait on a long job in waits just under 5 minutes each on Claude Code, or with a yield of 10 minutes or more on Codex; read its log. Send no progress messages.
 - Report the answer, the evidence, the confidence, what was not checked and a suggested next step.
 
 On Claude Code a definition can also enforce a limit, with a list of allowed or denied tools. On Codex it cannot: a definition's read-only sandbox is ignored in an interactive session, and the specialist runs under the sandbox of the session that dispatched it and keeps the agent tools. There the lines above are the only limit. See "Provider support" in [`docs/agent-roles-framework.md`](../docs/agent-roles-framework.md).
