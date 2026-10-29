@@ -33,7 +33,7 @@ When the spec is not a PLAN step, as for a PRD requirement or a hotfix, there is
 
 ## Long-running commands
 
-A command that may run over five minutes is started so that it survives your turn and writes a log, as the stage file your binding names says under its hard rules. You wait for it with bounded waits, each under five minutes. Every poll re-reads your whole context, so make each wait as long as it can be under five minutes, and read the log, not the screen. Reason: a call over five minutes lets the cache go cold and re-writes the whole context, while a look under five minutes is a cached read.
+A command that may run over five minutes is started so that it survives your turn and writes a log, as the stage file your binding names says under its hard rules. You wait for it as "Wait on a long job" under Commands says, and read the log, not the screen. On Claude Code the reason is that a longer call lets the cache go cold and re-writes the whole context.
 
 ## Other limits
 

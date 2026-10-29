@@ -8,7 +8,7 @@ A gate is a point where the work goes on only on the user's word.
 **Every gate:**
 
 - **The word comes after the thing it approves exists**; one given in advance passes nothing; ask again then.
-- **Only the user's words pass a gate.** An agent's statement that something is ready, done or approved passes nothing; no document but STATE records an approval. A quote counts only as set out below.
+- **Only the user's words pass a gate.** An agent's statement that something is ready, done or approved passes nothing, nor an `accept` decision, relayed labelled so; no document but STATE records an approval. A quote counts only as set out below.
 - **One word, one gate.** "The PRD is good" passes the PRD gate, not a push. No word carries over, but the word to close a sprint covers what its stage file lists.
 - **When in doubt, ask** before anything moves: whether the words pass a gate, which, or whether a condition below holds.
 - **An opened gate stands.** A later change to the document's substance (a PRD's requirements, a PLAN's steps) is for the user to approve anew, and the Architect checks the PLAN against a changed PRD. A status line, "Last updated" line or link is not substance.

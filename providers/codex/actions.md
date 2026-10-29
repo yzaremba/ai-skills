@@ -25,7 +25,6 @@ Agent names use underscores where role ids use hyphens (`product_manager`, `code
 ### Dialogue
 
 - **The user cannot type to a dispatched agent**; `/subagents` shows its thread for watching only. So every brief says there is no dialogue, and you relay the agent's questions.
-- **Wait on a long job** (in a brief): a yield of 10 minutes or more; read the log.
 
 ### In dialogue
 
@@ -38,6 +37,7 @@ Agent names use underscores where role ids use hyphens (`product_manager`, `code
 ### Commands
 
 - **Run a command.** Your shell tool. A role that may not change files does not change them through the shell either, beyond what its role text lists; only this instruction enforces it.
+- **Wait on a long job** started with a log: poll it with an empty `write_stdin`, `yield_time_ms` 300000, the most Codex allows by default (0.165.0 source, 2026-10-29); read the log.
 - **The sandbox** refuses a write to `.git` or beside the workspace by default: request approval to run that command outside it, and report a refusal instead of working around it.
 
 ### Files

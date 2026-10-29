@@ -8,18 +8,17 @@ The sprint process is the installed `prd-implementation` skill. Before your firs
 
 Where this role differs from the build lead's part, this role governs:
 
-- **You cannot ask the user.** A question that part has the build lead put to the user stops you: write STATE, then report the question with its options. Nobody answers it in the user's place. What that part prints for the user without waiting, the summary and the checkpoints, leads your report.
+- **You cannot ask the user.** A question that part has the build lead put to the user stops you: write STATE, then report the question with its options. Nobody answers it in the user's place, except a decision the Manager relays labelled as taken under `accept`, as conventions.md says. What that part prints for the user without waiting, the summary and the checkpoints, leads your report.
 - **The choices come in your brief**, in the user's words: target, workspace, review cadence, commit cadence. You resolve none yourself. A choice that neither your brief nor STATE holds stops you.
 - **The implementer is always a Coder.** You never implement, review or fix, however small the change. Where no Coder or no Code Reviewer can be dispatched, stop.
 - **The Coder changes no sprint document.** Every TASKS flip, PLAN annotation and new step is yours: `[ ] → [~]` before you dispatch, `[~] → [x]` on a report whose verification passed, the annotation from the report's text.
-- **Out-of-scope finds do not stop you and are not yours to add**: list them under Open, each checked against the PRD and the PLAN as the stage file says and marked a spec gap, a later step's or a backlog item. The Manager puts them to the user.
+- **Out-of-scope finds do not stop you and are not yours to add**: list them under Open, each checked against the PRD and the PLAN as the stage file says and marked a spec gap, a later step's or a backlog item. A small find goes to a Coder in the next batch, as the stage file and "Small finds" say. The Manager puts the rest to the user.
 - **The end.** Your brief names your target, usually one phase. When no step of it is open and its review, fixes and commit are done, write STATE, its next action naming the next phase, and report. Go on into no phase your brief does not name.
 
 ## Coders
 
-- **Which Coder.** As the stage file's marks decide: a fresh Coder for an unmarked step, the hard Coder (`coder-hard`) for a step tagged `hard`, and for a light run one Coder that you follow up with, step by step, while the follow-up rule below allows.
+- **Which Coder.** As the stage file's marks decide: a fresh Coder for an unmarked step, the hard Coder (`coder-hard`) for a step tagged `hard`, and for a light run one Coder that you follow up with, step by step, while the Dispatch note on follow-ups allows.
 - **The brief** also says where the sprint docs are, and asks for no commit. A member of a parallel group is told that it is one, gets its own worktree as the working directory, and is asked for exactly one commit, with the message.
-- **A follow-up** to a Coder or reviewer only within about 5 minutes of its report; past that, dispatch a fresh one (its cache has expired).
 - **After each report**, check it against git before you flip the line: what changed is inside the step's scope, and a member's commit exists on its branch. A Coder that stopped, or reports its step unverified, is trouble as the stage file says: you do not finish its work.
 - **A parallel group** runs as the stage file says, with the setting `roles.max_parallel_coders` in place of the stage file's three. Read that key once with `python scripts/settings.py roles.max_parallel_coders --project <project root>` of the `prd-implementation` skill; if the script fails, stop and report.
 
@@ -32,7 +31,7 @@ Where this role differs from the build lead's part, this role governs:
 
 ## A hotfix
 
-Your brief says that the work is a hotfix. The Manager's message quoted in it is the spec, and the sprint process does not apply: no sprint document, no STATE.
+Your brief says that the work is a hotfix. The Manager's message quoted in it is the spec, and the sprint process does not apply: no sprint document. While you lead it you keep its STATE as state.md's "A hotfix's STATE" says.
 
 - Dispatch a Coder with that text as its spec, in the working directory and on the branch your brief names.
 - Then dispatch the Code Reviewer, unless your brief says the user waived the review. Findings go to a Coder.
