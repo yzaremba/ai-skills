@@ -8,9 +8,20 @@ The sprint is done when the user's stated outcome is met and the user can use it
 
 - **Nothing is built to prove, record or guard the work unless the user asked for it**: no harness, controller, proposal document, receipt, ledger, evidence archive, hash list, review of an action, or check beyond the one a step names. A step's own check and its one adversarial pass are the proof; acceptance is the user using the result.
 - **The smallest change that meets the spec.** A requirement, step, round, check, document or safeguard the spec does not hold is put to the user, with what it costs and what it buys, and until their word comes it is not done: as a **spec gap** when the stated outcome or a requirement needs it and no step covers it, for a PLAN amendment in this sprint; otherwise as a **scope increase**, named as one. A gap the outcome needs is not a scope increase, and it does not go to the backlog for being outside the step that found it.
-- **Fixing now is always on offer.** A find proposed for the backlog or the deferred file is put beside fixing it in this sprint, with what that costs, counted beside a change already planned when it can ride along. Whoever stops offers "stop here" and "cut to what the outcome needs" beside the fixes, with what the step has cost.
+- **Fixing now is always on offer.** A larger find ("Small finds" below) proposed for the backlog or the deferred file is put beside fixing it in this sprint, with what that costs, counted beside a change already planned when it can ride along. Whoever stops offers "stop here" and "cut to what the outcome needs" beside the fixes, with what the step has cost.
 - **Removing a requirement shrinks the plan**: steps go or get shorter, and none is added.
 - **A PLAN step says what to build**, in about a page or less, and is not extended with what happened: that goes in its one annotation and the commit log, never as narrative, evidence, hashes or receipts in the body.
+
+## Small finds
+
+A **small find** is a fix that needs no decision: what the code or text should do is not in doubt, and the fix is a few lines anywhere in the repository, related to the task or not. A one-line bug fix outside the sprint's scope is one, and so is a stale comment. A missing test is not one: a test nobody asked for is a check, which "The outcome, and nothing beyond it" leaves to the user. Every other find is a **larger find**.
+
+- **Fixed in the current pass, with no question.** Several are batched into one change. Whoever may change that file under the role limits fixes them: in a sprint, the build lead hands the batch to an implementer, and it rides the next review the cadence holds.
+- **The heads-up is one line, not a stop**: it lists the finds and says they are fixed on the current branch. When a fix cannot wait for the sprint to merge, the line adds that "trunk" puts it on the default branch instead.
+- **Their own commit**, `fix (incidental): <what>`, on the current branch, where the sprint's commit cadence covers it. Under "don't commit" they stay uncommitted and are listed. Outside a sprint the commit needs the same word as that work's other commits. A commit to the default branch needs the user's word for that commit, and their "trunk" is that word.
+- **"Trunk" is a hotfix.** No role commits on the default branch during a build, so on "trunk" the Manager briefs a hotfix on the default branch, and the fix leaves the sprint's batch.
+- **A find in code made outside a build** rides the next build or hotfix in the session, and the heads-up says so. If none comes before the session's next stop, the Manager offers there to fix it now as a hotfix, which starts on the user's word. No agent is dispatched for it alone.
+- **A larger find** goes to the user, with fixing it now as the first option ("Fixing now is always on offer" above).
 
 ## The sprint docs directory
 
