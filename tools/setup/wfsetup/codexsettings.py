@@ -548,7 +548,8 @@ def key_lines(data: bytes | None) -> dict[str, int]:
     """The number of the line (from 1, in the whole of ``data``) on which
     the user's file sets each of ``PIN_KEYS`` at its top level, outside
     setup's blocks. A key whose line is not found this way (before the
-    first table header, outside a multi-line string) is not in it."""
+    first table header, on a line that begins outside a multi-line string,
+    array or inline table) is not in it."""
     if data is None:
         return {}
     try:
@@ -558,7 +559,7 @@ def key_lines(data: bytes | None) -> dict[str, int]:
     except blocks.Refusal:
         return {}
     lines = blocks._lines(body)
-    inside = blocks._toml_string_lines(lines)
+    inside = blocks._toml_inner_lines(lines, values=True)
     found: dict[str, int] = {}
     for index, line in enumerate(lines):
         if index in inside or any(first <= index < after for first, after in spans):
@@ -1221,10 +1222,6 @@ def fill(run: Any) -> None:
         return
     want = Want(root, default, model=model, effort=effort)
     found = decide(facts, want)
-    if found.pin == USER_SET:
-        # The lines to delete, numbered in the file as this run leaves it.
-        facts.lines = key_lines(_as_left(data, found))
-        found = decide(facts, want)
     top = "" if found.top is None else found.top
     end = "" if found.end is None else found.end
     if not _valid(facts.outside_text, _lines(top), _lines(end), found.expect):
@@ -1245,6 +1242,9 @@ def fill(run: Any) -> None:
         elif item is not None and why and item.status == render.REMOVE:
             item.says = f"removed, with nothing else in it: {why}"
     run.notes.extend(f"codex settings: {line}" for line in found.lines)
+    if found.pin == USER_SET:
+        said = found.pin_line
+        run.settled.append(lambda: _renumber(run, path, facts, want, said))
     # Setup's own profile files may carry the key after setup's part.
     for subject, _, keys in carried.parts(run.record):
         if SANDBOX_KEY in keys:
@@ -1258,20 +1258,18 @@ def fill(run: Any) -> None:
         run.notes.append(f"codex settings: the worktree root {want.root} is not a directory on this machine yet")
 
 
-def _as_left(data: bytes | None, found: Decision) -> bytes | None:
-    """``data`` with setup's blocks as ``found`` writes them: the file as
-    the run leaves it, where no block of it was edited by hand."""
-    after = data
-    try:
-        for name, content, place in ((BLOCK, found.end, blocks.END), (TOP_BLOCK, found.top, blocks.HEAD)):
-            if content is not None:
-                after = blocks.put(after, blocks.TOML, name, content, place)
-            elif after is not None:
-                dropped = blocks.drop(after, blocks.TOML, name)
-                after = after if dropped is None else dropped
-    except blocks.Refusal:
-        return data
-    return after
+def _renumber(run: Any, path: Path, facts: Facts, want: Want, said: str | None) -> None:
+    """Once the plan has run, been shown or been refused: the note ``said``
+    numbers the lines to delete in the file as the run left it on disk. A
+    head block written above them moves them down; a dry run, a run stopped
+    on an error and a block kept as the user edited it leave them where
+    they were. A file that cannot be read again leaves them unnumbered."""
+    status, _, data = _reach(run, path)
+    facts.lines = key_lines(data) if status is None else {}
+    line = decide(facts, want).pin_line
+    old = f"codex settings: {said}"
+    if line is not None and old in run.notes:
+        run.notes[run.notes.index(old)] = f"codex settings: {line}"
 
 
 def _absent_options(held: Want | None, want: Want, found: Decision) -> dict[str, str]:

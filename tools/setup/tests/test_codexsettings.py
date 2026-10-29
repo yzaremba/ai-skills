@@ -1225,6 +1225,48 @@ class PinCase(SettingsCase):
         self.assertFinding(self.settings(), doctor.WARNING, f"line {numbers[0]}: model", f"line {numbers[1]}: model")
         self.assertEqual(self.pin(), ("gpt-6-luna", "high"))
 
+    def test_a_line_inside_a_multi_line_value_ends_no_scan_for_the_users_keys(self) -> None:
+        # Line 2 starts with "[" and line 4 with "model", both inside the array; line 7 is the user's key.
+        self.user('notify = [\n  ["a", "]"],\n  """\nmodel = "no"\n""",\n]\nmodel = "gpt-6-luna"\n\n[x]\ny = 1\n')
+        out = self.apply()
+        self.assertIn('Delete this line yourself and run render --apply-codex-settings again: line 7: '
+                      'model = "gpt-6-luna"', out)
+        self.assertFinding(self.settings(), doctor.WARNING, 'line 7: model = "gpt-6-luna"')
+        # An inline table over several lines (TOML 1.1) is a value too.
+        self.assertEqual(codexsettings.key_lines(b'a = {\n  [b] = 1,\n  model = "no"\n}\nmodel = "x"\n'), {"model": 5})
+
+    def test_the_numbers_are_those_of_the_file_a_dry_run_or_a_kept_block_leaves(self) -> None:
+        self.user(USERS)
+        # A dry run writes no head block above the user's lines: they keep their numbers.
+        code, out, err = self.go(APPLY, DEFAULT, "--dry-run")
+        self.assertEqual(code, 0, out + err)
+        self.assertIn('line 1: model = "gpt-6-luna"; line 2: model_reasoning_effort = "high"', " ".join(out.split()))
+        self.assertEqual(self.config.read_bytes().decode("utf-8"), USERS)
+        # A head block edited by hand is kept as it is, and the numbers count its lines as they are.
+        self.apply(DEFAULT)
+        data = self.config.read_bytes()
+        self.config.write_bytes(data.replace(b"# workflow-setup:start codex-settings-top\n",
+                                             b"# workflow-setup:start codex-settings-top\n# mine\n# mine too\n", 1))
+        edited = self.config.read_bytes()
+        code, out, err = self.go(APPLY, DEFAULT)
+        self.assertEqual(code, render.EXIT_NEEDS_FLAG, out + err)
+        self.assertEqual(self.config.read_bytes(), edited)
+        numbers = [int(word) for word in re.findall(r"line (\d+): model", out)]
+        self.assertEqual(len(numbers), 2, out)
+        self.assertEqual(self.line(numbers[0]), 'model = "gpt-6-luna"')
+        self.assertEqual(self.line(numbers[1]), 'model_reasoning_effort = "high"')
+        self.assertFinding(self.settings(), doctor.WARNING, f"line {numbers[0]}: model", f"line {numbers[1]}: model")
+
+    def test_a_run_stopped_on_an_error_numbers_the_lines_where_they_still_are(self) -> None:
+        self.user(USERS)
+        # A file of the user's where a skill's link goes: the run stops, and no head block is written.
+        self.keep(self.claude_skills / "alpha" / "SKILL.md")
+        code, out, err = self.go(APPLY, DEFAULT)
+        self.assertEqual(code, render.EXIT_ERROR, out + err)
+        self.assertEqual(self.config.read_bytes().decode("utf-8"), USERS)
+        self.assertIn('line 1: model = "gpt-6-luna"; line 2: model_reasoning_effort = "high"',
+                      " ".join((out + err).split()))
+
     def test_before_any_block_doctor_says_what_a_run_would_leave(self) -> None:
         self.user(USERS)
         findings = self.settings()

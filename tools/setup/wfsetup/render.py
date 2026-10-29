@@ -343,6 +343,9 @@ class Run:
         self._disabled_read = False
         self.notes: list[str] = []                 # what a part says beside its items; printed as notes
         self.model_notes: list[str] = []           # the model-list note (R3.2): printed after every other note
+        # Called once the plan has run, been shown or been refused: a part's
+        # note that reads the disk as the run left it.
+        self.settled: list[Callable[[], None]] = []
 
     # --- For the parts ---------------------------------------------------------
 
@@ -1653,6 +1656,8 @@ def execute(found: homes.Homes, sources: Sources, options: Any = None, *, dry_ru
             result = run.plan.run(dry_run)
         except fileops.PlanError as exc:
             errors = list(exc.lines)
+    for call in run.settled:
+        call()
     needs_flag = sum(1 for item in everything if item.status in (NEEDS_FLAG, EDITED)) + migrate.left(run)
     needs_flag += len(result.edited) if result is not None else 0
     code = EXIT_ERROR if errors else EXIT_NEEDS_FLAG if needs_flag else 0

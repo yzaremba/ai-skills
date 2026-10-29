@@ -165,7 +165,7 @@ def scan(body: bytes, syntax: str) -> dict[str, tuple[int, int]]:
     found: dict[str, tuple[int, int]] = {}
     opened: tuple[str, int] | None = None
     lines = _lines(body)
-    inside = _toml_string_lines(lines) if syntax == TOML else frozenset()
+    inside = _toml_inner_lines(lines) if syntax == TOML else frozenset()
     for index, line in enumerate(lines):
         if index in inside:
             continue  # text of a multi-line string, whatever it looks like
@@ -200,22 +200,28 @@ def scan(body: bytes, syntax: str) -> dict[str, tuple[int, int]]:
     return found
 
 
-def _toml_string_lines(lines: list[bytes]) -> frozenset[int]:
+def _toml_inner_lines(lines: list[bytes], values: bool = False) -> frozenset[int]:
     """The indexes of the lines of a TOML file that begin inside a
     multi-line string (three double or three single quotes). Such a line
     is the string's text: a ``#`` there starts no comment, so it is no
-    marker either.
+    marker either. With ``values``, the indexes of the lines that begin
+    inside any value that spans lines: such a string, an array or an
+    inline table. Such a line is part of the value, so neither a key nor a
+    table header of its own, whatever it starts with; a comment line
+    within an array is among them, and a bracket in a comment opens or
+    closes nothing.
 
     A small scanner, not a parser: it knows comments, the two one-line
-    strings (which end with their line at the latest) and the two
-    multi-line ones, with the backslash of the double-quoted kinds. A file
-    that is not TOML gets some answer; ``fileops`` parses the file for real
-    before and after any change.
+    strings (which end with their line at the latest), the two multi-line
+    ones, with the backslash of the double-quoted kinds, and the brackets
+    and braces outside them. A file that is not TOML gets some answer;
+    ``fileops`` parses the file for real before and after any change.
     """
     inside: set[int] = set()
     open_with: bytes | None = None  # the three quotes of the open multi-line string
+    depth = 0                       # the arrays and inline tables open, header brackets among them
     for index, line in enumerate(lines):
-        if open_with is not None:
+        if open_with is not None or (values and depth > 0):
             inside.add(index)
         at, end = 0, len(line)
         while at < end:
@@ -246,6 +252,10 @@ def _toml_string_lines(lines: list[bytes]) -> frozenset[int]:
                     at += 2 if char == b'"' and line[at:at + 1] == b"\\" else 1
                 at += 1
                 continue
+            if char in (b"[", b"{"):
+                depth += 1
+            elif char in (b"]", b"}"):
+                depth = max(depth - 1, 0)
             at += 1
     return frozenset(inside)
 
