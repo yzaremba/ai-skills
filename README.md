@@ -288,8 +288,10 @@ python3 tools/setup/workflow_setup.py doctor
   choose; `prd-implementation/references/claude-code.md` and `codex.md` say how on each
   provider.
   The settings still apply: `process.docs_dir` (where the sprint docs live, `docs` by
-  default), `process.questions`, `process.recommend` and `memory.dir`, written by `init`,
-  or by `init --project DIR` for one project.
+  default), `process.questions`, `process.recommend` (`true`, `false` or `"accept"`),
+  `process.density` and `memory.dir`. `init` (or `init --project DIR` for one project) writes
+  all but `process.density` and the `"accept"` value, which it does not ask for: set those in
+  a settings file.
 - **What you give up.** What the roles add: a model and effort pinned to each kind of work
   (the shipped profiles put the reviewers on the frontier tier, a Coder on the standard
   one); a reviewer other than the author for the PRD and the PLAN (alone, the session that
@@ -644,9 +646,10 @@ What works in a project that keeps no sprint docs:
 - A light question, which the Manager answers itself when no file is written and a few
   lookups suffice.
 - A hotfix. The Manager routes it to the Implementation Manager with your request as its
-  spec, and there "the sprint process does not apply: no sprint document, no STATE". A
-  Coder implements it from its brief, and the Code Reviewer reviews it against the brief's
-  text.
+  spec, and there "the sprint process does not apply: no sprint document". A hotfix that stops with
+  work open keeps a `HOTFIX-STATE-*.md`, as "A hotfix's STATE" in
+  `prd-implementation/references/state.md` says. A Coder implements it from its brief, and
+  the Code Reviewer reviews it against the brief's text.
 - A project's own specialist ([`roles/SPECIALISTS.md`](roles/SPECIALISTS.md)), which
   follows no stage file.
 
@@ -655,11 +658,12 @@ Manager, which writes THOUGHTS and a PRD; a plan is the Architect's PLAN and TAS
 the PRD has passed its gate; the reviewers review those documents. The Manager writes no
 file, and does not do work whose role is not installed. The settings change how the
 process runs, not what it is: where its docs live (`process.docs_dir`), how questions are
-put (`process.questions`, `process.recommend`), each role's tier and effort
-(`[roles.<id>]`, `roles.high_stakes`), how many Coders work at once
-(`roles.max_parallel_coders`), whether a project's sessions start as the Manager, and where
-lessons go (`memory.dir`). Fitting the roles to another workflow is a fork: a process skill
-of your own (one `references/stage-*.md` makes a skill a process skill, and then every
+put (`process.questions`, `process.recommend` with its `"accept"` value,
+`process.density`), each role's tier and effort (`[roles.<id>]`, `roles.high_stakes`), how
+many Coders work at once (`roles.max_parallel_coders`), whether a project's sessions start
+as the Manager, and where lessons go (`memory.dir`). Fitting the roles to another
+workflow is a fork: a process skill of your own (one `references/stage-*.md` makes a
+skill a process skill, and then every
 `.md` file directly in its `references/` but `conventions.md`, `claude-code.md` and
 `codex.md` is a stage file that `validate` requires a row for); rows in
 `roles/bindings.toml` that give each stage file to a role; and the role texts, the Manager's routing table among them, rewritten where they

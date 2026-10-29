@@ -72,8 +72,9 @@
 
 `HOTFIX-STATE-<slug>.md`, in the sprint docs directory, lets a session pick up a hotfix that stopped with work open. A hotfix finished in one go writes none.
 
-- **Written at the first stop that leaves work open**: a question to the user, a blocking finding, or the end of a session. Whoever leads the hotfix keeps it: the Manager while no Implementation Manager is at work, the Implementation Manager during its brief.
+- **Written at the first stop that leaves work open**: a question to the user, a blocking finding, or the end of a session. After that it is rewritten after each commit and before any stop, as a sprint STATE is. Whoever leads the hotfix keeps it: the Manager (or the session that leads, where no roles are installed) while no Implementation Manager is at work, the Implementation Manager during its brief.
 - **The sprint STATE's rules hold**: overwritten, never appended to; the "Written" line read from the clock; at most 70 lines and 8000 characters, which the check command reports and lists by name; on pickup read first, compared with git, the stated settings named to the user first, `accept` first, and any mismatch put to the user.
+- **Where it goes.** The docs directory of the project root, never a hotfix worktree's copy of it: the check command reads `HOTFIX-STATE-*.md` only there. A hotfix in a worktree writes it by that path, and an uncommitted file there is not carried into the worktree.
 - **Not committed.** It is deleted when the hotfix is closed: its last commit is made and nothing waits on the user.
 
 ```markdown

@@ -1,6 +1,6 @@
 ---
 name: prd-implementation
-description: Staged sprint process with explicit gates, from backlog through THOUGHTS, PRD, PLAN and TASKS to implementation and archiving. Use when the user asks to start, brainstorm, plan or implement a sprint, to write or finalize a PRD, to work through sprint steps such as P1.2, to close, merge or archive a sprint, to abandon or supersede a sprint, to add a backlog item, or to defer work or check, resolve, re-date or drop deferred items; and whenever a sprint doc is read, created, renamed or edited - SPRINTNN-THOUGHTS-slug.md, SPRINTNN-PRD-slug.md, SPRINTNN-PLAN-slug.md, SPRINTNN-TASKS-slug.md, SPRINTNN-STATE-slug.md, SPRINT-INDEX.md, BACKLOG.md, BACKLOG/BN-slug.md, BACKLOG-BN-slug.md, DEFERRED.md, DEFERRED-context.md or DONE/README.md.
+description: Staged sprint process with explicit gates, from backlog through THOUGHTS, PRD, PLAN and TASKS to implementation and archiving. Use when the user asks to start, brainstorm, plan or implement a sprint, to write or finalize a PRD, to work through sprint steps such as P1.2, to close, merge or archive a sprint, to abandon or supersede a sprint, to add a backlog item, or to defer work or check, resolve, re-date or drop deferred items; and whenever a sprint doc is read, created, renamed or edited - SPRINTNN-THOUGHTS-slug.md, SPRINTNN-PRD-slug.md, SPRINTNN-PLAN-slug.md, SPRINTNN-TASKS-slug.md, SPRINTNN-STATE-slug.md, HOTFIX-STATE-slug.md, SPRINT-INDEX.md, BACKLOG.md, BACKLOG/BN-slug.md, BACKLOG-BN-slug.md, DEFERRED.md, DEFERRED-context.md or DONE/README.md.
 compatibility: claude-code, codex
 ---
 
@@ -36,7 +36,7 @@ All files are in `references/` in this skill's directory.
 | 2. PRD | [stage-2-prd.md](references/stage-2-prd.md) | The user confirms THOUGHTS are ready to become requirements |
 | 3. PLAN + TASKS | [stage-3-plan-tasks.md](references/stage-3-plan-tasks.md) | The user says the PRD is final, e.g. "PRD is good" or "generate PLAN and TASKS" |
 | 3. Implementation | [stage-3-implementation.md](references/stage-3-implementation.md) | The user asks to implement a sprint, a phase or a step, e.g. "implement" or "do P1.2" |
-| 3. Implementation | [state.md](references/state.md) | Picking up a sprint in progress; before a step starts, after it closes, before any stop |
+| 3. Implementation | [state.md](references/state.md) | Picking up a sprint in progress, or a hotfix with a `HOTFIX-STATE-*.md`; before a step starts, after it closes, before any stop |
 | Completion | [completion.md](references/completion.md) | No TASKS checkbox is open, or the user asks to close, merge or archive a sprint; lessons are proposed at any close |
 | Abandon, supersede | [abandon.md](references/abandon.md) | A sprint will not finish, at any stage: the user drops it or replaces it with another |
 | Deferred items | [deferred.md](references/deferred.md) | A sprint's only open steps wait on time or an outside event; the user defers work outside a sprint; `DEFERRED.md` is read or edited; deferred items or the format limits are checked, with `scripts/check.py` |
