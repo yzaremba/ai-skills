@@ -163,6 +163,7 @@ class FaultyModuleTests(DiscoveryCase):
             with self.subTest(name):
                 self.add("broken.py", text)
                 self.assertEqual(self.show("process.recommend"), (0, "process.recommend = true  (shipped)\n", ""))
+                self.assertEqual(self.show("process.density"), (0, 'process.density = "brief"  (shipped)\n', ""))
                 self.assertIn("show", commands.discover())
                 self.forget()
 

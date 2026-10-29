@@ -50,6 +50,7 @@ BUILT_IN = {
     "process.docs_dir": "docs",
     "process.questions": "all-together",
     "process.recommend": True,
+    "process.density": "brief",
     "memory.dir": "docs/memory",
     "roles.enabled": True,
     "roles.manager_default": False,
@@ -65,6 +66,7 @@ BUILT_IN = {
     "process.docs_dir": "docs",
     "process.questions": "all-together",
     "process.recommend": True,
+    "process.density": "brief",
 }
 '''
 

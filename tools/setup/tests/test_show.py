@@ -25,6 +25,7 @@ PROCESS_TEXT = (
     'process.docs_dir = "docs"  (shipped)\n'
     'process.questions = "all-together"  (shipped)\n'
     "process.recommend = true  (shipped)\n"
+    'process.density = "brief"  (shipped)\n'
 )
 ROLES_TEXT = (
     "roles.enabled = true  (shipped)\n"
@@ -53,6 +54,7 @@ class ShowTextTests(support.ScratchCase):
             'process.docs_dir = "u"  (user)\n'
             'process.questions = "all-together"  (shipped)\n'
             "process.recommend = true  (shipped)\n"
+            'process.density = "brief"  (shipped)\n'
             "roles.enabled = true  (shipped)\n"
             "roles.manager_default = false  (shipped)\n"
             "roles.high_stakes = false  (shipped)\n"
@@ -128,9 +130,9 @@ class ShowTextTests(support.ScratchCase):
     def test_a_key_the_schema_does_not_have(self) -> None:
         cases = {
             "proces": "error: proces: no such setting; known groups: process, roles, memory, providers, setup\n",
-            "process.nope": "error: process.nope: no such setting; known under process: docs_dir, questions, recommend\n",
+            "process.nope": "error: process.nope: no such setting; known under process: docs_dir, questions, recommend, density\n",
             "process.docs_dir.more": "error: process.docs_dir.more: no such setting; process.docs_dir is a single value\n",
-            "process.": "error: process.: no such setting; known under process: docs_dir, questions, recommend\n",
+            "process.": "error: process.: no such setting; known under process: docs_dir, questions, recommend, density\n",
             "roles.Bad_Name": "error: roles.Bad_Name: no such setting; known under roles: "
             "enabled, manager_default, high_stakes, max_parallel_coders, <role id>\n",
         }
@@ -177,7 +179,7 @@ class SeveralKeysTests(support.ScratchCase):
         self.assertEqual(list(report), ["schema_version", "settings"])
         self.assertEqual(
             list(report["settings"]),
-            ["process.docs_dir", "process.questions", "process.recommend", "memory.dir"],
+            ["process.docs_dir", "process.questions", "process.recommend", "process.density", "memory.dir"],
         )
         merged = {
             **json.loads(self.show("process", "--json")[1])["settings"],
@@ -227,6 +229,7 @@ class ShowJsonTests(support.ScratchCase):
                     "process.docs_dir": {"value": "docs", "layer": "shipped", "file": shipped},
                     "process.questions": {"value": "all-together", "layer": "shipped", "file": shipped},
                     "process.recommend": {"value": False, "layer": "user", "file": str(self.user_file)},
+                    "process.density": {"value": "brief", "layer": "shipped", "file": shipped},
                     "roles.enabled": {"value": True, "layer": "shipped", "file": shipped},
                     "roles.manager_default": {"value": False, "layer": "shipped", "file": shipped},
                     "roles.high_stakes": {"value": False, "layer": "shipped", "file": shipped},
@@ -243,7 +246,7 @@ class ShowJsonTests(support.ScratchCase):
 
     def test_a_group_and_a_key(self) -> None:
         group = json.loads(self.show("process", "--json")[1])["settings"]
-        self.assertEqual(list(group), ["process.docs_dir", "process.questions", "process.recommend"])
+        self.assertEqual(list(group), ["process.docs_dir", "process.questions", "process.recommend", "process.density"])
         one = json.loads(self.show("--json", "memory.dir")[1])["settings"]
         self.assertEqual({key: entry["value"] for key, entry in one.items()}, {"memory.dir": "docs/memory"})
 
@@ -295,7 +298,8 @@ class ShowErrorTests(support.ScratchCase):
                 0,
                 'process.docs_dir = "notes"  (user)\n'
                 'process.questions = "all-together"  (shipped)\n'
-                "process.recommend = true  (shipped)\n",
+                "process.recommend = true  (shipped)\n"
+                'process.density = "brief"  (shipped)\n',
                 "",
             ),
         )
@@ -656,6 +660,7 @@ class RepositoryTests(support.ScratchCase):
             'process.docs_dir = "docs"  (shipped)',
             'process.questions = "all-together"  (shipped)',
             "process.recommend = true  (shipped)",
+            'process.density = "brief"  (shipped)',
             "roles.manager_default = false  (shipped)",
             "roles.high_stakes = false  (shipped)",
             "roles.max_parallel_coders = 3  (shipped)",

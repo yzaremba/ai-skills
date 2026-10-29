@@ -21,8 +21,12 @@ schema_version = 1
 docs_dir = "docs"
 # How open questions are put to the user: "one-at-a-time" or "all-together".
 questions = "all-together"
-# Whether each question comes with a recommendation.
+# Whether each question comes with a recommendation: true or false, or
+# "accept", which also takes the clear choices for the user and lists them at
+# the next stop.
 recommend = true
+# How much a question and a report say: "brief" or "full".
+density = "brief"
 
 [roles]
 # Whether `render` generates the role definitions and the entry points of a

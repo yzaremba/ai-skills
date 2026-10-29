@@ -1859,9 +1859,9 @@ class Command(Case):
         self.assertEqual(Path(report["project"]).resolve(), self.project.resolve())
 
 
-DEFAULTS = 'schema_version = 1\n[process]\ndocs_dir = "docs"\nquestions = "all-together"\nrecommend = true\n' \
+DEFAULTS = 'schema_version = 1\n[process]\ndocs_dir = "docs"\nquestions = "all-together"\nrecommend = true\ndensity = "brief"\n' \
            '[roles]\nmanager_default = false\n[memory]\ndir = "docs/memory"\n'
-PROCESS_KEYS = ["process.docs_dir", "process.questions", "process.recommend"]
+PROCESS_KEYS = ["process.docs_dir", "process.questions", "process.recommend", "process.density"]
 
 
 class Settings(Case):
@@ -1910,12 +1910,13 @@ class Settings(Case):
         self.assertEqual(list(report["settings"]), PROCESS_KEYS)  # the process group, and no other
         self.assertEqual({key: (entry["value"], entry["layer"]) for key, entry in report["settings"].items()}, {
             "process.docs_dir": ("docs", "shipped"), "process.questions": ("all-together", "shipped"),
-            "process.recommend": (True, "shipped"),
+            "process.recommend": (True, "shipped"), "process.density": ("brief", "shipped"),
         })
         for entry in report["settings"].values():
             self.assertEqual(Path(entry["file"]), self.setup_dir / "defaults.toml")
         text = check.run(self.arguments())[1]
-        self.assertIn('process.docs_dir = "docs"  (shipped)\nprocess.questions = "all-together"  (shipped)\n'
+        self.assertIn('process.density = "brief"  (shipped)\n'
+                      'process.docs_dir = "docs"  (shipped)\nprocess.questions = "all-together"  (shipped)\n'
                       "process.recommend = true  (shipped)\n", text)
         self.assertNotIn("memory", text)
 
@@ -1972,10 +1973,12 @@ class Settings(Case):
             '[process]\nquestions = "sometimes"\n':
                 'process.questions: "sometimes" is not allowed; allowed values: one-at-a-time, all-together',
             "[process]\nquestions = 7\n": "process.questions: expected a string, got an integer",
-            '[process]\nrecommend = "yes"\n': "process.recommend: expected a boolean, got a string",
-            "[process]\nrecommend = 1\n": "process.recommend: expected a boolean, got an integer",
-            '[process]\ndocs = "docs"\n': "process.docs: unknown key; known here: docs_dir, questions, recommend",
-            '[process]\n"odd key" = 1\n': 'process."odd key": unknown key; known here: docs_dir, questions, recommend',
+            '[process]\nrecommend = "yes"\n': 'process.recommend: "yes" is not allowed; allowed values: true, false, accept',
+            "[process]\nrecommend = 1\n": "process.recommend: 1 is not allowed; allowed values: true, false, accept",
+            '[process]\nrecommend = "Accept"\n': 'process.recommend: "Accept" is not allowed; allowed values: true, false, accept',
+            '[process]\ndensity = "terse"\n': 'process.density: "terse" is not allowed; allowed values: brief, full',
+            '[process]\ndocs = "docs"\n': "process.docs: unknown key; known here: docs_dir, questions, recommend, density",
+            '[process]\n"odd key" = 1\n': 'process."odd key": unknown key; known here: docs_dir, questions, recommend, density',
             "[process.docs_dir]\nx = 1\n": "process.docs_dir: expected a string, got a table",
             'docs_dir = "docs"\n': "docs_dir: unknown key; known here: schema_version, process, roles, memory, providers, setup",
             "[proces]\n": "proces: unknown key; known here: schema_version, process, roles, memory, providers, setup",
@@ -2113,6 +2116,7 @@ class Settings(Case):
             "process.docs_dir": {"value": "docs", "layer": "built-in", "file": None},
             "process.questions": {"value": "all-together", "layer": "built-in", "file": None},
             "process.recommend": {"value": True, "layer": "built-in", "file": None},
+            "process.density": {"value": "brief", "layer": "built-in", "file": None},
         })
         self.assertEqual([v["file"] for v in report["violations"]], [TASKS])
 

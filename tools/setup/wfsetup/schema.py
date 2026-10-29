@@ -23,6 +23,9 @@ EFFORTS = ("low", "medium", "high", "max")
 # other agents. A role without the key takes the provider's own lifetime.
 CACHES = ("long",)
 QUESTIONS = ("one-at-a-time", "all-together")
+DENSITIES = ("brief", "full")
+# The one string ``process.recommend`` takes besides true and false.
+RECOMMEND_WORDS = ("accept",)
 
 # A role id, as in roles/README.md, and a provider name: kebab-case.
 _KEBAB = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
@@ -35,7 +38,8 @@ def is_id(text: str) -> bool:
 
 class Value:
     """A string, integer or boolean. A string is never empty, nor only
-    white space."""
+    white space. For a boolean, ``choices`` are the strings it takes besides
+    true and false."""
 
     def __init__(self, type: str, choices: tuple[str, ...] = (), minimum: int | None = None) -> None:
         self.type = type
@@ -114,7 +118,8 @@ SCHEMA: dict[str, Table] = {
     "process": Table({
         "docs_dir": _STRING,
         "questions": Value("string", choices=QUESTIONS),
-        "recommend": _BOOLEAN,
+        "recommend": Value("boolean", choices=RECOMMEND_WORDS),
+        "density": Value("string", choices=DENSITIES),
     }),
     "roles": Table(
         {
@@ -201,6 +206,13 @@ def _validate(node: Node, value: Any, path: tuple[str, ...], file: Any, problems
                 problems.append(f"{where}: {tomlio.format_value(item)} is given twice")
         return
     if isinstance(node, Value):
+        if node.type == "boolean" and node.choices:
+            if actual != "boolean" and value not in node.choices:
+                shown = tomlio.format_value(value) if actual in ("string", "integer") else tomlio.article(actual)
+                problems.append(
+                    f"{where}: {shown} is not allowed; allowed values: true, false, {', '.join(node.choices)}"
+                )
+            return
         if actual != node.type:
             problems.append(f"{where}: expected {tomlio.article(node.type)}, got {tomlio.article(actual)}")
         elif node.choices and value not in node.choices:

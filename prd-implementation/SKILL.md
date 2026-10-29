@@ -80,6 +80,7 @@ The process reads three settings, all in the `process` group:
 
 - `process.docs_dir` — **the sprint docs directory**, which is what the stage files call it: a path relative to the project root, `docs/` by default.
 - `process.questions` — `all-together` (default) or `one-at-a-time`: how open questions are put to the user.
-- `process.recommend` — `true` (default): each question comes with a recommendation.
+- `process.recommend` — `true` (default): each question comes with a recommendation; `false`: the options only; `accept`: a clear choice is taken for the user and listed at the next stop.
+- `process.density` — `brief` (default) or `full`: how much a question and a report say.
 
 Read them with `python scripts/settings.py process --project <project root>`, the script being in this skill's directory. The project root is the main working tree of the project's repository, never a sprint's or a group member's worktree. [references/conventions.md](references/conventions.md) says what each means.

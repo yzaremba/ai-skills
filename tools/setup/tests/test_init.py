@@ -695,6 +695,14 @@ class AgainTests(InitCase):
         self.assertIn("nothing to write", out)
         self.assertEqual(self.tree(), before)
 
+    def test_recommend_accept_and_density_are_kept(self) -> None:
+        self.write(self.user_file, '[process]\nrecommend = "accept"\ndensity = "full"\n')
+        out = self.ok("--yes", "--rewrite-settings", "--memory-dir", "notes")
+        self.assertNotIn("process.recommend:", out.split("changes to")[1])
+        self.assertEqual(self.data()["process"], {"recommend": "accept", "density": "full"})
+        out = self.ok("--yes")
+        self.assertIn("nothing to write", out)
+
     def test_other_answers_show_the_difference_back_up_and_rewrite(self) -> None:
         self.ok("--yes", "--docs-dir", "sprints", "--no-recommend")
         was = self.user_file.read_bytes()

@@ -167,7 +167,8 @@ GROUP = "process"
 PROCESS_KEYS = {
     "docs_dir": ("string", ()),
     "questions": ("string", ("one-at-a-time", "all-together")),
-    "recommend": ("boolean", ()),
+    "recommend": ("boolean", ("accept",)),
+    "density": ("string", ("brief", "full")),
 }
 DOCS_DIR = "process.docs_dir"
 
@@ -176,6 +177,7 @@ BUILT_IN = {
     "process.docs_dir": "docs",
     "process.questions": "all-together",
     "process.recommend": True,
+    "process.density": "brief",
 }
 BUILT_IN_LAYER = "built-in"
 
@@ -527,7 +529,12 @@ def _check_process(table: object, file: Path, problems: list[str]) -> None:
             continue
         wanted, choices = PROCESS_KEYS[key]
         actual = _type_name(value)
-        if actual != wanted:
+        if wanted == "boolean" and choices:
+            # A boolean that also takes the named strings.
+            if actual != "boolean" and value not in choices:
+                shown = json.dumps(value, ensure_ascii=False) if actual in ("string", "integer") else _article(actual)
+                problems.append(f"{where}: {shown} is not allowed; allowed values: true, false, {', '.join(choices)}")
+        elif actual != wanted:
             problems.append(f"{where}: expected {_article(wanted)}, got {_article(actual)}")
         elif choices and value not in choices:
             problems.append(

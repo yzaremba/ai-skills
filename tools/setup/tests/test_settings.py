@@ -23,6 +23,7 @@ class ShippedDefaultsTests(support.ScratchCase):
                 "process.docs_dir": "docs",
                 "process.questions": "all-together",
                 "process.recommend": True,
+                "process.density": "brief",
                 "roles.enabled": True,
                 "roles.manager_default": False,
                 "roles.high_stakes": False,
@@ -111,6 +112,7 @@ class LayerTests(support.ScratchCase):
                 "process.docs_dir": ("u", "user"),
                 "process.questions": ("one-at-a-time", "project"),
                 "process.recommend": (True, "local"),
+                "process.density": ("brief", "shipped"),
                 "roles.enabled": (True, "shipped"),
                 "roles.manager_default": (False, "shipped"),
                 "roles.high_stakes": (False, "shipped"),
@@ -118,6 +120,12 @@ class LayerTests(support.ScratchCase):
                 "memory.dir": ("docs/memory", "shipped"),
             },
         )
+
+    def test_recommend_takes_accept_and_density_a_named_string(self) -> None:
+        self.write(self.user_file, '[process]\nrecommend = "accept"\ndensity = "full"\n')
+        entries = settings.resolve(self.locations(), ("process",))
+        self.assertEqual(entries["process.recommend"].value, "accept")
+        self.assertEqual(entries["process.density"].value, "full")
 
     def test_without_a_project_only_shipped_and_user_are_read(self) -> None:
         self.write(self.user_file, '[memory]\ndir = "u"\n')
@@ -185,7 +193,7 @@ class ValidationTests(support.ScratchCase):
     def test_an_unknown_key_names_the_file_and_the_key(self) -> None:
         self.assertEqual(
             self.problems('[process]\ndocs_directory = "x"\n'),
-            ["process.docs_directory: unknown key; known here: docs_dir, questions, recommend"],
+            ["process.docs_directory: unknown key; known here: docs_dir, questions, recommend, density"],
         )
 
     def test_an_unknown_key_in_each_layer_names_that_layers_file(self) -> None:
@@ -233,8 +241,11 @@ class ValidationTests(support.ScratchCase):
     def test_a_wrong_type_names_the_file_and_the_key(self) -> None:
         cases = {
             "[process]\ndocs_dir = 3\n": "process.docs_dir: expected a string, got an integer",
-            '[process]\nrecommend = "yes"\n': "process.recommend: expected a boolean, got a string",
-            "[process]\nrecommend = 1\n": "process.recommend: expected a boolean, got an integer",
+            '[process]\nrecommend = "yes"\n': 'process.recommend: "yes" is not allowed; allowed values: true, false, accept',
+            "[process]\nrecommend = 1\n": "process.recommend: 1 is not allowed; allowed values: true, false, accept",
+            '[process]\nrecommend = "Accept"\n': 'process.recommend: "Accept" is not allowed; allowed values: true, false, accept',
+            '[process]\ndensity = "terse"\n': 'process.density: "terse" is not allowed; allowed values: brief, full',
+            "[process]\ndensity = false\n": "process.density: expected a string, got a boolean",
             "[roles]\nmax_parallel_coders = true\n": "roles.max_parallel_coders: expected an integer, got a boolean",
             "[roles]\nmax_parallel_coders = 2.0\n": "roles.max_parallel_coders: expected an integer, got a float",
             '[roles]\nmax_parallel_coders = "3"\n': "roles.max_parallel_coders: expected an integer, got a string",
@@ -354,7 +365,7 @@ class ValidationTests(support.ScratchCase):
     def test_a_key_that_needs_quoting_is_shown_quoted(self) -> None:
         self.assertEqual(
             self.problems('[process]\n"odd key.x" = 1\n'),
-            ['process."odd key.x": unknown key; known here: docs_dir, questions, recommend'],
+            ['process."odd key.x": unknown key; known here: docs_dir, questions, recommend, density'],
         )
 
 
@@ -374,7 +385,7 @@ class GroupIsolationTests(support.ScratchCase):
         entries = settings.resolve(self.locations(), ("process",))
         self.assertEqual(entries["process.docs_dir"].value, "notes")
         self.assertEqual(entries["process.docs_dir"].layer, "user")
-        self.assertEqual(sorted(entries), ["process.docs_dir", "process.questions", "process.recommend"])
+        self.assertEqual(sorted(entries), ["process.density", "process.docs_dir", "process.questions", "process.recommend"])
 
     def test_the_same_file_fails_for_the_providers_group_and_for_everything(self) -> None:
         self.write(self.user_file, self.BROKEN_PROVIDER)

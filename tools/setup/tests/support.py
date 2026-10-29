@@ -58,6 +58,7 @@ FIXTURE_DEFAULTS = '''schema_version = 1
 docs_dir = "docs"
 questions = "all-together"
 recommend = true
+density = "brief"
 
 [roles]
 enabled = true
