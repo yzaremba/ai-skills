@@ -37,3 +37,7 @@ What differs on this provider for the three actions the stage files leave open. 
 
 - "The project's instruction file" is `AGENTS.md`.
 - Commits, by the build lead and by a member of a parallel group: `git add -- <file>` for each new file, never `git add -A`, `git add .` or `git commit -a`; then `git commit -m "<message>" -- <file> <file>` naming every file of the change. Use `git -C <dir>`.
+
+## Waiting on a long command
+
+Start a command that may run long with a log. Read from the Codex source (`core/src/unified_exec/mod.rs`, `process_manager.rs`, `config/defaults.toml`) on 2026-10-29, as installed in 0.165.0: `exec_command` clamps `yield_time_ms` silently to 250-30000, and an empty `write_stdin` (a poll) is clamped to 5000 up to a configured maximum whose default is 300000. So on a default config no single wait reaches 10 minutes, and a longer request is clamped, not refused. Poll with an empty `write_stdin` at `yield_time_ms` 300000, then read the log, not the screen. A shorter yield only polls more often, and each poll re-reads the whole context. The Windows CLI, 0.160.0, was not checked.

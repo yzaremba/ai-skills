@@ -35,3 +35,7 @@ What differs on this provider for the three actions the stage files leave open. 
 
 - "The project's instruction file" is `AGENTS.md`, or `CLAUDE.md` where the project has one: Claude Code reads `AGENTS.md` only when no `CLAUDE.md` is in or above the working directory.
 - Commits, by the build lead and by a member of a parallel group: `git add -- <file>` for each new file, never `git add -A`, `git add .` or `git commit -a`; then `git commit -m "<message>" -- <file> <file>` naming every file of the change.
+
+## Waiting on a long command
+
+Start a command that may run long so that it survives the turn and writes a log. Wait for it with bounded waits, each just under 5 minutes and as long as that allows, and read the log, not the screen. A call over 5 minutes lets the prompt cache go cold, and the next turn re-writes the whole context.
