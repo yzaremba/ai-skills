@@ -122,5 +122,6 @@ Lessons of this project, one line each. Before work a line applies to, read its 
 - [A subagent spawn costs ~40K tokens](docs/memory/subagent-spawn-cost.md): before spawning for small work or writing role text; prefer a follow-up
 - [Acceptance as a user](docs/memory/acceptance-as-a-user.md): planning or running an acceptance run; drive it as a user, friction is a finding
 - [Outcome over apparatus](docs/memory/outcome-over-apparatus.md): before adding a check, tool, document, proof or review; only when the user asks
+- [Edit every byte-identical copy](docs/memory/edit-every-identical-copy.md): a step changing a file kept identical in several units; edit every copy
 - Local lessons, private or of this machine: read `docs/memory/local/INDEX.md` if it exists.
 <!-- project-memory:index:end -->
