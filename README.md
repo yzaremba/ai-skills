@@ -495,8 +495,10 @@ python tools/setup/workflow_setup.py doctor
   too. `--yes` does not rewrite a settings file written or edited by hand; that takes
   `--rewrite-settings` as well. For Codex it checks the mapping against
   `codex debug models`, also with `--dry-run`: a program of the provider's, which may
-  write state of its own into the provider's home. Two of its questions are choices
-  `render` would otherwise need an option for on every run: whether the roles are
+  write state of its own into the provider's home. A mapped model that the list does not
+  hold must be replaced; `--allow-unlisted` keeps it, and `doctor` then warns of it. Two
+  of its questions are choices `render` would otherwise need an option for on every run:
+  whether the roles are
   installed (`--roles`, `--no-roles`), and, asked only where this side's clone is one the
   other side cannot read, whether to accept it (`--allow-unshared-clone`; proposed: no).
 - `render` links each enabled skill into the skills directory of each provider it names

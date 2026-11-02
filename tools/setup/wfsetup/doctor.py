@@ -968,9 +968,9 @@ def check_models(context: Context) -> list[Finding]:
         show = json.dumps
         mapped = set(mapping.values())
         for key, model in found.missing_mapped:
-            findings.append(error(
-                f"{name}: {key} = {show(model)}: the model is not in the provider's list; map the key to a listed "
-                "model (`init`, or the settings file)", key,
+            findings.append(warning(
+                f"{name}: {key} = {show(model)}: the model is not in the provider's list; unless you mean to keep it, "
+                "map the key to a listed model (`init`, or the settings file)", key,
             ))
         for key, model in found.hidden_mapped:
             findings.append(warning(f"{name}: {key} = {show(model)}: the list holds the model as a hidden entry", key))

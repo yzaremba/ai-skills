@@ -93,15 +93,15 @@ The checks, in the order they run:
                          is an error: the group is read from the user's
                          file alone.
     models               each installed provider's own model list beside its
-                         mapping: a mapped model that is not in the list, or
-                         an effort a definition resolves to that the list
-                         does not give its model, is an error; a mapped
-                         model listed as hidden, or with other efforts than
-                         the dictionary has, a warning; a list that cannot
-                         be read, a warning with the reason. Claude Code has
-                         no list: info. This starts the provider's list
-                         command (`codex debug models`); --no-model-list
-                         leaves the check out.
+                         mapping: an effort a definition resolves to that
+                         the list does not give its model is an error; a
+                         mapped model that is not in the list, or listed as
+                         hidden, or with other efforts than the dictionary
+                         has, a warning; a list that cannot be read, a
+                         warning with the reason. Claude Code has no list:
+                         info. This starts the provider's list command
+                         (`codex debug models`); --no-model-list leaves the
+                         check out.
     versions             `<program> --version` of each installed provider: a
                          version newer than the one its dictionary was
                          checked on, or older than the oldest supported, or

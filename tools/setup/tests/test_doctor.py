@@ -798,10 +798,10 @@ class ModelsCase(DoctorCase):
     def test_a_list_missing_a_mapped_model(self) -> None:
         self.codex_stub.answer(LIVE, provider_stub.fixture("model-list-missing-mapped.json"))
         code, findings = self.models()
-        self.assertEqual(code, 1)
-        self.assertEqual(len(self.details(findings, doctor.ERROR)), 1)
-        self.assertFinding(findings, doctor.ERROR, 'codex: tiers.frontier = "gpt-6-astra"',
-                           "the model is not in the provider's list")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.details(findings, doctor.ERROR), [])
+        self.assertFinding(findings, doctor.WARNING, 'codex: tiers.frontier = "gpt-6-astra"',
+                           "the model is not in the provider's list", "unless you mean to keep it")
 
     def test_the_mapping_checked_is_the_one_in_effect(self) -> None:
         self.codex_stub.answer(LIVE, provider_stub.fixture("model-list-missing-mapped.json"))
