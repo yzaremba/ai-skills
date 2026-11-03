@@ -12,7 +12,7 @@ prd-implementation/  epic-implementation/   shared skills: the sprint and epic p
 project-memory/                             shared skill: the lessons a project keeps
 usage-cost/                                 skill, Claude Code only
 multiagent-collab/                          skill with its own setup; see below
-roles/      README.md  SPECIALISTS.md  bindings.toml  _shared/  <role>/ROLE.md  <role>/role.toml
+roles/      README.md  SPECIALISTS.md  bindings.toml  dependencies.toml  _shared/  <role>/ROLE.md  <role>/role.toml
 rules/      avoid-bash-injection-heuristics/    rule, Claude Code only
 providers/  <name>/dictionary.toml  <name>/actions.md   for claude-code and codex
 tools/      setup/            workflow_setup.py  wfsetup/  defaults.toml  tests/

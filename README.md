@@ -16,7 +16,7 @@ the tag `v1.0`; [Moving from v1](#moving-from-v1) says how to get from there to 
 | `project-memory/` | The lessons a project keeps, as a skill: the entry file and, in `references/`, the format of the index and of a lesson file, a lesson's lifecycle, and how a project gets both providers to load its `AGENTS.md`. |
 | `csv-tools/`, `json-tools/`, `self-reflection/`, `usage-cost/` | Skills. A skill is a directory at the root that holds `SKILL.md`. |
 | `multiagent-collab/` | A skill with its own setup, protocol file, hooks and tests. |
-| `roles/` | The sources of the nine roles: `<role>/ROLE.md` and `<role>/role.toml`, the sections roles share in `_shared/`, and `bindings.toml`, which says which role follows which stage of the process. Format: [`roles/README.md`](roles/README.md). A project's own specialist: [`roles/SPECIALISTS.md`](roles/SPECIALISTS.md). |
+| `roles/` | The sources of the nine roles: `<role>/ROLE.md` and `<role>/role.toml`, the sections roles share in `_shared/`, `bindings.toml`, which says which role follows which stage of the process, and `dependencies.toml`, which says which skills a skill needs. Format: [`roles/README.md`](roles/README.md). A project's own specialist: [`roles/SPECIALISTS.md`](roles/SPECIALISTS.md). |
 | `rules/` | `avoid-bash-injection-heuristics/`, a rule for Claude Code: how to shape a Bash command so that the permission checks that ignore the allowlist do not fire. Codex has no place for a rule. |
 | `providers/` | What differs between providers, in `claude-code/` and `codex/`: `dictionary.toml` (what the tiers and effort names mean there, and the version it was checked on) and `actions.md` (how a role's actions are done there). |
 | `tools/` | `setup/`: the setup tool, `workflow_setup.py`, with its package `wfsetup/`, its shipped defaults (`defaults.toml`) and tests; `manifest-keys.json`, the keys setup may change in a settings file; `v1-known-hashes.json`, the hashes of the committed v1 files, and `build_v1_hashes.py`, which builds it. `session-profile/`: prints the role, model and effort a provider recorded for each agent of a session. |
@@ -317,8 +317,12 @@ python3 tools/setup/workflow_setup.py doctor
   linked the same way. A linked skill finds the clone through its link
   and reads the settings files as with setup. A copy has no setup tool beside it: its
   scripts use the built-in defaults and read no settings file. Setup did not make such a
-  link, so `render` stops on it as a conflict, and names it: remove the links you made
-  before the first `render`.
+  link, so a home's `render` stops on it as a conflict, and names it: remove the links you
+  made before the first `render`. A link made by hand at a project's path
+  (`DIR/.claude/skills/<name>`, `DIR/.agents/skills/<name>`) that leads to the same skill of
+  the clone is taken over by `render --project DIR`; `uninstall --project DIR` then leaves
+  it in place, and taking the skill off the list removes it. A hand-made link in a home still
+  stops `render` as a conflict, `render --project` included, since that refreshes the homes too.
 
 #### Adding roles later
 
@@ -502,6 +506,13 @@ python tools/setup/workflow_setup.py doctor
   whether the roles are
   installed (`--roles`, `--no-roles`), and, asked only where this side's clone is one the
   other side cannot read, whether to accept it (`--allow-unshared-clone`; proposed: no).
+  An answer given by flag or typed at the prompt is kept in the file even when it equals
+  what the layers below give, so a deliberate `--no-manager-default` shows; a proposal
+  accepted with Enter or `--yes` stays out of the file when it equals them; a key the file already holds keeps its value unless an answer changes it. To take a key
+  out on purpose, so that it follows the layer below again, use `--unset KEY` (it may be
+  repeated) or answer `default` at a prompt. In the user's file the tier and effort mappings
+  are held in full, so those are not taken out. With `--project DIR`, `--skills NAME...`
+  sets the project's skill list (see "Skills in a project" below).
 - `render` links each enabled skill into the skills directory of each provider it names
   (`~/.claude/skills`, and `~/.agents/skills` for Codex), links the rule, when enabled, into
   `~/.claude/rules`, and generates the role definitions and the entry points of a
@@ -711,6 +722,44 @@ settings change, and lists what it generated in `DIR/.gitignore`. Setup's backup
 install record and lock for the project are in `DIR/.agents/workflow-setup/`, a
 directory it creates in DIR and lists in the same ignore block.
 
+**Skills in a project.** A project lists the skills (and the rule) it uses; every skill and
+the rule live in the clone. To see them and then link them:
+
+```bash
+python tools/setup/workflow_setup.py init --project DIR --skills prd-implementation project-memory
+python tools/setup/workflow_setup.py show project --project DIR
+python tools/setup/workflow_setup.py render --project DIR
+```
+
+`--skills` sets `project.enabled` in `DIR/.agents/workflow.toml` to exactly the names
+given, so the one flag adds and removes, but it cannot empty the list: `--unset project.enabled` takes the list out. Its names are skills or the rule of the clone.
+That file is shared; `DIR/.agents/workflow.local.toml` (git-ignored) may hold a
+`project.enabled` of its own and a `project.disabled`, both written by hand. The project's
+set is every name in `project.enabled` of either file, minus the local file's
+`project.disabled`, plus the skills they need (`roles/dependencies.toml`: `epic-implementation`
+needs `prd-implementation`). A needed skill is linked even when `project.disabled` names it,
+and `render` names what needs it and the setting it overrides. `show project` prints each file's lists and the resulting
+set; `render`, `doctor` and `init` report a name that is no unit, or in both lists of one file.
+A project without `[project]` gets no skill linked. `[project]` is read from the project's files
+alone: in `~/.agents/workflow.toml` it is an error.
+
+`render --project DIR` links each skill of the set, for each provider that skill names
+and this side has, as `DIR/.claude/skills/<name>` (Claude Code) and
+`DIR/.agents/skills/<name>` (Codex), and lists the links in the project's ignore block.
+The rule is copied, not linked, into `DIR/.claude/rules/<name>/`, and every `render --project DIR`
+brings the copy in line with the clone. A unit this side's home installs is not linked
+or copied again. Run `render --project DIR` on each side of a Windows and WSL
+machine: a link one side made is kept by the other. The link is a junction on Windows. From WSL, in a
+project on the Linux file system it is an absolute symlink; in a project on a Windows drive, it is a relative symlink where the clone is on the same
+drive, and absolute (Windows sessions do not see it) where the clone is in the Linux
+file system; where the clone is on another Windows drive, WSL makes none and names the
+skills left out: render from Windows. The next `render --project DIR` removes the link of
+a skill that left the set, and `uninstall --project DIR` removes the links and the
+rule copy that setup made, but not a link you made by hand that it took over.
+`doctor --project DIR` reports a skill of the set that is in neither the project nor the
+home, a link that leads elsewhere, a changed copy of the rule, and a link or copy of a
+unit that left the set.
+
 **Checking a project.** `doctor --project DIR` runs every check of `doctor` with the
 project's settings and what `render --project DIR` wrote there, and one check that needs
 a project, `instruction-files`: whether both providers load `DIR/AGENTS.md`, the file
@@ -765,18 +814,21 @@ python tools/setup/workflow_setup.py show roles --project DIR
 `show` prints each effective setting and the layer it came from; `show roles` adds the
 model and effort each role definition runs with on each provider.
 
-Two settings are read by setup itself, and each stands for an option `render` would
-otherwise need on every run; the option still works for a single run:
+Four more settings are read by setup itself. `roles.enabled` and `setup.allow_unshared_clone` each
+stand for an option `render` would otherwise need on every run; the option still works for a single run:
 
 | Setting | Default | Read from | What it does |
 |---------|---------|-----------|--------------|
 | `roles.enabled` | `true` | The user's file for the homes; a project's files, over the user's, for that project | `false` installs the process alone, as `render --no-roles` does for one run. A project gets roles only where the home has them; one rendered with roles before keeps its starting role until `render --project DIR`. `init --roles` / `--no-roles` sets it. |
+| `project.enabled` | none | A project's `.agents/workflow.toml` and `.agents/workflow.local.toml`; in the user's file it is an error | The skills and the rule the project uses. The two files' lists combine instead of the later replacing the earlier. `init --project DIR --skills NAME...` sets it. |
+| `project.disabled` | none | A project's `.agents/workflow.local.toml` alone: in the shared file it is an error | Takes a name out of the project's set on this machine. A skill that an enabled one needs stays. Written by hand. |
 | `setup.allow_unshared_clone` | `false` | The user's file alone: a project's file that holds `[setup]` is an error | `true` lets `render` and `doctor` accept a clone that only this side of a Windows and WSL machine reads, as `--allow-unshared-clone` does for one run: only where the other side does not install from this clone (WSL used alone, or a clone for each side). `init --allow-unshared-clone` sets it. |
 
-Both are newer than the first version 2 tools: an older clone's setup tool, and the
+All four are newer than the first version 2 tools: an older clone's setup tool, and the
 `check.py` of an older `prd-implementation`, refuse a user file that holds `roles.enabled`
-or `[setup]` as an unknown key, so update every clone that reads `~/.agents/workflow.toml`
-before writing either.
+or `[setup]` as an unknown key, and a project file that holds `[project]`. A project's shared
+file is read by the clone of each of the project's users, so update every clone that reads
+the file (`~/.agents/workflow.toml`, or the project's) before writing one of them.
 
 **Which skills and rules are installed** is two lists under `[setup]`, read from the
 user's file alone, that hold every skill and rule of the clone between them:
@@ -795,8 +847,10 @@ The shipped defaults enable the process skills and `self-reflection`, and disabl
 nothing that `disabled` names, and removes the link an earlier run made to a disabled
 one; a link removed by hand comes back at the next `render` unless it is disabled. A
 name in both lists, a skill or rule in neither (one the clone gained since the lists
-were written, say), a name that is no skill or rule of the clone, and a process skill
-in `disabled` stop `render`, and `doctor` reports them. A key in the user's file
+were written, say), and a name that is no skill or rule of the clone stop `render`, and `doctor` reports them. A process skill in `disabled` does not
+stop it: with the roles on it is installed all the same, because the roles need it, and so
+is a skill that an enabled one needs (`roles/dependencies.toml`); `render` names the
+setting it overrides. A key in the user's file
 replaces the shipped one whole, so write both lists there. The collaboration skill has a
 setup of its own and is in neither list; the roles are `roles.enabled`. Each side of a
 Windows and WSL machine reads its own `~/.agents/workflow.toml`, and the side that

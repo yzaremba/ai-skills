@@ -9,6 +9,7 @@ roles/
   README.md
   SPECIALISTS.md    the convention for a project's own specialist
   bindings.toml     which role follows which stage file of the process
+  dependencies.toml which skills a skill needs
   _shared/          sections that several roles include
   <role>/ROLE.md    the role's instructions
   <role>/role.toml  the role's profile, limits and entry points
@@ -56,6 +57,21 @@ roles/
 A role names a tier and an effort, never a model. The settings map both to each provider's values.
 
 A limit is enforced by the provider's definition wherever that provider can enforce it. `ROLE.md` states every limit as well, because not every provider enforces every one.
+
+## `dependencies.toml`
+
+`dependencies.toml` says which skills a skill needs. `render` installs a needed skill wherever the skill that needs it is installed, in a home or in a project, and follows the needs to the end. A skill that is needed is installed even when `setup.disabled` (in a home) or `project.disabled` (in a project) names it; the output names the setting it overrides and what needs the skill. The needs of the roles are not written here: `bindings.toml` already says which skills a role follows, and a home with roles on gets those skills.
+
+The file holds `schema_version = 1` and a `[needs]` table. Each key is a skill's name, and its value is the list of skills it needs:
+
+```toml
+schema_version = 1
+
+[needs]
+epic-implementation = ["prd-implementation"]
+```
+
+`validate` reports a name that is no skill of the clone (or is one with a setup of its own), a key other than `schema_version` and `needs`, a `schema_version` other than 1, a value that is not a list, and a list that names its own key or a name twice. A cycle through two or more skills is no fault: each skill is added once. A missing file means no dependencies.
 
 ## `bindings.toml`
 
