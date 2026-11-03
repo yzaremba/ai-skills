@@ -1429,6 +1429,58 @@ class LoadedSkillSizeTests(TreeCase):
         self.assertEqual({p.key for p in self.check().problems if p.rule == "role-toml"}, {"includes", "limits", "entry"})
 
 
+class DependenciesTests(TreeCase):
+    FILE = "roles/dependencies.toml"
+
+    def deps(self, text: str) -> list[tuple[str | None, str]]:
+        self.put(self.FILE, "schema_version = 1\n" + text)
+        problems = self.check().problems
+        self.assertEqual({(p.file, p.rule) for p in problems} - {(self.FILE, "dependencies")}, set())
+        return [(p.key, p.text()) for p in problems]
+
+    def test_a_good_file_and_a_missing_one(self) -> None:
+        self.assertClean()  # no file: no dependency
+        self.assertEqual(self.deps('[needs]\nalpha = ["beta"]\n'), [])
+        self.assertEqual(definitions.dependencies(self.locations(project=False)), {"alpha": ("beta",)})
+
+    def test_the_shipped_file_passes(self) -> None:
+        shipped = (Path(__file__).resolve().parents[3] / "roles" / "dependencies.toml").read_text(encoding="utf-8")
+        self.put("prd-implementation/SKILL.md", SKILL.format(name="prd-implementation"))
+        self.put("epic-implementation/SKILL.md", SKILL.format(name="epic-implementation"))
+        self.put(self.FILE, shipped)
+        self.assertClean()
+
+    def test_a_name_that_is_no_skill(self) -> None:
+        self.assertEqual([key for key, _ in self.deps('[needs]\nalpha = ["nope"]\n')], ["needs.alpha[1]"])
+        self.assertEqual([key for key, _ in self.deps('[needs]\nnope = ["alpha"]\n')], ["needs.nope"])
+        self.assertEqual([key for key, _ in self.deps('[needs]\nalpha = ["a/b"]\n')], ["needs.alpha[1]"])
+
+    def test_a_rule_or_a_skill_with_a_setup_of_its_own(self) -> None:
+        found = self.deps('[needs]\nalpha = ["sample", "multiagent-collab"]\n')
+        self.assertEqual([key for key, _ in found], ["needs.alpha[1]", "needs.alpha[2]"])
+        self.assertIn("rule", found[0][1])
+        self.assertIn("setup of its own", found[1][1])
+
+    def test_an_unknown_key_and_a_value_that_is_no_list(self) -> None:
+        self.assertEqual([key for key, _ in self.deps("extra = 1\n")], ["extra"])
+        self.assertEqual([key for key, _ in self.deps('[needs]\nalpha = "beta"\n')], ["needs.alpha"])
+        self.assertEqual([key for key, _ in self.deps('[needs]\nalpha = [1]\n')], ["needs.alpha[1]"])
+        self.assertEqual([key for key, _ in self.deps('needs = ["alpha"]\n')], ["needs"])
+        self.assertEqual(definitions.dependencies(self.locations(project=False)), {})
+
+    def test_a_list_that_names_its_key_or_a_name_twice(self) -> None:
+        self.assertEqual([key for key, _ in self.deps('[needs]\nalpha = ["alpha"]\n')], ["needs.alpha[1]"])
+        self.assertEqual([key for key, _ in self.deps('[needs]\nalpha = ["beta", "beta"]\n')], ["needs.alpha[2]"])
+
+    def test_the_version_and_a_file_that_does_not_parse(self) -> None:
+        self.put(self.FILE, "[needs]\n")
+        self.assertEqual([p.key for p in self.check().problems], ["schema_version"])
+        self.put(self.FILE, "schema_version = 2\n")
+        self.assertEqual([p.key for p in self.check().problems], ["schema_version"])
+        self.put(self.FILE, "schema_version = [[[\n")
+        self.assertEqual(self.found(), [(self.FILE, "dependencies")])
+
+
 class BindingsTests(TreeCase):
     ROW = '\n[[binding]]\nrole = "{role}"\nskill = "{skill}"\nstage = "{stage}"\npart = "{part}"\n'
 
