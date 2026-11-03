@@ -120,10 +120,10 @@ Taking a key out
 
     At a question about a setting, the answer `default` does the same. At a
     tier or effort question of a project's file, NAME=default takes that
-    key out; a model that is really named default is given by --tier
-    or --effort. In the user's file the tier and effort mappings are held in
-    full, so --unset of one is refused there, and `default` is not offered at
-    their questions.
+    key out; a tier or effort value that is really named default is given by
+    --tier or --effort. In the user's file the tier and effort mappings are
+    held in full, so --unset of one is refused there, and `default` is not
+    offered at their questions.
 
 Running it again
     The same answers write nothing, and the output says so. Other answers
@@ -132,11 +132,11 @@ Running it again
     first (~/.agents/workflow-setup/backups/<time of the run>/, or for a
     project's file DIR/.agents/workflow-setup/backups/<time of the run>/; a
     full copy, readable by you alone). The file is rewritten from its
-    values: every key it holds is kept, unless --unset or `default` takes it
-    out, also those `init` asks nothing about ([roles.<id>] overrides, the
-    section of a provider that is not installed), but its comments and layout
-    are not. A file whose values do
-    not change is not touched, so comments in it stay.
+    values: every key it holds is kept, including those `init` asks nothing
+    about ([roles.<id>] overrides, the section of a provider that is not
+    installed), unless --unset or `default` takes it out. Its comments and
+    layout are not kept. A file whose values do not change is not touched, so
+    comments in it stay.
 
     A file that `init` did not write in its present form (one written by
     hand, or edited since `init` wrote it: its content is not the one the
@@ -454,10 +454,6 @@ class _Provider:
         return ", ".join(entry.efforts) if entry.takes_effort else "none: the model takes no effort setting"
 
 
-def _a(word: str) -> str:
-    return "an" if word[0] in "aeiou" else "a"
-
-
 def _settle_map(
     dialogue: _Dialogue, state: _Provider, table: str, allow_unlisted: bool, reset: Callable[[str], str] | None,
     held: Callable[[str], bool] = lambda key: True,
@@ -490,6 +486,7 @@ def _settle_map(
         try:
             changed: dict[str, str] = {}
             dropped: set[str] = set()
+            notes: list[str] = []
             for item in answer.split():
                 name, equals, value = item.partition("=")
                 if not equals or not name:
@@ -500,14 +497,14 @@ def _settle_map(
                         _check(key, value, "answer")   # an unknown name is refused as NAME=MODEL is
                         raise SetupError(f"{item}: {name} is not a {word} of {state.name}")
                     if not held(key):
-                        print(f"  {item}: the file does not hold {key}; nothing to take out")
+                        notes.append(f"  {item}: the file does not hold {key}; nothing to take out")
                     dropped.add(name)
                     changed[name] = reset(name)
                     continue
                 if value == "default":
                     raise SetupError(
                         f"{item}: the user's file holds the {word} mapping in full, so a key is not taken out; "
-                        f"{_a(word)} {word} really named default is given by {flag} {state.name}:{name}=default"
+                        f"a model really named default is given by {flag} {state.name}:{name}=default"
                     )
                 _check(f"providers.{state.name}.{table}.{name}", value, "answer")
                 changed[name] = value
@@ -515,6 +512,8 @@ def _settle_map(
             for line in exc.lines:
                 print(f"  {line}")
             continue
+        for note in notes:
+            print(note)
         values.update(changed)
         state.stated[table].update(name for name in changed if name not in dropped)
         state.stated[table].difference_update(dropped)

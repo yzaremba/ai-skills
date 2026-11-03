@@ -7,6 +7,7 @@ depends on another (see ``settings.resolve``).
 from __future__ import annotations
 
 import re
+import tomllib
 from typing import Any
 
 from . import tomlio
@@ -284,7 +285,15 @@ def order(key: str) -> list[tuple[int, Any]]:
 def parse_key(text: str) -> tuple[str, ...]:
     """Split a key given on the command line and check that the schema has
     such a place: a group, a table in it, or one value."""
-    parts = tuple(text.split("."))
+    try:   # a TOML key, so a part may be quoted: providers."claude-code".role_models.coder
+        parsed: Any = tomllib.loads(f"{text} = 0")
+        parts = []
+        while isinstance(parsed, dict):
+            (name, parsed), = parsed.items()
+            parts.append(name)
+        parts = tuple(parts)
+    except (tomllib.TOMLDecodeError, ValueError):
+        parts = tuple(text.split("."))
     node: Node = _ROOT
     for index, part in enumerate(parts):
         child = node.child(part) if isinstance(node, Table) else None

@@ -369,6 +369,14 @@ class ValidationTests(support.ScratchCase):
         )
 
 
+class ParseKeyTests(unittest.TestCase):
+    def test_a_quoted_key_part_is_accepted(self) -> None:
+        self.assertEqual(
+            schema.parse_key('providers."claude-code".role_models.coder'),
+            ("providers", "claude-code", "role_models", "coder"),
+        )
+
+
 class GroupIsolationTests(support.ScratchCase):
     """R5.3: a reader of one group does not depend on another group."""
 
