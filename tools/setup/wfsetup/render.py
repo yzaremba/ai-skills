@@ -339,8 +339,8 @@ class Run:
         self._emptied: list[Path] = []
         self._ignore_always = False
         self._roles: Roles | None = None           # whether the roles are generated; see ``roles``
-        self._disabled: frozenset[str] | None = None   # what setup.disabled keeps out; see ``disabled``
-        self._disabled_read = False
+        self._selection: definitions.Selection | None = None   # the home's units; see ``home_selection``
+        self._selection_read = False
         self.notes: list[str] = []                 # what a part says beside its items; printed as notes
         self.model_notes: list[str] = []           # the model-list note (R3.2): printed after every other note
         # Called once the plan has run, been shown or been refused: a part's
@@ -1069,48 +1069,52 @@ def _has_place(provider: homes.Provider, name: str) -> bool:
     return any(place.name == name for place in provider.places)
 
 
-def disabled(run: Run) -> frozenset[str] | None:
-    """The skills and rules ``setup.disabled`` keeps out of the home, read
-    once. None where the two lists are at fault: the first part to ask
-    reports it, and the run then writes nothing."""
-    if not run._disabled_read:
-        run._disabled_read = True
+def home_selection(run: Run) -> definitions.Selection | None:
+    """The skills and rules the home installs, read once, with the roles
+    of the run (``roles``) deciding whether the skills they need come in.
+    Each unit added as a dependency is named in a note. None where the
+    lists or the roles setting are at fault: the first part to ask reports
+    it, and the run then writes nothing."""
+    if not run._selection_read:
+        run._selection_read = True
         try:
-            run._disabled = definitions.disabled(_locations(run, None), run.sources.skills)
+            run._selection = definitions.home_selection(
+                _locations(run, None), run.sources.skills, roles(run).home)
+            run.notes.extend(run._selection.notes())
         except SetupError as exc:
             run.fail(*exc.lines)
-    return run._disabled
+    return run._selection
 
 
 def fill_skills(run: Run) -> None:
     """Every skill into the skills place of each installed provider its
-    ``compatibility`` line names (R6.2), but those ``setup.disabled`` names.
-    A skill with a setup of its own is skipped, whatever is at its path
+    ``compatibility`` line names (R6.2), but those the home's selection
+    leaves out. A skill with a setup of its own is skipped, whatever is at its path
     (R1.2)."""
-    off = disabled(run)
-    if off is None:
+    selection = home_selection(run)
+    if selection is None:
         return
     for provider in run.homes.installed():
         if not _has_place(provider, homes.SKILLS):
             continue
         place = provider.place(homes.SKILLS)
         for name, skill in run.sources.skills.items():
-            if provider.name in skill.providers and name not in off:
+            if provider.name in skill.providers and (name in selection.units or skill.own_setup):
                 run.link(provider, place, name, run.homes.clone / name, own_setup=skill.own_setup)
 
 
 def fill_rules(run: Run) -> None:
     """Every rule directory into the rules place of each installed provider
-    that has one: Claude Code (R2.2), but those ``setup.disabled`` names."""
-    off = disabled(run)
-    if off is None:
+    that has one: Claude Code (R2.2), those of the home's selection."""
+    selection = home_selection(run)
+    if selection is None:
         return
     rules = homes.rule_directories(run.homes.clone)
     for provider in run.homes.installed():
         if _has_place(provider, homes.RULES):
             place = provider.place(homes.RULES)
             for rule in rules:
-                if rule.name not in off:
+                if rule.name in selection.units:
                     run.link(provider, place, rule.name, rule)
 
 

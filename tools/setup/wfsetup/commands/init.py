@@ -31,6 +31,7 @@ What is asked
         --memory-dir DIR                  memory.dir
         --allow-unshared-clone / --no-... setup.allow_unshared_clone
                                           (the user's file only)
+        --skills NAME...                  project.enabled (with --project; below)
         --unset KEY                       take KEY out of the file (below)
 
     The first three, and --unset, may be given several times. Each answer is checked by
@@ -49,6 +50,17 @@ What is asked
     then the value in effect, false (a shared clone required) unless the
     file already says otherwise. Elsewhere it is not asked, a value the file
     holds stays, and the flag still sets it.
+
+    --skills NAME... (with --project only) sets project.enabled in the
+    project's file to exactly the names given: the whole list, so the one
+    flag adds and removes. A name is a skill or the rule of this clone (the
+    names `show project` and `render --project` use). It is a stated answer
+    and is never asked. project.disabled and the local file are written by
+    hand. Every `init --project` run, with --skills or without, first
+    reports the faults in the project's two files' [project] lists (a name
+    that is no unit, a name in both lists of one file), each with its file,
+    and writes nothing while there is one; a list that --skills or
+    --unset project.enabled replaces is not read for it.
 
     A script that answers every question by flag, without --yes, now gives
     --roles or --no-roles too, and, on a clone the other side cannot read,
@@ -112,11 +124,12 @@ Taking a key out
     then ...". KEY is a key `init` writes: one of the settings above
     (setup.allow_unshared_clone only without --project), or
     providers.<p>.tiers.<t>, providers.<p>.efforts.<e> or
-    providers.<p>.role_models.<role> of a provider this run sets up. Any
-    other key is an error. An unset key is an answer: its question is not
-    asked. A key the file does not hold changes nothing, and a line says
-    so. --unset together with a flag that answers the same key is an error.
-    --role-model PROVIDER:ROLE= with an empty model also takes one entry out.
+    providers.<p>.role_models.<role> of a provider this run sets up, or
+    project.enabled (with --project). Any other key is an error. An unset
+    key is an answer: its question is not asked. A key the file does not
+    hold changes nothing, and a line says so. --unset together with a flag
+    that answers the same key is an error. --role-model PROVIDER:ROLE= with
+    an empty model also takes one entry out.
 
     At a question about a setting, the answer `default` does the same. At a
     tier or effort question of a project's file, NAME=default takes that
@@ -179,7 +192,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .. import commands, dictionary, fileops, fsio, homes, locations, modellist, profiles, roles, schema, settings
-from .. import tomlio
+from .. import tomlio, validate
+from ..definitions import PROJECT_ENABLED_KEY, project_selection, units
 from ..dictionary import Dictionary
 from ..errors import SetupError
 from ..modellist import Comparison, Reading
@@ -250,8 +264,14 @@ def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--unset", action="append", default=[], metavar="KEY",
         help="take KEY out of the file, so that it follows the layer below again; a setting above, or a "
-        "provider's tier, effort or role model (a tier or an effort is refused when writing the user's file). Not asked. "
+        "provider's tier, effort or role model (a tier or an effort is refused when writing the user's file), or "
+        "project.enabled (with --project). Not asked. "
         "May be given several times",
+    )
+    parser.add_argument(
+        "--skills", nargs="+", metavar="NAME",
+        help="project.enabled: the skills and the rule the project uses, exactly these (the whole list; with "
+        "--project only). Not asked",
     )
     parser.add_argument(
         "--allow-unlisted", action="store_true",
@@ -504,7 +524,8 @@ def _settle_map(
                 if value == "default":
                     raise SetupError(
                         f"{item}: the user's file holds the {word} mapping in full, so a key is not taken out; "
-                        f"a model really named default is given by {flag} {state.name}:{name}=default"
+                        f"{'an effort' if table == 'efforts' else 'a model'} really named default is given by "
+                        f"{flag} {state.name}:{name}=default"
                     )
                 _check(f"providers.{state.name}.{table}.{name}", value, "answer")
                 changed[name] = value
@@ -642,6 +663,8 @@ def run(args: argparse.Namespace) -> int:
         raise SetupError("--user and --project: give one; they name two different files")
     where = locations.from_args(args)
     scope = PROJECT if where.project is not None else USER
+    if args.skills and scope != PROJECT:
+        raise SetupError("--skills: names the skills of a project; give it with --project DIR")
     target: Path = where.project_file if scope == PROJECT else where.user_file  # type: ignore[assignment]
     below_layers = ("shipped",) if scope == USER else ("shipped", USER)
     found = homes.resolve(where)
@@ -657,6 +680,11 @@ def run(args: argparse.Namespace) -> int:
     current = [document for document in settings.documents(where) if document.layer == scope]
     existing = _flat(current[0].data) if current else None
     flat: dict[str, Any] = dict(existing or {})
+
+    skills_given: list[str] = []
+    if scope == PROJECT:
+        replaced = bool(args.skills) or PROJECT_ENABLED_KEY in (".".join(schema.parse_key(text)) for text in args.unset)
+        skills_given = _project_skills(where, target, args.skills or [], replaced)
 
     def proposed(key: str) -> Any:
         return flat[key] if key in flat else below[key].value
@@ -734,11 +762,14 @@ def run(args: argparse.Namespace) -> int:
         mapped = len(parts) == 4 and parts[0] == "providers" and parts[2] in (*_MAPS, "role_models")
         if mapped and parts[2] in _MAPS and parts[3] not in _MAPS[parts[2]][2]:
             mapped = False
-        if not (key in settings_keys or mapped):
+        if not (key in settings_keys or mapped or key == PROJECT_ENABLED_KEY):
             raise SetupError(
                 f"--unset {text}: not a key `init` writes; those are {', '.join(sorted(settings_keys))}, "
-                "and providers.<provider>.tiers.<tier>, .efforts.<effort> and .role_models.<role>"
+                f"{PROJECT_ENABLED_KEY} (with --project), and providers.<provider>.tiers.<tier>, "
+                ".efforts.<effort> and .role_models.<role>"
             )
+        if key == PROJECT_ENABLED_KEY and scope != PROJECT:
+            raise SetupError(f"--unset {text}: {key} is a key of a project's file; give it to `init` with --project")
         if key == homes.UNSHARED_KEY and scope == PROJECT:
             raise SetupError(f"--unset {text}: {key} is read from the user's file alone; give it to `init` without --project")
         if mapped and parts[1] not in names:
@@ -751,7 +782,7 @@ def run(args: argparse.Namespace) -> int:
                 f"--unset {text}: the user's file holds the {parts[2]} mapping in full, so a key of it is not taken "
                 "out; give --tier or --effort to change one"
             )
-        if key in answers or (mapped and (parts[1], parts[3]) in flags[parts[2]]):
+        if key in answers or (key == PROJECT_ENABLED_KEY and skills_given) or (mapped and (parts[1], parts[3]) in flags[parts[2]]):
             raise SetupError(f"--unset {text}: a flag answers the same key; give one of them")
         if key in unset:
             continue
@@ -833,6 +864,10 @@ def run(args: argparse.Namespace) -> int:
     for key in unset:
         if key.split(".")[2:3] == ["role_models"]:
             flat.pop(key, None)
+    if skills_given:
+        place(PROJECT_ENABLED_KEY, skills_given, stated=True)
+    elif PROJECT_ENABLED_KEY in unset:
+        flat.pop(PROJECT_ENABLED_KEY, None)
     for key, flag, _, kind in _SETTINGS:
         if key in answers:
             place(key, answers[key], stated=True)
@@ -897,6 +932,8 @@ def run(args: argparse.Namespace) -> int:
             print(f"  {key} = {tomlio.format_value(flat[key])}  (in this file{why})")
         else:
             print(f"  {key} = {tomlio.format_value(below[key].value)}  ({below[key].layer}; not written{why})")
+    if PROJECT_ENABLED_KEY in flat:
+        print(f"  {PROJECT_ENABLED_KEY} = {tomlio.format_value(flat[PROJECT_ENABLED_KEY])}  (in this file)")
     print()
 
     # --- Plan -----------------------------------------------------------------
@@ -970,6 +1007,33 @@ def run(args: argparse.Namespace) -> int:
         print(f"the file as it was is in {roots.backups_dir_of(scope == PROJECT) / plan.stamp}")
     print(_next_steps())
     return 0
+
+
+def _project_skills(where: Any, target: Path, given: list[str], replaced: bool) -> list[str]:
+    """The names ``--skills`` gave, each checked against the clone's units and
+    without repeats; and the faults of the project's two files' lists, with
+    their file, as one ``SetupError``. The faults of the file being written
+    are left out where ``replaced`` says its list is replaced or taken out."""
+    held = any(
+        document.layer in settings.PROJECT_LAYERS and isinstance(document.data.get("project"), dict)
+        for document in settings.documents(where, ("project",))
+    )
+    if not (held or given):
+        return []
+    skills = validate.check(where).skills
+    names = list(dict.fromkeys(given))
+    every = units(where, skills)
+    problems = [
+        f"--skills {name}: no skill or rule of this clone; those are {', '.join(sorted(every)) or 'none'}"
+        for name in names if name not in every
+    ]
+    try:
+        project_selection(where, skills)
+    except SetupError as exc:
+        problems.extend(line for line in exc.lines if not (replaced and line.startswith(f"{target}:")))
+    if problems:
+        raise SetupError(*problems)
+    return names
 
 
 def _same(one: Any, other: Any) -> bool:

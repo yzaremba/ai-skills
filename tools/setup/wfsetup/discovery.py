@@ -149,7 +149,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from . import definitions, entry, fsio, homes, modellist, paths, validate
+from . import definitions, entry, fsio, homes, modellist, paths, settings, validate
 from .errors import SetupError
 
 PROVEN = "proven"
@@ -711,11 +711,12 @@ def expected(context: Any, provider: homes.Provider) -> list[Item]:
     name = provider.name
     skills = provider.place(homes.SKILLS).path
     agents = provider.place(homes.AGENTS).path
-    off = definitions.disabled(where, context.sources.skills)
+    setting = settings.resolve(where, ("roles",)).get("roles.enabled")
+    installed = definitions.home_selection(where, context.sources.skills, setting is None or setting.value is not False).units
     items = [
         Item(name, SKILL, skill.name, skills / skill.name, invoke_only=skill.invoke_only)
         for skill in context.sources.skills.values()
-        if name in skill.providers and not skill.own_setup and skill.name not in off
+        if name in skill.providers and not skill.own_setup and skill.name in installed
     ]
     items += [
         Item(name, LOADED, made.role, skills / made.role, invoke_only=True)

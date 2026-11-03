@@ -391,12 +391,11 @@ def bound_skills(where: Locations) -> set[str]:
     return {row.skill for rows in bindings(where).values() for row in rows}
 
 
-def list_problems(enabled: settings.Entry | None, disabled: settings.Entry | None, units: set[str],
-                  bound: set[str]) -> list[tuple[Path, str]]:
+def list_problems(enabled: settings.Entry | None, disabled: settings.Entry | None,
+                  units: set[str]) -> list[tuple[Path, str]]:
     """What is wrong with ``setup.enabled`` and ``setup.disabled`` against
-    the clone's ``units``, as (file, message): a name that is no unit, a
-    process skill in ``disabled``, and, where a layer gives ``enabled``, a
-    unit in both lists or in neither. Without ``enabled``, every unit that
+    the clone's ``units``, as (file, message): a name that is no unit and,
+    where a layer gives ``enabled``, a unit in both lists or in neither. Without ``enabled``, every unit that
     ``disabled`` does not name is installed."""
     found: list[tuple[Path, str]] = []
     for key, entry in ((ENABLED_KEY, enabled), (DISABLED_KEY, disabled)):
@@ -406,9 +405,6 @@ def list_problems(enabled: settings.Entry | None, disabled: settings.Entry | Non
                                           "neither list"))
             elif name not in units:
                 found.append((entry.file, f"{key}: {name} is no skill or rule of this clone"))
-            elif key == DISABLED_KEY and name in bound:
-                found.append((entry.file, f"{key}: {name} is a process skill, which roles/bindings.toml binds roles "
-                                          "to; it cannot be disabled"))
     if enabled is None:
         return found
     on, off = set(enabled.value), set(() if disabled is None else disabled.value)
@@ -425,18 +421,126 @@ def list_problems(enabled: settings.Entry | None, disabled: settings.Entry | Non
     return found
 
 
-def disabled(where: Locations, skills: Iterable[str]) -> frozenset[str]:
-    """The skills and rules ``setup.disabled`` keeps out of a home, read
-    from the user's file and the shipped defaults; ``skills`` are the
-    clone's. Any fault of the two lists (``list_problems``) is a
-    ``SetupError``, so that no skill or rule is installed or left out
-    unnoticed."""
+ROLES_NEED = "the roles"
+PROJECT_ENABLED_KEY = "project.enabled"
+PROJECT_DISABLED_KEY = "project.disabled"
+
+
+@dataclass(frozen=True)
+class Selection:
+    """The units (skills and rules, by name) a home or a project installs.
+    ``needed`` maps each unit added as a dependency to what needs it: skills'
+    names, or ``ROLES_NEED``; ``overrides`` maps each such unit that a list
+    leaves out to that list's key and file, which the dependency overrides."""
+
+    units: frozenset[str]
+    needed: dict[str, tuple[str, ...]] = dataclasses.field(default_factory=dict)
+    overrides: dict[str, tuple[str, Path]] = dataclasses.field(default_factory=dict)
+
+    def notes(self) -> list[str]:
+        """One line for each unit added as a dependency, and for the list it
+        overrides, if one: render prints them."""
+        lines = []
+        for name in sorted(self.needed):
+            line = f"{name}: installed as a dependency of {', '.join(self.needed[name])}"
+            if name in self.overrides:
+                key, file = self.overrides[name]
+                line += f"; it overrides {key} in {file}, which names it"
+            lines.append(line)
+        return lines
+
+
+def _close(chosen: set[str], first: dict[str, list[str]], units: set[str], where: Locations,
+           left_out: dict[str, tuple[str, Path]]) -> Selection:
+    """``chosen`` with the ``needs`` of every unit in it, followed to the
+    end; ``first`` are the needs already known (the roles'). A unit added
+    is recorded once, with everything that needs it, and with the list in
+    ``left_out`` that named it, if any."""
+    needs = dependencies(where)
+    wanted = {name: list(by) for name, by in first.items()}
+    have = set(chosen) | set(wanted)
+    queue = sorted(have)
+    while queue:
+        name = queue.pop(0)
+        for need in needs.get(name, ()):
+            if need not in units or (need in have and need not in wanted):
+                continue    # no unit, or one the lists chose themselves
+            if name not in wanted.setdefault(need, []):
+                wanted[need].append(name)
+            if need not in have:
+                have.add(need)
+                queue.append(need)
+    return Selection(
+        frozenset(have),
+        {name: tuple(by) for name, by in wanted.items()},
+        {name: left_out[name] for name in wanted if name in left_out},
+    )
+
+
+def home_selection(where: Locations, skills: Iterable[str], roles_on: bool) -> Selection:
+    """What a home installs: ``setup.enabled`` where a layer gives it, else
+    every unit ``setup.disabled`` does not name; with ``roles_on``, the
+    skills ``bound_skills`` names; then the ``needs`` of every unit,
+    followed to the end. A unit added that ``setup.disabled`` names is an
+    override. ``skills`` are the clone's. Any fault of the two lists
+    (``list_problems``) is a ``SetupError``, so that no skill or rule is
+    installed or left out unnoticed."""
     found = settings.resolve(user_level(where), ("setup",))
     on, off = found.get(ENABLED_KEY), found.get(DISABLED_KEY)
-    problems = list_problems(on, off, units(where, skills), bound_skills(where))
+    every = units(where, skills)
+    problems = list_problems(on, off, every)
     if problems:
         raise SetupError(*[f"{file}: {message}" for file, message in problems])
-    return frozenset(() if off is None else off.value)
+    left = set(() if off is None else off.value)
+    chosen = set(on.value) if on is not None else every - left
+    first: dict[str, list[str]] = {}
+    if roles_on:
+        for name in sorted(bound_skills(where) & every - chosen):
+            first[name] = [ROLES_NEED]
+    left_out = {name: (DISABLED_KEY, off.file) for name in left if off is not None}
+    return _close(chosen, first, every, where, left_out)
+
+
+def project_selection(where: Locations, skills: Iterable[str]) -> Selection | None:
+    """What a project links: ``project.enabled`` of both project files, read
+    from ``settings.documents`` (``settings.resolve`` merges key by key and
+    would give one file's list), minus the local file's ``project.disabled``,
+    plus the ``needs``. None where neither file holds the group. A name that
+    is no unit, and a name in both lists of one file, are a ``SetupError``
+    naming the file."""
+    if where.project is None:
+        return None
+    settings.resolve(where, ("project",))    # the faults of the group itself
+    every = units(where, skills)
+    chosen: list[str] = []
+    left: dict[str, tuple[str, Path]] = {}
+    problems: list[str] = []
+    held = False
+    for document in settings.documents(where, ("project",)):
+        group = document.data.get("project")
+        if document.layer not in settings.PROJECT_LAYERS or not isinstance(group, dict):
+            continue
+        held = True
+        lists = {key: [name for name in group.get(key, []) if isinstance(name, str)]
+                 for key in ("enabled", "disabled")}
+        for key, names in lists.items():
+            for name in names:
+                if name in homes.OWN_SETUP_SKILLS:
+                    problems.append(f"{document.file}: project.{key}: {name} has a setup of its own, which "
+                                    "installs it; it is in neither list")
+                elif name not in every:
+                    problems.append(f"{document.file}: project.{key}: {name} is no skill or rule of this clone")
+        for name in sorted(set(lists["enabled"]) & set(lists["disabled"])):
+            problems.append(f"{document.file}: project: {name} is in both {PROJECT_ENABLED_KEY} and "
+                            f"{PROJECT_DISABLED_KEY}; keep it in one")
+        chosen.extend(lists["enabled"])
+        if document.layer == "local":
+            left = {name: (PROJECT_DISABLED_KEY, document.file) for name in lists["disabled"]}
+    if problems:
+        raise SetupError(*problems)
+    if not held:
+        return None
+    return _close(set(chosen) - set(left), {}, every, where, left)
 
 
 def skills_place(where: Locations, provider: str, found: homes.Homes | None = None) -> str:

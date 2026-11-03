@@ -73,6 +73,28 @@ are null, because nothing decided a value that is not written, and
 is null. The notes of the paragraph above are "notes", a list beside
 "profiles", and are then not repeated on stderr.
 
+The group project is not printed as merged lines, because its lists do not
+merge key by key: the project's set is every name in project.enabled of
+either file, less every name in the local file's project.disabled, plus the
+units those need. In place of the merged lines the group prints each list of
+each file, with its layer (project or local), then the resulting set, then a
+line for each unit added as a dependency, with what needs it:
+
+    project.enabled = ["alpha", "beta"]  (project)
+    project.disabled = ["alpha"]  (local)
+    project set = ["beta", "solo"]
+      solo: installed as a dependency of beta
+
+Any KEY inside the group (project.enabled) prints the whole of it. A project
+whose two files hold no [project] group, and a run with no --project, print
+nothing for it. A name that is no unit, and a name in both lists of one
+file, are errors naming the file. With --json the same is "project", a
+sibling of "settings", and absent in the same cases: "files" (each with
+"layer", "file", "enabled" and "disabled", null for a list the file does not
+hold), "set", "needed" (a unit added as a dependency, and what needs it) and
+"overrides" (such a unit that a list leaves out, with the list's "key" and
+"file").
+
 Exit code 0, or 2 on an error, which is printed to stderr; 130 when
 interrupted with Ctrl-C, and 128 plus the signal's number when told to end
 by a signal; 141 when the reader of the output went away.
@@ -84,7 +106,7 @@ import json
 import sys
 from typing import Any
 
-from .. import locations, profiles, schema, settings, tomlio
+from .. import definitions, locations, profiles, schema, settings, tomlio, validate
 from ..errors import SetupError
 from ..profiles import Resolution, Resolved, Source
 
@@ -108,6 +130,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
 def run(args: argparse.Namespace) -> int:
     where = locations.from_args(args, writes=False)
     resolved: Resolution | None = None
+    wanted: list[tuple[str, ...]] = []
     if not args.key:
         entries = settings.resolve(where)
     else:
@@ -131,6 +154,11 @@ def run(args: argparse.Namespace) -> int:
         }
         if ("roles",) in wanted:
             resolved = profiles.resolution(where)
+    chosen = None
+    if any(key.startswith("project.") for key in entries):
+        entries = {key: entry for key, entry in entries.items() if not key.startswith("project.")}
+    if (not args.key or any(parts[0] == "project" for parts in wanted)) and _project_files(where):
+        chosen = definitions.project_selection(where, validate.check(where).skills)
     if args.json:
         report: dict[str, Any] = {
             "schema_version": schema.SCHEMA_VERSION,
@@ -139,6 +167,8 @@ def run(args: argparse.Namespace) -> int:
                 for key, entry in entries.items()
             },
         }
+        if chosen is not None:
+            report["project"] = _project_json(where, chosen)
         if resolved is not None:
             report["profiles"] = _profiles_json(resolved.profiles)
             report["notes"] = list(resolved.notes)
@@ -146,6 +176,9 @@ def run(args: argparse.Namespace) -> int:
     else:
         for key, entry in entries.items():
             print(f"{key} = {tomlio.format_value(entry.value)}  ({entry.layer})")
+        if chosen is not None:
+            for line in _project_lines(where, chosen):
+                print(line)
         if resolved is not None and resolved.profiles:
             print()
             print(PROFILES_HEADING)
@@ -156,6 +189,38 @@ def run(args: argparse.Namespace) -> int:
             for note in resolved.notes:
                 print(f"note: {note}", file=sys.stderr)
     return 0
+
+
+def _project_files(where: locations.Locations) -> list[tuple[str, Any, dict[str, Any]]]:
+    """The layer, file and ``[project]`` table of each project file that holds the group."""
+    return [
+        (document.layer, document.file, document.data["project"])
+        for document in settings.documents(where, ("project",))
+        if document.layer in settings.PROJECT_LAYERS and isinstance(document.data.get("project"), dict)
+    ]
+
+
+def _project_lines(where: locations.Locations, chosen: definitions.Selection) -> list[str]:
+    lines = []
+    for layer, _, group in _project_files(where):
+        for key in ("enabled", "disabled"):
+            if key in group:
+                lines.append(f"project.{key} = {tomlio.format_value(group[key])}  ({layer})")
+    lines.append(f"project set = {tomlio.format_value(sorted(chosen.units))}")
+    lines.extend(f"  {note}" for note in chosen.notes())
+    return lines
+
+
+def _project_json(where: locations.Locations, chosen: definitions.Selection) -> dict[str, Any]:
+    return {
+        "files": [
+            {"layer": layer, "file": str(file), "enabled": group.get("enabled"), "disabled": group.get("disabled")}
+            for layer, file, group in _project_files(where)
+        ],
+        "set": sorted(chosen.units),
+        "needed": {name: list(by) for name, by in sorted(chosen.needed.items())},
+        "overrides": {name: {"key": key, "file": str(file)} for name, (key, file) in sorted(chosen.overrides.items())},
+    }
 
 
 def _through(source: Source) -> str:

@@ -1,4 +1,6 @@
-# Shipped defaults: the first settings layer. Later layers win, key by key:
+# Shipped defaults: the first settings layer. Later layers win, key by key,
+# except [project]: its two lists combine across the project's two files
+# (see the [project] comment below):
 #   ~/.agents/workflow.toml
 #   <project>/.agents/workflow.toml
 #   <project>/.agents/workflow.local.toml   (git-ignored)
@@ -71,9 +73,10 @@ allow_unshared_clone = false
 # an earlier run made to one that is disabled. One in neither list or in both
 # stops `render` with an error. To change them, write both lists in
 # ~/.agents/workflow.toml: a key there replaces the shipped one whole. A
-# process skill (one roles/bindings.toml names) cannot be disabled, and the
-# collaboration skill, which has a setup of its own, is in neither. The roles
-# are roles.enabled, above.
+# process skill (one roles/bindings.toml names) in disabled is installed all
+# the same while the roles are on, and so is any unit an enabled skill needs
+# (roles/dependencies.toml); `render` says so. The collaboration skill, which
+# has a setup of its own, is in neither. The roles are roles.enabled, above.
 enabled = ["prd-implementation", "epic-implementation", "project-memory", "self-reflection"]
 disabled = ["csv-tools", "json-tools", "usage-cost", "avoid-bash-injection-heuristics"]
 
@@ -81,6 +84,9 @@ disabled = ["csv-tools", "json-tools", "usage-cost", "avoid-bash-injection-heuri
 # Read from a project's two files alone, <project>/.agents/workflow.toml and
 # <project>/.agents/workflow.local.toml; in ~/.agents/workflow.toml it is a
 # fault. Nothing is shipped here, so the shipped layer gives nothing.
+# [project] is the exception to "later layers win, key by key": the local
+# file's project.enabled does not replace the shared file's, the two lists
+# combine; the local file's project.disabled then takes names out.
 #
 # The skills and rules (names as in `setup.enabled`) the project uses:
 #   enabled  = ["prd-implementation"]   # in either file

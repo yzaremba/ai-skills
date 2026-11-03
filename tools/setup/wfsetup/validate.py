@@ -1656,12 +1656,8 @@ def _check_lists(run: _Run, file: Path, setup: dict[str, Any]) -> None:
     given = {key: settings.Entry(setup[key], "shipped", file) for key in ("enabled", "disabled") if key in setup}
     if not given:
         return
-    try:
-        bound = definitions.bound_skills(run.where)
-    except SetupError:
-        bound = set()  # the check of the binding table says why
     for _, message in definitions.list_problems(
-        given.get("enabled"), given.get("disabled"), definitions.units(run.where, run.skills), bound,
+        given.get("enabled"), given.get("disabled"), definitions.units(run.where, run.skills),
     ):
         run.add(file, "defaults", message)
 

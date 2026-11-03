@@ -282,10 +282,15 @@ def order(key: str) -> list[tuple[int, Any]]:
     return rank
 
 
+_DOTTED_KEY = re.compile(r"""\s*(?:[A-Za-z0-9_-]+|"[^"\n]*"|'[^'\n]*')(?:\s*\.\s*(?:[A-Za-z0-9_-]+|"[^"\n]*"|'[^'\n]*'))*\s*""")
+
+
 def parse_key(text: str) -> tuple[str, ...]:
     """Split a key given on the command line and check that the schema has
     such a place: a group, a table in it, or one value."""
     try:   # a TOML key, so a part may be quoted: providers."claude-code".role_models.coder
+        if not _DOTTED_KEY.fullmatch(text):
+            raise ValueError(text)   # more than one key: "a = 1 #", "[a]\nb"
         parsed: Any = tomllib.loads(f"{text} = 0")
         parts = []
         while isinstance(parsed, dict):

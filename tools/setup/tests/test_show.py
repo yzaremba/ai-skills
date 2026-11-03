@@ -211,6 +211,69 @@ class SeveralKeysTests(support.ScratchCase):
         self.assertNotIn("profiles", json.loads(self.show("roles.coder", "memory", "--json")[1]))
 
 
+class ShowProjectTests(support.ScratchCase):
+    """``show project``: each file's lists with their layer, then the set."""
+
+    def clone_skills(self) -> None:
+        for name in ("alpha", "beta", "solo"):
+            self.write(self.clone / name / "SKILL.md",
+                       f"---\nname: {name}\ndescription: Does {name}.\ncompatibility: claude-code, codex\n---\n\n# {name}\n")
+        self.write(self.clone / "roles" / "dependencies.toml",
+                   'schema_version = 1\n\n[needs]\nalpha = ["beta"]\n')
+
+    def lists(self) -> None:
+        self.clone_skills()
+        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
+        self.write(self.local_file, '[project]\nenabled = ["solo"]\ndisabled = ["beta"]\n')
+
+    def test_both_files_lists_and_the_set(self) -> None:
+        self.lists()
+        code, out, err = self.show("project")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(
+            out,
+            'project.enabled = ["alpha"]  (project)\n'
+            'project.enabled = ["solo"]  (local)\n'
+            'project.disabled = ["beta"]  (local)\n'
+            'project set = ["alpha", "beta", "solo"]\n'
+            f"  beta: installed as a dependency of alpha; it overrides project.disabled in {self.local_file}, which names it\n",
+        )
+
+    def test_a_bare_show_ends_with_it_and_has_no_merged_project_lines(self) -> None:
+        self.lists()
+        out = self.show()[1]
+        self.assertTrue(out.startswith(SHIPPED_TEXT + 'project.enabled = ["alpha"]  (project)\n'), out)
+        self.assertEqual(out.count("project.enabled"), 2)
+
+    def test_json(self) -> None:
+        self.lists()
+        report = json.loads(self.show("project", "--json")[1])
+        self.assertEqual(report["settings"], {})
+        self.assertEqual(report["project"], {
+            "files": [
+                {"layer": "project", "file": str(self.project_file), "enabled": ["alpha"], "disabled": None},
+                {"layer": "local", "file": str(self.local_file), "enabled": ["solo"], "disabled": ["beta"]},
+            ],
+            "set": ["alpha", "beta", "solo"],
+            "needed": {"beta": ["alpha"]},
+            "overrides": {"beta": {"key": "project.disabled", "file": str(self.local_file)}},
+        })
+
+    def test_a_project_without_the_group_prints_nothing(self) -> None:
+        self.clone_skills()
+        self.write(self.project_file, '[process]\ndocs_dir = "d"\n')
+        self.assertEqual(self.show("project"), (0, "", ""))
+        self.assertNotIn("project", json.loads(self.show("project", "--json")[1]))
+        self.assertEqual(self.show("project", project=False), (0, "", ""))
+
+    def test_a_name_that_is_no_unit_is_an_error_with_its_file(self) -> None:
+        self.clone_skills()
+        self.write(self.project_file, '[project]\nenabled = ["nope"]\n')
+        code, _, err = self.show("project")
+        self.assertEqual(code, 2)
+        self.assertIn(f"{self.project_file}: project.enabled: nope is no skill or rule of this clone", err)
+
+
 class ShowJsonTests(support.ScratchCase):
     def test_value_layer_and_file_for_each_key(self) -> None:
         self.write(self.user_file, '[process]\nrecommend = false\n[roles.coder]\neffort = "max"\n')

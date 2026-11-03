@@ -629,7 +629,6 @@ class ListsCase(RenderCase):
     def test_a_fault_of_the_lists_stops_the_run_before_anything_is_written(self) -> None:
         self.assertEqual(self.render()[0], 0)
         for disabled, enabled, line in (
-            (("alpha",), None, "setup.disabled: alpha is a process skill, which roles/bindings.toml binds roles to"),
             ((), (*self.ALL, "multiagent-collab"), "setup.enabled: multiagent-collab has a setup of its own"),
             (("gamma",), None, "setup.disabled: gamma is no skill or rule of this clone"),
             (("beta",), self.ALL, "setup: beta is in both setup.enabled and setup.disabled; keep it in one"),

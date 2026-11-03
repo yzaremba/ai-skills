@@ -1786,7 +1786,6 @@ class SettingsTests(TreeCase):
         self.assertEqual(lists('"alpha", "beta", "sample"'),
                          ["setup: solo is in neither setup.enabled nor setup.disabled; put it in one"])
         self.assertEqual(lists('"alpha", "beta", "solo", "sample", "multiagent-collab"', '"alpha"'), [
-            "setup.disabled: alpha is a process skill, which roles/bindings.toml binds roles to; it cannot be disabled",
             "setup.enabled: multiagent-collab has a setup of its own, which installs it; it is in neither list",
             "setup: alpha is in both setup.enabled and setup.disabled; keep it in one",
         ])

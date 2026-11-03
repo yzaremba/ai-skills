@@ -993,6 +993,51 @@ class ProjectTests(InitCase):
         self.assertEqual(self.tree(), before)
 
 
+class SkillsTests(InitCase):
+    """``init --project DIR --skills NAME...``: ``project.enabled``, exactly the names given."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        for name in ("alpha", "beta"):
+            self.write(self.clone / name / "SKILL.md",
+                       f"---\nname: {name}\ndescription: Does {name}.\ncompatibility: claude-code, codex\n---\n\n# {name}\n")
+        self.write(self.clone / "rules" / "sample" / "RULE.md", "A rule.\n")
+
+    def enabled(self) -> list:
+        return self.data(self.project_file)["project"]["enabled"]
+
+    def test_the_list_replaces_the_one_in_the_file(self) -> None:
+        self.write(self.project_file, '[project]\nenabled = ["alpha", "beta"]\n')
+        self.ok("--yes", "--rewrite-settings", "--skills", "beta", project=True)
+        self.assertEqual(self.enabled(), ["beta"])
+
+    def test_a_rule_is_taken_by_name_and_a_repeat_once(self) -> None:
+        self.ok("--yes", "--skills", "sample", "alpha", "sample", project=True)
+        self.assertEqual(self.enabled(), ["sample", "alpha"])
+
+    def test_an_unknown_name_is_an_error_and_writes_nothing(self) -> None:
+        err = self.refused("--yes", "--skills", "alpha", "nope", project=True)
+        self.assertIn("--skills nope: no skill or rule of this clone", err)
+
+    def test_it_is_refused_without_project(self) -> None:
+        err = self.refused("--yes", "--skills", "alpha")
+        self.assertIn("--skills: names the skills of a project; give it with --project DIR", err)
+
+    def test_a_name_in_both_lists_of_the_local_file_is_reported_without_skills(self) -> None:
+        self.write(self.local_file, '[project]\nenabled = ["alpha"]\ndisabled = ["alpha"]\n')
+        err = self.refused("--yes", project=True)
+        self.assertIn(f"{self.local_file}: project: alpha is in both project.enabled and project.disabled", err)
+
+    def test_unset_takes_the_list_out(self) -> None:
+        self.write(self.project_file, '[project]\nenabled = ["nope"]\n')
+        self.ok("--yes", "--rewrite-settings", "--unset", "project.enabled", project=True)
+        self.assertNotIn("enabled", self.data(self.project_file).get("project", {}))
+
+    def test_unset_with_skills_is_an_error(self) -> None:
+        err = self.refused("--yes", "--skills", "alpha", "--unset", "project.enabled", project=True)
+        self.assertIn("a flag answers the same key", err)
+
+
 class UnsetTests(InitCase):
     def test_unset_takes_a_setting_out_and_says_the_value_then(self) -> None:
         self.ok("--yes", "--no-manager-default", "--docs-dir", "sprints")

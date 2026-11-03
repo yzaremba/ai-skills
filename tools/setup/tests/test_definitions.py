@@ -1332,6 +1332,133 @@ class PlacesCase(DefinitionsCase):
                          ["quick.toml", "reviewer.toml", "runner.toml", "theirs.md", "worker-hard.toml", "worker.toml"])
 
 
+class SelectionCase(DefinitionsCase):
+    """The sets of a home and of a project. In the fixture clone alpha is the
+    process skill (the binding table names it); beta and solo are optional
+    and sample is a rule. ``beta`` needs ``solo`` where a test says so."""
+
+    NEEDS = 'schema_version = 1\n\n[needs]\nalpha = ["beta"]\nbeta = ["solo"]\n'
+
+    def selection(self, roles_on: bool = True) -> definitions.Selection:
+        return definitions.home_selection(self.where(), self.skills(), roles_on)
+
+    def skills(self) -> list[str]:
+        return ["alpha", "beta", "solo", "multiagent-collab"]
+
+    def user(self, enabled: str, disabled: str) -> None:
+        self.write(self.user_file, f"[setup]\nenabled = [{enabled}]\ndisabled = [{disabled}]\n")
+
+    def project_sel(self) -> definitions.Selection | None:
+        return definitions.project_selection(self.where(True), self.skills())
+
+    def test_a_skill_brings_what_it_needs_to_the_end(self) -> None:
+        self.put("roles/dependencies.toml", self.NEEDS)
+        self.user('"alpha", "sample"', '"beta", "solo"')
+        found = self.selection(roles_on=False)
+        self.assertEqual(found.units, {"alpha", "beta", "solo", "sample"})
+        self.assertEqual(found.needed, {"beta": ("alpha",), "solo": ("beta",)})
+        self.assertEqual(found.overrides, {"beta": ("setup.disabled", self.user_file),
+                                           "solo": ("setup.disabled", self.user_file)})
+        self.assertEqual(found.notes()[1], f"solo: installed as a dependency of beta; it overrides "
+                                           f"setup.disabled in {self.user_file}, which names it")
+
+    def test_a_missing_dependency_file_is_no_dependency(self) -> None:
+        self.user('"beta"', '"alpha", "solo", "sample"')
+        found = self.selection(roles_on=False)
+        self.assertEqual((found.units, found.needed), ({"beta"}, {}))
+
+    def test_roles_on_bring_the_bound_skills_over_setup_disabled_and_roles_off_do_not(self) -> None:
+        self.user('"beta", "solo", "sample"', '"alpha"')
+        on = self.selection(roles_on=True)
+        self.assertIn("alpha", on.units)
+        self.assertEqual(on.needed, {"alpha": ("the roles",)})
+        self.assertEqual(on.overrides, {"alpha": ("setup.disabled", self.user_file)})
+        self.assertNotIn("alpha", self.selection(roles_on=False).units)
+
+    def test_a_bound_skill_the_lists_install_is_not_a_dependency(self) -> None:
+        found = self.selection(roles_on=True)
+        self.assertEqual((found.needed, found.overrides), ({}, {}))
+
+    def test_a_unit_needed_twice_names_both(self) -> None:
+        self.put("roles/dependencies.toml", 'schema_version = 1\n\n[needs]\nalpha = ["solo"]\nbeta = ["solo"]\n')
+        self.user('"alpha", "beta", "sample"', '"solo"')
+        self.assertEqual(self.selection(roles_on=False).needed, {"solo": ("alpha", "beta")})
+
+    def write_project(self, shared: str | None = None, local: str | None = None) -> None:
+        for file, text in ((self.project_file, shared), (self.local_file, local)):
+            if text is not None:
+                self.write(file, text)
+
+    def test_a_project_without_the_group_has_no_selection(self) -> None:
+        self.assertIsNone(self.project_sel())
+        self.write_project('[process]\ndocs_dir = "d"\n', '[roles]\nenabled = true\n')
+        self.assertIsNone(self.project_sel())
+
+    def test_the_project_set_is_the_union_less_the_local_take_out(self) -> None:
+        self.write_project('[project]\nenabled = ["alpha", "beta"]\n',
+                           '[project]\nenabled = ["solo", "beta"]\ndisabled = ["alpha"]\n')
+        found = self.project_sel()
+        self.assertEqual(found.units, {"beta", "solo"})
+        self.assertEqual(found.needed, {})
+
+    def test_the_local_file_alone_gives_a_set(self) -> None:
+        self.write_project(None, '[project]\nenabled = ["solo"]\n')
+        self.assertEqual(self.project_sel().units, {"solo"})
+
+    def test_a_dependency_wins_over_project_disabled(self) -> None:
+        self.put("roles/dependencies.toml", self.NEEDS)
+        self.write_project('[project]\nenabled = ["beta"]\n', '[project]\ndisabled = ["solo"]\n')
+        found = self.project_sel()
+        self.assertEqual(found.units, {"beta", "solo"})
+        self.assertEqual(found.needed, {"solo": ("beta",)})
+        self.assertEqual(found.overrides, {"solo": ("project.disabled", self.local_file)})
+
+    def test_the_faults_of_a_project_set_name_the_file(self) -> None:
+        self.write_project('[project]\nenabled = ["gamma"]\n')
+        with self.assertRaises(SetupError) as raised:
+            self.project_sel()
+        self.assertEqual(raised.exception.lines,
+                         [f"{self.project_file}: project.enabled: gamma is no skill or rule of this clone"])
+        self.write_project('[project]\nenabled = ["beta"]\n', '[project]\nenabled = ["solo"]\ndisabled = ["solo"]\n')
+        with self.assertRaises(SetupError) as raised:
+            self.project_sel()
+        self.assertEqual(raised.exception.lines, [
+            f"{self.local_file}: project: solo is in both project.enabled and project.disabled; keep it in one"])
+
+    def test_a_process_skill_in_setup_disabled_is_no_fault(self) -> None:
+        self.user('"beta", "solo", "sample"', '"alpha"')
+        self.assertEqual(definitions.list_problems(
+            *[settings_entry for settings_entry in self.entries_of()], definitions.units(self.where(), self.skills())), [])
+
+    def entries_of(self):
+        from wfsetup import settings
+        found = settings.resolve(self.where(), ("setup",))
+        return found.get("setup.enabled"), found.get("setup.disabled")
+
+    def test_render_installs_a_process_skill_in_setup_disabled_and_says_why(self) -> None:
+        self.user('"beta", "solo", "sample"', '"alpha"')
+        code, out, err = self.render()
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertLinked(self.claude_skills / "alpha", self.clone / "alpha")
+        self.assertLinked(self.codex_skills / "alpha", self.clone / "alpha")
+        self.assertIn(f"note: alpha: installed as a dependency of the roles; it overrides setup.disabled in "
+                      f"{self.user_file}, which names it", out.splitlines())
+
+    def test_render_with_no_roles_leaves_it_out(self) -> None:
+        self.user('"beta", "solo", "sample"', '"alpha"')
+        code, out, err = self.render("--no-roles")
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertNothingAt(self.claude_skills / "alpha")
+        self.assertNotIn("installed as a dependency", out)
+
+    def test_render_installs_what_a_skill_needs(self) -> None:
+        self.put("roles/dependencies.toml", self.NEEDS)
+        self.user('"alpha", "beta", "sample"', '"solo"')
+        code, out, err = self.render()
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertLinked(self.claude_skills / "solo", self.clone / "solo")
+
+
 class RepositoryCase(RenderCase):
     """The repository's own roles, whatever they say: subsets only, so a
     role added later breaks nothing here."""
