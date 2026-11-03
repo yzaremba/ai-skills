@@ -1643,6 +1643,11 @@ def _check_defaults(run: _Run) -> None:
         for group in schema.GROUPS:
             if group in data:
                 schema.validate(group, data[group], file, lines)
+        if data.get("project"):
+            lines.append(
+                f"{file}: project: a project's own lists, read from a project's files alone; "
+                f"the shipped defaults hold no [project] values. Remove the group"
+            )
     run.loader(file, "defaults", lines)
     if not lines:
         run.defaults = data

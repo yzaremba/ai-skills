@@ -1775,6 +1775,14 @@ class SettingsTests(TreeCase):
         (self.clone / "tools" / "setup" / "defaults.toml").unlink()
         self.assertEqual(self.found(), [("tools/setup/defaults.toml", "defaults")])
 
+    def test_the_defaults_hold_no_project_values(self) -> None:
+        self.put("tools/setup/defaults.toml", support.FIXTURE_DEFAULTS + '\n[project]\nenabled = ["alpha"]\n')
+        problems = self.check().problems
+        self.assertEqual([(p.file, p.rule) for p in problems], [("tools/setup/defaults.toml", "defaults")])
+        self.assertIn("project", problems[0].message)
+        self.put("tools/setup/defaults.toml", support.FIXTURE_DEFAULTS)
+        self.assertEqual(self.found(), [])
+
     def test_the_shipped_lists_hold_each_skill_and_rule_once(self) -> None:
         def lists(enabled: str, disabled: str = "") -> list[str]:
             self.put("tools/setup/defaults.toml",
