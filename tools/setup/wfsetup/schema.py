@@ -114,6 +114,12 @@ PROVIDER = Table({
 # skills and rules a home installs and goes without; which names they may
 # hold is checked against the clone where they are read
 # (``definitions.list_problems``).
+#
+# ``[project]`` is read by the setup tool alone, and from a project's two
+# files alone (``PROJECT_ONLY``): it names the skills and rules the project
+# uses. ``project.enabled`` may be in either file; ``project.disabled`` is
+# for the local file alone (``settings.resolve``). The two lists combine
+# across the files instead of one replacing the other.
 SCHEMA: dict[str, Table] = {
     "process": Table({
         "docs_dir": _STRING,
@@ -143,10 +149,17 @@ SCHEMA: dict[str, Table] = {
         "enabled": Strings(),
         "disabled": Strings(),
     }),
+    "project": Table({
+        "enabled": Strings(),
+        "disabled": Strings(),
+    }),
 }
 GROUPS = tuple(SCHEMA)
 # The groups a project's files may not hold: read from the user's file alone.
 USER_ONLY = ("setup",)
+# The groups the user's file and the shipped defaults may not hold: read from
+# a project's files alone.
+PROJECT_ONLY = ("project",)
 _ROOT = Table(dict(SCHEMA))
 
 

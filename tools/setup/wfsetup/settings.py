@@ -14,7 +14,10 @@ is missing, and a ``.agents`` that is not a directory.
 
 A group of ``schema.USER_ONLY`` (``[setup]``) is read from the user's file
 alone: in a project's file it is a fault, reported whenever that group is
-asked for with the project's layers.
+asked for with the project's layers. A group of ``schema.PROJECT_ONLY``
+(``[project]``) is read from a project's two files alone: in the user's file
+or the shipped one it is a fault. ``project.disabled`` is allowed in the
+local file alone: in the shared project file it is a fault.
 
 ``resolve`` is asked for groups and touches nothing else: of each file it
 checks the version and the top-level key names, then validates and merges
@@ -134,6 +137,18 @@ def resolve(
                 problems.append(
                     f"{document.file}: {group}: read from the user's settings file alone "
                     f"(~/{USER_FILE}): it holds facts of this machine, not of a project. Move it there"
+                )
+                continue
+            if group in schema.PROJECT_ONLY and document.layer not in PROJECT_LAYERS:
+                problems.append(
+                    f"{document.file}: {group}: read from a project's files alone "
+                    f"(.agents/workflow.toml and .agents/workflow.local.toml): it names what "
+                    f"the project uses, not a fact of this machine. Move it there"
+                )
+                continue
+            if group == "project" and document.layer == "project" and "disabled" in content:
+                problems.append(
+                    f"{document.file}: project.disabled: allowed in .agents/workflow.local.toml only"
                 )
                 continue
             before = len(problems)

@@ -205,7 +205,7 @@ class ValidationTests(support.ScratchCase):
     def test_an_unknown_top_level_key(self) -> None:
         self.assertEqual(
             self.problems("[proces]\nrecommend = true\n"),
-            ["proces: unknown key; known here: schema_version, process, roles, memory, providers, setup"],
+            ["proces: unknown key; known here: schema_version, process, roles, memory, providers, setup, project"],
         )
 
     def test_an_unknown_key_in_a_role_override(self) -> None:
@@ -494,6 +494,50 @@ class RememberedChoiceTests(support.ScratchCase):
 
     def test_a_projects_setup_group_does_not_stop_a_reader_of_another_group(self) -> None:
         self.write(self.project_file, "[setup]\nallow_unshared_clone = true\n[process]\ndocs_dir = \"p\"\n")
+        self.assertEqual(settings.resolve(self.locations(), ("process",))["process.docs_dir"].value, "p")
+
+
+class ProjectGroupTests(support.ScratchCase):
+    """``[project]``: read from a project's two files alone."""
+
+    def problems(self, file, text: str, groups=schema.GROUPS) -> list[str]:
+        self.write(file, text)
+        with self.assertRaises(SetupError) as caught:
+            settings.resolve(self.locations(), groups)
+        return list(caught.exception.lines)
+
+    def test_the_group_is_read_from_a_project_file(self) -> None:
+        self.write(self.project_file, '[project]\nenabled = ["alpha", "beta"]\n')
+        self.write(self.local_file, '[project]\nenabled = ["gamma"]\ndisabled = ["alpha"]\n')
+        entries = settings.resolve(self.locations(), ("project",))
+        # Per file, the later layer wins key by key here; the sets combine where they are read.
+        self.assertEqual(entries["project.enabled"].value, ["gamma"])
+        self.assertEqual(entries["project.enabled"].layer, "local")
+        self.assertEqual((entries["project.disabled"].value, entries["project.disabled"].layer), (["alpha"], "local"))
+
+    def test_the_shipped_layer_gives_nothing(self) -> None:
+        self.assertEqual(settings.resolve(self.repository(), ("project",)), {})
+
+    def test_the_users_file_may_not_hold_the_group(self) -> None:
+        (line,) = self.problems(self.user_file, '[project]\nenabled = ["alpha"]\n', ("project",))
+        self.assertTrue(line.startswith(f"{self.user_file}: project: read from a project's files alone"), line)
+        self.assertEqual(self.problems(self.user_file, '[project]\nenabled = ["alpha"]\n'), [line])
+
+    def test_disabled_is_a_fault_in_the_shared_file_only(self) -> None:
+        (line,) = self.problems(self.project_file, '[project]\ndisabled = ["alpha"]\n', ("project",))
+        self.assertEqual(line, f"{self.project_file}: project.disabled: allowed in .agents/workflow.local.toml only")
+        self.project_file.unlink()
+        self.write(self.local_file, '[project]\ndisabled = ["alpha"]\n')
+        self.assertEqual(settings.resolve(self.locations(), ("project",))["project.disabled"].value, ["alpha"])
+
+    def test_the_lists_take_arrays_of_names(self) -> None:
+        self.assertEqual(
+            self.problems(self.project_file, '[project]\nenabled = "alpha"\n'),
+            [f"{self.project_file}: project.enabled: expected an array of strings, got a string"],
+        )
+
+    def test_a_fault_in_the_group_does_not_stop_a_reader_of_process(self) -> None:
+        self.write(self.project_file, '[project]\ndisabled = ["a"]\n[process]\ndocs_dir = "p"\n')
         self.assertEqual(settings.resolve(self.locations(), ("process",))["process.docs_dir"].value, "p")
 
 

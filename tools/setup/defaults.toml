@@ -9,8 +9,8 @@
 #
 # Each group is read only by what it names: the process skills read [process],
 # the roles read [roles] and [providers.<name>], the memory skill reads [memory],
-# the setup tool reads [setup]. The shipped [providers.<name>] sections are not
-# here: they come from providers/<name>/dictionary.toml.
+# the setup tool reads [setup] and [project]. The shipped [providers.<name>]
+# sections are not here: they come from providers/<name>/dictionary.toml.
 
 schema_version = 1
 
@@ -76,3 +76,13 @@ allow_unshared_clone = false
 # are roles.enabled, above.
 enabled = ["prd-implementation", "epic-implementation", "project-memory", "self-reflection"]
 disabled = ["csv-tools", "json-tools", "usage-cost", "avoid-bash-injection-heuristics"]
+
+# [project]
+# Read from a project's two files alone, <project>/.agents/workflow.toml and
+# <project>/.agents/workflow.local.toml; in ~/.agents/workflow.toml it is a
+# fault. Nothing is shipped here, so the shipped layer gives nothing.
+#
+# The skills and rules (names as in `setup.enabled`) the project uses:
+#   enabled  = ["prd-implementation"]   # in either file
+#   disabled = ["csv-tools"]            # in the local file alone: takes a
+#                                       # name out for this machine

@@ -129,7 +129,7 @@ class ShowTextTests(support.ScratchCase):
 
     def test_a_key_the_schema_does_not_have(self) -> None:
         cases = {
-            "proces": "error: proces: no such setting; known groups: process, roles, memory, providers, setup\n",
+            "proces": "error: proces: no such setting; known groups: process, roles, memory, providers, setup, project\n",
             "process.nope": "error: process.nope: no such setting; known under process: docs_dir, questions, recommend, density\n",
             "process.docs_dir.more": "error: process.docs_dir.more: no such setting; process.docs_dir is a single value\n",
             "process.": "error: process.: no such setting; known under process: docs_dir, questions, recommend, density\n",
@@ -200,7 +200,7 @@ class SeveralKeysTests(support.ScratchCase):
         self.assertEqual((code, out), (2, ""))
         self.assertEqual(
             err,
-            "error: proces: no such setting; known groups: process, roles, memory, providers, setup\n"
+            "error: proces: no such setting; known groups: process, roles, memory, providers, setup, project\n"
             "error: memory.nope: no such setting; known under memory: dir\n",
         )
 
