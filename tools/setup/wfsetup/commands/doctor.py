@@ -36,7 +36,9 @@ The checks, in the order they run:
     drift                a generated file (a role definition, a loaded role,
                          a Codex profile; in a project its definitions, the
                          starting role's keys, "agent" and "effortLevel" in
-                         .claude/settings.json, and its block) made from other
+                         .claude/settings.json, and its block; its links and
+                         rule copies whose unit left the project's list)
+                         made from other
                          sources or settings than today's, and one that
                          render would no longer make: warnings. Run render.
     hand-edits           a generated file whose content is not what setup
@@ -60,19 +62,27 @@ The checks, in the order they run:
                          role until `render --project DIR` takes it out.
                          Something at a path where render would
                          install, which setup did not make: an error, since
-                         render stops on it.
+                         render stops on it. With --project: a unit of the
+                         project's list (project.enabled) that is in neither
+                         the project nor the home, and the faults of the
+                         project's lists, with their file.
     links                a link the record lists that is missing, is no
                          longer a link, leads elsewhere than setup pointed
                          it, leads to something that does not exist (a moved
                          or removed clone), or resolves outside the clone:
-                         errors.
+                         errors. A project's link is told by where it
+                         leads, as render tells it: the other side's link
+                         with its own text or form, and one made by hand
+                         that render took over, are not reported.
     duplicate-skills     a skill name setup installs that is also in another
                          skill location of the same provider, with both
                          paths: a warning. For Codex the deprecated
                          <codex home>/skills, which it still reads, and it
                          does not merge two skills of one name; with
                          --project the project's .claude/skills and
-                         .agents/skills.
+                         .agents/skills. A project's link the record holds
+                         is not one: the home has the unit (render skips
+                         it there) and the link is the other side's.
     other-clones         a link in a skills or rules directory, or in the
                          record, that leads into another clone of this
                          repository, and a clone inside a skills directory:

@@ -1293,6 +1293,158 @@ class CollaborationCase(DoctorCase):
         self.assertIn("collaboration-skill", report["not_run"])
 
 
+class ProjectSetCase(DoctorCase):
+    """``doctor --project`` on a project that lists skills and a rule
+    (R5.1): the home leaves the units out, so the project links or copies
+    them."""
+
+    # Roles off: the roles bind alpha, which the home would then install.
+    HOME = '[roles]\nenabled = false\n[setup]\ndisabled = ["alpha", "sample", "solo"]\n'
+    LIST = '[project]\nenabled = ["alpha", "solo", "sample"]\n'
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write(self.user_file, self.HOME)
+        self.skills = self.project / ".claude" / "skills"
+        self.copy = self.project / ".claude" / "rules" / "sample" / "sample.md"
+
+    def project_rendered(self) -> None:
+        self.write(self.project_file, self.LIST)
+        self.with_project()
+
+    def subjects(self, findings: list[dict], *severities: str) -> list[str]:
+        return [found["subject"] for found in findings if found["severity"] in severities]
+
+    def test_a_rendered_set_is_clean(self) -> None:
+        self.project_rendered()
+        code, report = self.doctor(*self.project_arg)
+        loud = [(check["name"], found["detail"]) for check in report["checks"] for found in check["findings"]
+                if found["severity"] in (doctor.ERROR, doctor.WARNING)]
+        self.assertEqual((code, loud), (0, []))
+
+    def test_a_unit_in_neither_the_project_nor_the_home(self) -> None:
+        self.write(self.project_file, '[project]\nenabled = ["solo"]\n')
+        self.with_project()                       # the project is rendered, with solo only
+        self.write(self.project_file, self.LIST)
+        code, findings = self.only("missing", *self.project_arg)
+        self.assertEqual(code, 0)
+        self.assertFinding(findings, doctor.WARNING, "project:.claude/skills/alpha", "not installed")
+        self.assertFinding(findings, doctor.WARNING, "project:.claude/rules/sample/sample.md", "not installed")
+        self.assertEqual(fsio.look(self.skills / "alpha").kind, fsio.ABSENT)
+
+    def test_a_unit_the_home_has_is_not_missing(self) -> None:
+        self.project_rendered()
+        self.write(self.user_file, "")             # the home installs everything
+        self.render()
+        code, findings = self.only("missing", *self.project_arg)
+        self.assertQuiet(findings)
+
+    def test_a_link_that_leads_elsewhere(self) -> None:
+        self.project_rendered()
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        fsio.remove_link(self.skills / "alpha")
+        self.link(self.skills / "alpha", elsewhere)
+        code, findings = self.only("links", *self.project_arg)
+        self.assertEqual(code, 1)
+        self.assertFinding(findings, doctor.ERROR, "project:.claude/skills/alpha", "outside the clone", "changed since")
+        self.assertEqual(self.subjects(findings, doctor.ERROR), ["project:.claude/skills/alpha"])
+
+    def test_a_link_that_is_gone_or_a_directory(self) -> None:
+        self.project_rendered()
+        fsio.remove_link(self.skills / "solo")
+        code, findings = self.only("links", *self.project_arg)
+        self.assertEqual(code, 1)
+        self.assertFinding(findings, doctor.ERROR, "project:.claude/skills/solo", "the link is missing")
+
+    @unittest.skipUnless(POSIX, "a relative symlink")
+    def test_a_relative_link_and_a_link_by_hand_read_as_setups(self) -> None:
+        self.project_rendered()
+        fsio.remove_link(self.skills / "alpha")
+        os.symlink(os.path.relpath(self.clone / "alpha", self.skills), self.skills / "alpha")
+        code, findings = self.only("links", *self.project_arg)
+        self.assertQuiet(findings)
+        self.assertEqual(code, 0)
+
+    @unittest.skipUnless(POSIX, "a symlink")
+    def test_an_adopted_link_is_setups_to_every_check(self) -> None:
+        # Made by hand, as a relative link through the project, then taken over.
+        self.write(self.project_file, self.LIST)
+        self.skills.mkdir(parents=True)
+        os.symlink(os.path.relpath(self.clone / "alpha", self.skills), self.skills / "alpha")
+        self.with_project()
+        record = json.loads((self.project / ".agents" / "workflow-setup" / "manifest.json").read_text(encoding="utf-8"))
+        self.assertTrue(record["entries"]["project:.claude/skills/alpha"].get("adopted"))
+        self.write(self.user_file, "")             # the home has alpha too (R3.2)
+        self.render()
+        for name in ("links", "duplicate-skills", "other-clones", "missing"):
+            code, findings = self.only(name, *self.project_arg)
+            self.assertQuiet(findings)
+
+    def test_a_link_the_home_also_has_is_not_a_duplicate(self) -> None:
+        self.project_rendered()
+        self.write(self.user_file, "")             # the home now installs alpha, too
+        self.render()
+        code, findings = self.only("duplicate-skills", *self.project_arg)
+        self.assertQuiet(findings)
+        # A skill of the project's own, not in the record, still is one.
+        self.keep(self.project / ".claude" / "skills" / "beta" / "SKILL.md")
+        _, findings = self.only("duplicate-skills", *self.project_arg)
+        self.assertFinding(findings, doctor.WARNING, "beta", "is in two places")
+
+    def test_a_project_link_into_this_clone_is_not_another_clone(self) -> None:
+        self.project_rendered()
+        code, findings = self.only("other-clones", *self.project_arg)
+        self.assertEqual([found["severity"] for found in findings], [doctor.OK])
+        other = self.root / "other-clone"
+        self.write(other / "tools" / "setup" / "workflow_setup.py", "# the tool\n")
+        (other / "roles").mkdir()
+        self.write(other / "gamma" / "SKILL.md", "---\nname: x\n---\n")
+        self.link(self.skills / "gamma", other / "gamma")
+        _, findings = self.only("other-clones", *self.project_arg)
+        self.assertEqual(self.subjects(findings, doctor.WARNING), [str(self.skills / "gamma")])
+
+    def test_a_rule_copy_that_differs_from_the_clone(self) -> None:
+        self.project_rendered()
+        self.copy.write_bytes(b"edited by hand\n")
+        code, findings = self.only("hand-edits", *self.project_arg)
+        self.assertFinding(findings, doctor.WARNING, "project:.claude/rules/sample/sample.md", "edited by hand")
+        self.render(*self.project_arg, "--overwrite-edited")
+        self.put("rules/sample/sample.md", "A changed rule.\n")
+        code, findings = self.only("drift", *self.project_arg)
+        self.assertFinding(findings, doctor.WARNING, "project:.claude/rules/sample/sample.md",
+                           "sources or settings it was made from changed")
+
+    def test_an_entry_whose_unit_left_the_set(self) -> None:
+        self.project_rendered()
+        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
+        code, findings = self.only("drift", *self.project_arg)
+        self.assertFinding(findings, doctor.WARNING, "project:.claude/skills/solo", "run render")
+        self.assertFinding(findings, doctor.WARNING, "project:.claude/rules/sample/sample.md", "run render")
+        self.assertEqual(sorted(self.subjects(findings, doctor.WARNING)),
+                         ["project:.claude/rules/sample/sample.md", "project:.claude/skills/solo"])
+
+    def test_the_faults_of_the_lists_with_their_file(self) -> None:
+        self.write(self.project_file, '[project]\nenabled = ["alpha", "nothing"]\n')
+        code, findings = self.only("missing", *self.project_arg)
+        self.assertEqual(code, 1)
+        self.assertFinding(findings, doctor.ERROR, "render cannot plan the install", "nothing", str(self.project_file))
+
+    def test_doctor_project_writes_nothing(self) -> None:
+        self.project_rendered()
+        before = {name: snapshot(path) for name, path in (
+            ("home", self.home), ("project", self.project), ("clone", self.clone))}
+        fsio.remove_link(self.skills / "solo")      # something for the checks to say
+        self.copy.write_bytes(b"edited by hand\n")
+        before["project"] = snapshot(self.project)
+        for argv in ((), ("--json",)):
+            code, out, err = self.run_doctor(*self.project_arg, *argv)
+            self.assertEqual(code, 1, out)
+        after = {name: snapshot(path) for name, path in (
+            ("home", self.home), ("project", self.project), ("clone", self.clone))}
+        self.assertEqual(after, before)
+
+
 class ReadOnlyCase(DoctorCase):
     def everything(self) -> tuple[homes.Host, provider_stub.StubProgram, provider_stub.StubProgram]:
         """Stubs for every program doctor starts, each with an answer."""

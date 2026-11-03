@@ -720,7 +720,12 @@ def check_links(context: Context) -> list[Finding]:
             findings.append(error(f"{key}: no longer a link: a {seen.kind} is there; setup made it a link to {recorded}", key))
             continue
         real = os.path.realpath(path)
-        if not fsio.same_target(seen.target or "", recorded):
+        # A project's link is told by where it leads, as render tells it
+        # (R3.4): the other side's link has its own text and form, and a
+        # link made by hand and taken over has the user's.
+        in_project = key.partition(":")[0] == fileops.PROJECT
+        if not (fsio.same_target(seen.target or "", recorded, path.parent) or (
+                in_project and paths.fold(real) == paths.fold(os.path.realpath(recorded)))):
             outside = "" if _inside(real, clone) else ", outside the clone"
             findings.append(error(
                 f"{key}: the link now leads to {seen.target}{outside}; setup made it a link to {recorded}, and it "
@@ -741,6 +746,19 @@ def _is_skill(path: Path) -> bool:
         return os.path.isfile(path / validate.SKILL_FILE)
     except (OSError, ValueError):
         return False
+
+
+def _held_link(context: Context, path: Path) -> bool:
+    """Whether the record holds a link at ``path`` in the project."""
+    project = context.homes.project
+    if project is None:
+        return False
+    try:
+        relative = path.relative_to(project).as_posix()
+    except ValueError:
+        return False
+    found = context.record.get(f"{fileops.PROJECT}:{relative}")
+    return found is not None and found.get("kind") == "link"
 
 
 def check_duplicate_skills(context: Context) -> list[Finding]:
@@ -779,11 +797,16 @@ def check_duplicate_skills(context: Context) -> list[Finding]:
             "Codex does not merge two skills of one name and lists both"
             if provider.name == homes.CODEX else "two skills of one name are offered"
         )
+        project_place = None
+        if project is not None and provider.name in PROJECT_SKILLS:
+            project_place = project.joinpath(*PROJECT_SKILLS[provider.name])
         for directory, what in others:
             if paths.same(os.path.realpath(directory), os.path.realpath(install)):
                 continue  # one directory under two names
             looked += 1
             for name in names:
+                if directory == project_place and _held_link(context, directory / name):
+                    continue  # a link the record holds (R3.2): `links` and `drift` judge it
                 if _is_skill(directory / name):
                     findings.append(warning(
                         f"{provider.name}: the skill {name} is in two places: {install / name}, where setup "
