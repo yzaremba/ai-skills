@@ -2853,8 +2853,12 @@ class _Fold:
                 self._leave(key, "a link made by hand that setup took over; it is left in place, the user's")
             return
         replaced = entry.get("replaced")
+        # A project's link is setup's by its real path too, as in
+        # ``do_remove_link``: the other side may have made it with another text.
+        project_link = records.scope_of(key) == PROJECT
         if state.kind == LINK and any(
             fsio.same_target(state.target or "", text, base=path.parent)
+            or (project_link and self._leads_to(path, text))
             for text in self.roots.target_texts(entry["target"])
         ):
             self.now[ident] = _State(ABSENT)

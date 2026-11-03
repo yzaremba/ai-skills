@@ -965,6 +965,20 @@ class ProjectInstallCase(UninstallCase):
         self.assertNothingAt(link)
         self.assertAsItWas()
 
+    @unittest.skipUnless(POSIX and SYMLINKS, "a link through a link is made on a POSIX file system")
+    def test_a_link_through_an_alias_of_the_clone_is_removed_by_where_it_leads(self) -> None:
+        self.render_project()
+        link = self.skills / "beta"
+        alias = self.root / "alias"
+        os.symlink(str(self.clone), alias)
+        link.unlink()
+        os.symlink(str(alias / "beta"), link)    # the other side reaches the clone through a link
+        report = self.uninstall(project=True)
+        self.assertEqual((report["kept"], report["left"]), ([], []))
+        self.assertNothingAt(link)
+        self.assertNothingAt(self.project_state)
+        self.assertAsItWas()
+
     @unittest.skipUnless(SYMLINKS, "links")
     def test_an_adopted_link_stays_and_is_reported_as_left(self) -> None:
         link = self.skills / "beta"
