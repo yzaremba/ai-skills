@@ -648,6 +648,265 @@ class LinkTests(OpsCase):
         self.assertEqual(self.refused(plan).codes(), {fileops.CONFLICT})
 
 
+@unittest.skipUnless(SYMLINKS and POSIX, "a relative link is made on Linux and from WSL only")
+class ProjectLinkTests(OpsCase):
+    """A link from a project into the clone: a skill's directory, recorded
+    as ``clone:<name>``, with a relative text where it is asked for."""
+
+    KEY = "project:.claude/skills/json-tools"
+
+    def setUp(self) -> None:
+        super().setUp()
+        (self.clone / "json-tools").mkdir()
+        self.link = self.project / ".claude" / "skills" / "json-tools"
+
+    def make(self) -> fileops.Result:
+        plan = self.plan()
+        plan.create_link(self.link, self.clone / "json-tools", relative=True)
+        return plan.apply()
+
+    def test_a_relative_link_is_made_and_recorded_by_its_target(self) -> None:
+        lines = self.make().lines
+        self.assertIn(f"create link {self.KEY} -> clone:json-tools", lines)
+        self.assertEqual(os.readlink(self.link), os.path.join("..", "..", "..", "fake-clone", "json-tools"))
+        self.assertTrue(os.path.samefile(self.link, self.clone / "json-tools"))
+        self.assertEqual(self.record().get(self.KEY), {"kind": "link", "target": "clone:json-tools"})
+        self.assertNotIn(str(self.root), self.project_manifest_file.read_text(encoding="utf-8"))
+
+    def test_a_second_plan_is_up_to_date(self) -> None:
+        self.make()
+        after = self.snap()
+        plan = self.plan()
+        plan.create_link(self.link, self.clone / "json-tools", relative=True)
+        self.assertEqual(plan.describe().lines, [fileops.UP_TO_DATE])
+        plan.apply()
+        self.assertEqual(self.snap(), after)
+
+    def test_it_is_removed_as_setups_own(self) -> None:
+        self.put(self.clone / "json-tools" / "SKILL.md", "skill\n")
+        self.make()
+        plan = self.plan()
+        plan.remove_link(self.link, expect_target=self.clone / "json-tools")
+        plan.apply()
+        self.assertFalse(os.path.lexists(self.link))
+        self.assertIsNone(self.record().get(self.KEY))
+        self.assertEqual((self.clone / "json-tools" / "SKILL.md").read_bytes(), b"skill\n")
+
+    def test_the_way_back_removes_it(self) -> None:
+        before = self.snap()
+        self.make()
+        result = self.reversal(project=True).apply()
+        self.assertEqual(result.kept, [])
+        self.assertIn(f"remove link {self.KEY}", result.lines)
+        fileops.remove_state(self.roots, project=True)
+        self.assertEqual(self.snap(), before)
+
+    def test_a_killed_run_is_settled_by_the_text_written(self) -> None:
+        real = Manifest.save
+        saved: set[Path] = set()
+
+        def save(manifest: Manifest) -> None:
+            if manifest.file in saved:
+                raise Crash()
+            saved.add(manifest.file)
+            real(manifest)
+
+        with mock.patch.object(Manifest, "save", autospec=True, side_effect=save):
+            with self.assertRaises(Crash):
+                self.make()
+        pending = json.loads(self.project_manifest_file.read_bytes())["pending"]
+        self.assertIn(self.KEY, [item["path"] for item in pending])
+        self.assertEqual(self.record().get(self.KEY), {"kind": "link", "target": "clone:json-tools"})
+        plan = self.plan()
+        plan.create_link(self.link, self.clone / "json-tools", relative=True)
+        self.assertRegex(plan.apply().lines[0], r"complete the record of an interrupted run: \d+ changes were made, 0 were not")
+
+    def test_a_relative_link_is_not_asked_of_windows(self) -> None:
+        with mock.patch("os.name", "nt"):
+            with self.assertRaises(ValueError):
+                self.plan().create_link(self.link, self.clone / "json-tools", relative=True)
+
+    def test_the_project_record_names_only_a_skills_directory_of_the_clone(self) -> None:
+        (self.clone / "a" / "b").mkdir(parents=True)
+        self.link.parent.mkdir(parents=True)
+        os.symlink(str(self.clone / "json-tools"), self.link, target_is_directory=True)
+
+        def record_with(target: str) -> None:
+            self.put(self.project_manifest_file, json.dumps({
+                "schema_version": 1, "entries": {self.KEY: {"kind": "link", "target": target}},
+            }))
+
+        record_with("clone:json-tools")
+        self.assertEqual(self.record().get(self.KEY), {"kind": "link", "target": "clone:json-tools"})
+        for target in ("clone:.", "clone:a/b", "home:.claude/skills/json-tools"):
+            record_with(target)
+            with self.assertRaises(SetupError) as caught:
+                self.record()
+            self.assertIn(f"entry {self.KEY}", caught.exception.lines[0], target)
+        # The key is given for a skill's directory only; any other place in
+        # the clone is kept as the link's text.
+        self.assertEqual(self.roots.target_key(str(self.clone / "json-tools"), manifest.PROJECT), "clone:json-tools")
+        self.assertEqual(self.roots.target_key(str(self.clone / "a" / "b"), manifest.PROJECT), f"raw:{self.clone / 'a' / 'b'}")
+        self.assertEqual(self.roots.target_key(str(self.clone), manifest.PROJECT), f"raw:{self.clone}")
+        self.assertEqual(self.roots.target_key(str(self.clone / "a" / "b"), manifest.HOME), "clone:a/b")
+
+
+@unittest.skipUnless(SYMLINKS, "this system does not let the user make a symlink")
+class AdoptedLinkTests(OpsCase):
+    """A link in a project that the user made by hand to a skill of the
+    clone, taken over (R3.4): its text goes through another link to the
+    clone, so it leads there by its real path only."""
+
+    KEY = "project:.claude/skills/json-tools"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.put(self.clone / "json-tools" / "SKILL.md", "skill\n")
+        self.alias = self.root / "alias"
+        os.symlink(str(self.clone), self.alias, target_is_directory=True)
+        self.link = self.project / ".claude" / "skills" / "json-tools"
+        self.link.parent.mkdir(parents=True)
+        self.text = str(self.alias / "json-tools")
+        os.symlink(self.text, self.link, target_is_directory=True)
+
+    def adopt(self) -> fileops.Result:
+        plan = self.plan()
+        plan.adopt_link(self.link, self.clone / "json-tools")
+        return plan.apply()
+
+    def outside_state(self) -> dict[str, tuple]:
+        return {name: what for name, what in self.snap().items() if not name.startswith("project/.agents")}
+
+    def test_an_adoption_writes_only_the_record(self) -> None:
+        before = self.outside_state()
+        plan = self.plan()
+        plan.adopt_link(self.link, self.clone / "json-tools")
+        self.assertEqual(plan.describe().lines, [
+            "create directory project:.agents", "create directory project:.agents/workflow-setup",
+            f"take over link {self.KEY} -> clone:json-tools, made by hand",
+        ])
+        self.adopt()
+        self.assertEqual(self.outside_state(), before)
+        self.assertEqual(os.readlink(self.link), self.text)
+        self.assertEqual(
+            self.record().get(self.KEY), {"kind": "link", "target": "clone:json-tools", "adopted": True}
+        )
+        # Once taken over, setup's link to the skill is up to date as it is.
+        after = self.snap()
+        plan = self.plan()
+        plan.create_link(self.link, self.clone / "json-tools")
+        self.assertEqual(plan.describe().lines, [fileops.UP_TO_DATE])
+        plan.apply()
+        self.assertEqual(self.snap(), after)
+
+    def test_uninstall_leaves_it_and_forgets_it(self) -> None:
+        self.adopt()
+        result = self.reversal(project=True).apply()
+        self.assertIn(f"forget link {self.KEY}, made by hand; it stays, the user's", result.lines)
+        self.assertIn(self.KEY, [key for key, _ in result.left])
+        self.assertEqual(os.readlink(self.link), self.text)
+        self.assertIsNone(self.record().get(self.KEY))
+        fileops.remove_state(self.roots, project=True)
+        self.assertFalse(self.project_state.exists())
+        self.assertEqual(os.readlink(self.link), self.text)
+
+    def test_a_removal_removes_it_and_the_way_back_puts_nothing_back(self) -> None:
+        self.adopt()
+        plan = self.plan()
+        plan.remove_link(self.link, expect_target=self.clone / "json-tools")
+        self.assertEqual(plan.apply().lines, [f"remove link {self.KEY}"])
+        self.assertFalse(os.path.lexists(self.link))
+        self.assertIsNone(self.record().get(self.KEY))
+        self.assertEqual((self.clone / "json-tools" / "SKILL.md").read_bytes(), b"skill\n")
+        result = self.reversal(project=True).apply()
+        self.assertNotIn(self.KEY, " ".join(result.lines))
+        self.assertFalse(os.path.lexists(self.link))
+
+    def test_a_project_link_of_setup_with_another_text_is_removed_by_where_it_leads(self) -> None:
+        os.unlink(self.link)
+        plan = self.plan()
+        plan.create_link(self.link, self.clone / "json-tools")
+        plan.apply()
+        self.assertNotIn("adopted", self.record().get(self.KEY))
+        os.unlink(self.link)    # the other side writes it through a link to the clone
+        os.symlink(self.text, self.link, target_is_directory=True)
+        plan = self.plan()
+        plan.remove_link(self.link, expect_target=self.clone / "json-tools")
+        self.assertEqual(plan.apply().lines, [f"remove link {self.KEY}"])
+        self.assertFalse(os.path.lexists(self.link))
+        self.assertIsNone(self.record().get(self.KEY))
+
+    def test_one_already_gone_is_forgotten(self) -> None:
+        self.adopt()
+        os.unlink(self.link)
+        plan = self.plan()
+        plan.remove_link(self.link)
+        plan.apply()
+        self.assertIsNone(self.record().get(self.KEY))
+        self.reversal(project=True).apply()
+        self.assertFalse(os.path.lexists(self.link))
+
+    def test_it_is_refused_unless_a_link_of_the_users_leads_there(self) -> None:
+        (self.clone / "csv-tools").mkdir()
+        plan = self.plan()
+        plan.adopt_link(self.link, self.clone / "csv-tools")
+        self.assertEqual(self.refused(plan).codes(), {fileops.CONFLICT})
+        absent = self.project / ".claude" / "skills" / "csv-tools"
+        plan = self.plan()
+        plan.adopt_link(absent, self.clone / "csv-tools")
+        self.assertEqual(self.refused(plan).codes(), {fileops.CONFLICT})
+        self.adopt()
+        plan = self.plan()
+        plan.adopt_link(self.link, self.clone / "json-tools")
+        self.assertEqual(self.refused(plan).codes(), {fileops.CONFLICT})
+        home = self.home / ".claude" / "skills" / "json-tools"
+        home.parent.mkdir(parents=True)
+        os.symlink(str(self.clone / "json-tools"), home, target_is_directory=True)
+        plan = self.plan()
+        plan.adopt_link(home, self.clone / "json-tools")
+        self.assertEqual(self.refused(plan).codes(), {fileops.BAD_ACTION})
+
+    def test_adopted_is_a_mark_of_a_project_record_only(self) -> None:
+        def record_with(file: Path, key: str, adopted: object) -> None:
+            self.put(file, json.dumps({
+                "schema_version": 1,
+                "entries": {key: {"kind": "link", "target": "clone:json-tools", "adopted": adopted}},
+            }))
+
+        record_with(self.project_manifest_file, self.KEY, True)
+        self.assertTrue(self.record().get(self.KEY)["adopted"])
+        record_with(self.project_manifest_file, self.KEY, "yes")
+        with self.assertRaises(SetupError):
+            self.record()
+        self.project_manifest_file.unlink()
+        record_with(self.manifest_file, "home:.claude/skills/json-tools", True)
+        with self.assertRaises(SetupError) as caught:
+            self.record()
+        self.assertIn("adopted", caught.exception.lines[0])
+
+    def test_a_killed_adoption_is_settled_by_the_link_on_disk(self) -> None:
+        real = Manifest.save
+        saved: set[Path] = set()
+
+        def save(manifest: Manifest) -> None:
+            if manifest.file in saved:
+                raise Crash()
+            saved.add(manifest.file)
+            real(manifest)
+
+        with mock.patch.object(Manifest, "save", autospec=True, side_effect=save):
+            with self.assertRaises(Crash):
+                self.adopt()
+        pending = json.loads(self.project_manifest_file.read_bytes())["pending"]
+        self.assertIn(self.KEY, [item["path"] for item in pending])
+        self.assertEqual(
+            self.record().get(self.KEY), {"kind": "link", "target": "clone:json-tools", "adopted": True}
+        )
+        # The link went before the record was settled: the adoption was not made.
+        os.unlink(self.link)
+        self.assertIsNone(self.record().get(self.KEY))
+
+
 @unittest.skipUnless(SYMLINKS, "this system does not let the user make a symlink")
 class SymlinkedConfigTests(OpsCase):
     """``CLAUDE.md`` and ``rules`` are links to a directory of the user's

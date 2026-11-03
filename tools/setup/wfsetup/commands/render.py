@@ -54,8 +54,28 @@ PATH, or its home exists):
              in ~/.agents/skills for Codex. The link has the skill's name and
              leads to the skill's directory in the clone. A skill that names
              one provider is linked for that one only.
+             With --project, the skills the project lists (project.enabled
+             in its settings files, with the skills they need) are linked
+             the same way into <project>/.claude/skills and
+             <project>/.agents/skills, and listed in the project's ignore
+             block; a skill the home installs is skipped. The link is a
+             junction on Windows; from WSL, in a project on a Windows drive,
+             a relative link where the clone is on the same drive, none where
+             it is on another (render from Windows), and an absolute link
+             where the clone is in the Linux file system.
+             A link already at a project's path that leads to the skill's
+             directory is kept: the other side's link, whatever its form,
+             or one made by hand, which setup takes over (uninstall
+             --project leaves it; taking the skill off the list removes
+             it). Anything else there is a conflict. A link of a skill
+             that left the list is removed; one the other side may have
+             made, of a skill still listed, is left to it.
     rules    a link for every directory in the clone's rules/, in the rules
              directory of the Claude Code home. Codex has no such place.
+             With --project, the rules the project lists are copied, not
+             linked, into <project>/.claude/rules/<name>/ (Claude Code
+             only), and the copy follows the clone on every run. A rule
+             the home installs is not copied.
     roles    a generated file for every role definition, in the agents
              directory of the provider's home: <definition>.md for Claude
              Code, <definition>.toml for Codex. Never a link: Codex refuses a

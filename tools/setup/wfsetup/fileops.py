@@ -282,6 +282,16 @@ Setup's link where something of the user's was (the v1 migration)
     changed since, it is kept, and so is every entry of what was removed
     below it: nothing is put back through a link the user made.
 
+Links made by hand (R3.4)
+    A link in a project that the user made, and that leads by its real
+    path to what setup would link there, is taken over (``adopt_link``):
+    the record gains the entry of setup's link marked ``adopted``, and
+    nothing on disk changes. While it is recorded it is setup's link
+    whatever its text, by its real path. The way back leaves it where it
+    is, the user's, and forgets it. ``remove_link`` (the skill left the
+    project's list) removes it as any link of setup's and keeps nothing to
+    put back: no later run makes it again.
+
 What setup writes is UTF-8 with LF, except inside a user-owned file, whose
 own line ending is kept.
 """
@@ -711,20 +721,42 @@ class Plan:
         reversal puts it back."""
         self._actions.append(("remove_file", {"path": Path(path), "expect": expect_sha256}))
 
-    def create_link(self, path: Path, target: Path, *, directory: bool = True) -> None:
+    def create_link(self, path: Path, target: Path, *, directory: bool = True, relative: bool = False) -> None:
         """A link at ``path`` to ``target``, which must exist below a root
         (the clone, as a rule). Only where nothing is, or where the record
         shows setup's own link; anything else is a conflict. Where this
         plan, or an earlier one, removed a link or a directory of the
         user's at the path, the link's entry keeps that as ``replaced``
-        (see the module)."""
-        self._actions.append(("create_link", {"path": Path(path), "target": Path(target), "directory": directory}))
+        (see the module).
+
+        With ``relative`` the link's text is the target's real path
+        relative to the real path of ``path.parent`` (``os.path.relpath``),
+        so that no part of it goes through a link: a project on a Windows
+        drive linked from WSL, which the Windows side follows too. The
+        record still holds the target's key; the text written is what the
+        plan, the pending change and the settling of a killed run compare.
+        A link's text is read against the directory it is in
+        (``fsio.same_target`` with ``base``). Windows makes junctions,
+        which have no relative form: ``relative`` there is a ``ValueError``."""
+        if relative and os.name == "nt":
+            raise ValueError("a relative link is made from WSL or Linux only; Windows makes a junction")
+        self._actions.append(("create_link", {
+            "path": Path(path), "target": Path(target), "directory": directory, "relative": relative,
+        }))
 
     def remove_link(self, path: Path, *, expect_target: Path | str | None = None) -> None:
         """Remove a link, never what it leads to. With ``expect_target`` a
         link to anywhere else is a conflict. A user's link is recorded with
         its target, so a reversal puts it back."""
         self._actions.append(("remove_link", {"path": Path(path), "expect": expect_target}))
+
+    def adopt_link(self, path: Path, target: Path) -> None:
+        """Take over a link in a project that the user made by hand: a
+        change of the record alone, nothing on disk. Refused unless a link
+        is at ``path``, the record does not hold the path, and the link's
+        real path is ``target``'s. The entry is setup's link to ``target``
+        marked ``adopted`` (see "Links made by hand" in the module)."""
+        self._actions.append(("adopt_link", {"path": Path(path), "target": Path(target)}))
 
     def edit_block(
         self,
@@ -2106,7 +2138,7 @@ class _Fold:
         except (blocks.Refusal, jsonkeys.Refusal, ValueError, TypeError):
             return False
 
-    def do_create_link(self, path: Path, target: Path, directory: bool) -> None:
+    def do_create_link(self, path: Path, target: Path, directory: bool, relative: bool = False) -> None:
         target = Path(os.path.abspath(target))
         if fsio.is_credentials(target):
             self._problem(CREDENTIALS, target, f"{target}: a credentials file; setup never links to one")
@@ -2127,6 +2159,8 @@ class _Fold:
         if kind not in (None, "link", *REPLACEABLE):
             self._problem(CONFLICT, path, f"{path}: the record holds it as {kind}, not as a link")
             return
+        if kind == "link" and entry.get("adopted") and state.kind == LINK and self._leads_to(path, str(target)):
+            return  # a link made by hand and taken over, which leads there: kept as it is (R3.4)
         # What of the user's the link takes the place of; see the module.
         replaced = entry if kind in REPLACEABLE else (entry or {}).get("replaced")
         if kind in REPLACEABLE and state.kind != ABSENT:
@@ -2144,13 +2178,18 @@ class _Fold:
             base = self.record.get(key)
             disk = self.disk[ident]
             recorded = None if base is None or base["kind"] != "link" else self.roots.target_text(base["target"])
-            if disk.kind == LINK and (recorded is None or not fsio.same_target(disk.target or "", recorded)):
+            if disk.kind == LINK and (
+                recorded is None or not fsio.same_target(disk.target or "", recorded, base=path.parent)
+            ):
                 self._problem(CONFLICT, path, f"{path}: no longer points where setup pointed it")
                 return
         elif state.kind != ABSENT:
             self._problem(CONFLICT, path, f"{path}: a {state.kind} is there and setup did not make it")
             return
-        if self._put(ident, key, _State(LINK, target=str(target), directory=directory)):
+        text = str(target)
+        if relative:
+            text = os.path.relpath(os.path.realpath(target), os.path.realpath(path.parent))
+        if self._put(ident, key, _State(LINK, target=text, directory=directory)):
             made: dict[str, Any] = {"kind": "link", "target": self.roots.target_key(str(target), records.scope_of(key))}
             if replaced is not None:
                 made["replaced"] = replaced
@@ -2183,10 +2222,19 @@ class _Fold:
         if state.kind != LINK:
             self._problem(CONFLICT, path, f"{path}: is a {state.kind}, not a link to remove")
             return
-        if expect is not None and not fsio.same_target(state.target or "", str(expect)):
+        # A project's link is setup's by its real path, whatever its text: the
+        # other side of the machine, or one taken over, may have made it.
+        project_link = kind == "link" and records.scope_of(key) == PROJECT
+        if expect is not None and not (
+            fsio.same_target(state.target or "", str(expect), base=path.parent)
+            or (project_link and self._leads_to(path, str(expect)))
+        ):
             self._problem(CONFLICT, path, f"{path}: points to {state.target}, not where the link to remove pointed")
             return
-        mine = kind == "link" and fsio.same_target(state.target or "", self.roots.target_text(entry["target"]))
+        mine = kind == "link" and (
+            fsio.same_target(state.target or "", self.roots.target_text(entry["target"]), base=path.parent)
+            or (project_link and self._leads_to(path, self.roots.target_text(entry["target"])))
+        )
         if kind not in (None, "link", "removed-link"):
             self._problem(CONFLICT, path, f"{path}: the record holds it as {kind}, not as a link")
             return
@@ -2201,6 +2249,42 @@ class _Fold:
             gone["junction"] = True
         if self._absent(ident):
             self.entries[key] = gone
+
+    def do_adopt_link(self, path: Path, target: Path) -> None:
+        target = Path(os.path.abspath(target))
+        if self.roots.key(target, target=True) is None:
+            self._problem(OUTSIDE, target, f"{target}: a link target outside the clone, the home and the project")
+            return
+        found = self._state(path)
+        if found is None:
+            return
+        ident, key, state = found
+        if records.scope_of(key) != PROJECT:
+            self._problem(BAD_ACTION, path, f"{path}: setup takes over a link made by hand in a project only")
+            return
+        entry = self._entry(key)
+        if entry is not None:
+            self._problem(CONFLICT, path, f"{path}: the record holds it already, as {entry['kind']}")
+            return
+        disk = self.disk[ident]
+        if state.kind != LINK or disk.kind != LINK or state.target != disk.target:
+            self._problem(CONFLICT, path, f"{path}: is a {state.kind}, not a link made by hand to take over")
+            return
+        if not self._leads_to(path, str(target)):
+            self._problem(CONFLICT, path, f"{path}: a link to {state.target} is there, which does not lead to {target}")
+            return
+        self.entries[key] = {
+            "kind": "link", "target": self.roots.target_key(str(target), PROJECT), "adopted": True,
+        }
+
+    @staticmethod
+    def _leads_to(path: Path, text: str) -> bool:
+        """Whether the link at ``path`` leads, by its real path, to the
+        place ``text`` names, by its own."""
+        try:
+            return paths.fold(os.path.realpath(path)) == paths.fold(os.path.realpath(text))
+        except (OSError, ValueError):
+            return False
 
     # --- User-owned files -----------------------------------------------------
 
@@ -2762,9 +2846,16 @@ class _Fold:
         if found is None:
             return
         ident, key, state = found
+        if entry.get("adopted"):
+            # Made by hand and taken over: the user's again, where it is (R3.4).
+            self.entries[key] = None
+            if state.kind != ABSENT:
+                self._leave(key, "a link made by hand that setup took over; it is left in place, the user's")
+            return
         replaced = entry.get("replaced")
         if state.kind == LINK and any(
-            fsio.same_target(state.target or "", text) for text in self.roots.target_texts(entry["target"])
+            fsio.same_target(state.target or "", text, base=path.parent)
+            for text in self.roots.target_texts(entry["target"])
         ):
             self.now[ident] = _State(ABSENT)
         elif state.kind != ABSENT:
@@ -2985,7 +3076,9 @@ class _Fold:
             )
             if not self._put(ident, key, again):
                 return
-        elif state.kind != LINK or not any(fsio.same_target(state.target or "", text) for text in texts):
+        elif state.kind != LINK or not any(
+            fsio.same_target(state.target or "", text, base=path.parent) for text in texts
+        ):
             self._keep(key, "something is there again; the removed link was not put back")
             return
         self.entries[key] = None
@@ -3004,15 +3097,16 @@ class _Fold:
                 continue
             relative = target.partition(":")[2]
             try:
-                seen = fsio.look(self.roots.path(key))
+                place = self.roots.path(key)
+                seen = fsio.look(place)
                 here = self.roots.target_text(target)
             except SetupError:
                 continue
             if seen.kind != LINK or not seen.target or relative in ("", "."):
                 continue
-            if fsio.same_target(seen.target, here):
+            if fsio.same_target(seen.target, here, base=place.parent):
                 return None  # a link of setup's leads into the clone where it is: it was not moved
-            text = os.path.normpath(paths.long_form(fsio.clean_target(seen.target)))
+            text = os.path.normpath(paths.long_form(fsio.link_place(seen.target, place.parent)))
             tail = os.sep + relative.replace("/", os.sep)
             if paths.fold(text).endswith(paths.fold(tail)):
                 return text[:len(text) - len(tail)] or os.sep
@@ -3308,6 +3402,16 @@ class _Fold:
             )
         return gone
 
+    def _shown_target(self, step: _Step) -> str:
+        """Where a link the step makes leads, as the record writes it. A
+        relative link setup makes is shown by the key its entry holds; a
+        link of the user's put back, by its own text."""
+        text = step.after.target or ""
+        entry = step.entry
+        if not os.path.isabs(text) and isinstance(entry, dict) and entry.get("kind") == "link":
+            return str(entry.get("target"))
+        return self.roots.target_key(text)
+
     def _lines(self, step: _Step, details: list[str]) -> list[str]:
         key, entry = step.key, step.entry
         owned = entry is not None and entry.get("kind") in ("text", "json")
@@ -3316,12 +3420,12 @@ class _Fold:
         if undoing and step.op == _WRITE:
             head = f"restore file {key}{saved}"
         elif undoing and step.op in (_LINK, _RELINK):
-            head = f"restore link {key} -> {self.roots.target_key(step.after.target or '')}"
+            head = f"restore link {key} -> {self._shown_target(step)}"
         elif step.op == _SWAP and step.after.kind == DIRECTORY:
             head = f"{'restore' if undoing else 'create'} directory {key}, in place of the {step.before.kind} there"
         elif step.op == _SWAP and step.after.kind == LINK:
             head = (
-                f"create link {key} -> {self.roots.target_key(step.after.target or '')}, in place of the "
+                f"create link {key} -> {self._shown_target(step)}, in place of the "
                 f"{step.before.kind} there{saved}"
             )
         elif step.op == _SWAP:
@@ -3337,19 +3441,29 @@ class _Fold:
         elif step.op == _REMOVE:
             head = f"remove file {key}{saved}"
         elif step.op == _LINK:
-            head = f"create link {key} -> {self.roots.target_key(step.after.target or '')}"
+            head = f"create link {key} -> {self._shown_target(step)}"
         elif step.op == _RELINK:
-            head = f"replace link {key} -> {self.roots.target_key(step.after.target or '')}"
+            head = f"replace link {key} -> {self._shown_target(step)}"
         elif step.op == _UNLINK:
             head = f"remove link {key}"
+        elif step.op == _RECORD and entry is not None and entry.get("adopted") and self.record.get(key) is None:
+            head = f"take over link {key} -> {entry['target']}, made by hand"
+        elif step.op == _RECORD and entry is None and (self.record.get(key) or {}).get("adopted"):
+            head = f"forget link {key}, made by hand" + (
+                "; it stays, the user's" if step.before.kind == LINK else ", already gone"
+            )
         else:
             head = f"update record {key}"
         return [head, *[f"    {detail}" for detail in details]]
 
 
 # The entries of an ignore block that setup writes besides ``IGNORE_ALWAYS``:
-# the role definitions it generates in a project.
-_IGNORE_OWN = (".claude/agents/", ".codex/agents/")
+# the role definitions it generates in a project, and the links to the
+# project's skills.
+_IGNORE_OWN = (".claude/agents/", ".codex/agents/", ".claude/skills/", ".agents/skills/")
+
+
+_RULE_COPY = ".claude/rules/"
 
 
 def own_ignore_entry(line: str) -> bool:
@@ -3361,6 +3475,12 @@ def own_ignore_entry(line: str) -> bool:
         rest = line[len(head):] if line.startswith(head) else ""
         if rest and all(char.isalnum() or char in "._-" for char in rest) and rest[0] != ".":
             return True
+    # A copy of a rule's file (R4.1): .claude/rules/<name>/<file>.
+    if line.startswith(_RULE_COPY):
+        rest = line[len(_RULE_COPY):].split("/")
+        return len(rest) == 2 and all(
+            part and part[0] != "." and all(char.isalnum() or char in "._-" for char in part) for part in rest
+        )
     return False
 
 

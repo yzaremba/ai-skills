@@ -614,12 +614,36 @@ def read_link(path: Path) -> str:
         raise SetupError(f"{path}: the link cannot be read: {paths.reason(exc)}") from None
 
 
-def same_target(one: str, other: str) -> bool:
+def same_target(one: str, other: str, base: Path | str | None = None) -> bool:
     """Whether two link texts name the same place, letter case aside where
-    the system ignores it."""
+    the system ignores it.
+
+    ``base`` is the directory the link is in. With it a relative text is
+    read as the system reads it (``link_place``), so that a relative link
+    setup made reads as the place it leads to. Without it the texts are
+    compared as they are."""
     def norm(text: str) -> str:
-        return paths.fold(os.path.normpath(paths.long_form(clean_target(text))))
+        text = clean_target(text)
+        if base is not None and not os.path.isabs(text):
+            text = link_place(text, base)
+        return paths.fold(os.path.normpath(paths.long_form(text)))
     return norm(one) == norm(other)
+
+
+def link_place(text: str, base: Path | str) -> str:
+    """Where the link text ``text`` of a link in the directory ``base``
+    leads: a relative text joined to the real path of ``base`` and
+    normalised, as the system follows it from the directory the link is
+    really in (``fileops.Plan.create_link`` writes such a text from the
+    real paths). An absolute text as it is."""
+    text = clean_target(text)
+    if os.path.isabs(text):
+        return text
+    try:
+        real = clean_target(os.path.realpath(os.fspath(base)))
+    except (OSError, ValueError):
+        real = os.path.abspath(os.fspath(base))
+    return os.path.normpath(os.path.join(real, text))
 
 
 def is_junction(path: Path | str) -> bool:

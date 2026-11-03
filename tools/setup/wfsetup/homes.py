@@ -282,11 +282,68 @@ class Host:
             return plain.startswith(_WSL_SHARES)
         return False
 
+    def drive_of(self, text: str) -> str | None:
+        """The mount point (lower case) of the Windows drive the absolute
+        real path ``text`` is on, from the mount table and ``/mnt/<letter>``;
+        None where it is on no drive, and on any side but WSL. Only the
+        text is looked at."""
+        if self.side != WSL:
+            return None
+        found = [mount for mount in self.mounts if _under(text, mount)]
+        if found:
+            return max(found, key=len).rstrip("/").lower()
+        match = _DRIVE_MOUNT.match(text)
+        return match.group(0).rstrip("/").lower() if match else None
+
     def other_side(self, path: Path | str) -> str | None:
         """The other side's name when the real path of ``path`` is on its
         file system, else None. A link that leads nowhere is followed as
         far as its text goes."""
         return self.other if self.foreign(os.path.realpath(path)) else None
+
+
+# --- A project's links ---------------------------------------------------------
+
+# Where a provider looks for skills in a project.
+PROJECT_SKILLS = {CLAUDE_CODE: (".claude", "skills"), CODEX: (".agents", "skills")}
+
+# The form of a project's links to the clone's skills (``project_link``).
+FORM_DEFAULT = "default"      # what the system makes: on Windows a junction, which has no relative form
+FORM_ABSOLUTE = "absolute"
+FORM_RELATIVE = "relative"
+FORM_NONE = "none"            # no link from this side
+
+
+@dataclass(frozen=True)
+class ProjectLink:
+    """How this run links a project's skills: ``form`` is one of the
+    ``FORM_`` names; ``why`` says in words what a user needs to know of it,
+    or is empty."""
+
+    form: str
+    why: str = ""
+
+
+def project_link(host: Host, project: Path | str, clone: Path | str) -> ProjectLink:
+    """The form of the links from ``project`` to skills in ``clone``, from
+    the host and the real paths of the two. On Windows a junction. From WSL
+    a project on a Windows drive gets a relative link where the clone is on
+    the same drive (both sides follow it), none where the clone is on
+    another drive (only Windows can make a junction there), and an absolute
+    one, which Windows sessions do not follow, where the clone is in the
+    Linux file system. Anywhere else an absolute link."""
+    if host.side == WINDOWS:
+        return ProjectLink(FORM_DEFAULT)
+    if host.side != WSL:
+        return ProjectLink(FORM_ABSOLUTE)
+    where, there = os.path.realpath(project), os.path.realpath(clone)
+    if not host.foreign(where):
+        return ProjectLink(FORM_ABSOLUTE)
+    if not host.foreign(there):
+        return ProjectLink(FORM_ABSOLUTE, "the clone is in the Linux file system: Windows sessions will not see the links")
+    if host.drive_of(where) == host.drive_of(there):
+        return ProjectLink(FORM_RELATIVE)
+    return ProjectLink(FORM_NONE, f"the clone is on {host.drive_of(there)}, the project on {host.drive_of(where)}")
 
 
 # --- The homes ----------------------------------------------------------------

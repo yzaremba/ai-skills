@@ -47,6 +47,12 @@ The project (``--project``)
     effort is then not set for the first time, and one setup set earlier is
     left as it is, neither changed nor taken out, until the ``agent`` key
     is setup's again or is no longer wanted.
+    A rule of the project's list is copied into ``.claude/rules/<name>/``
+    for Claude Code (``fill_project_rules``), a generated file like the
+    definitions; the sweep (``Run.other_sides``) keeps a copy whose rule is
+    still listed while Claude Code is not here or the machine has another
+    side, which may have made it. A project's link, whoever made it, is
+    setup's by where it leads, not by its text, and the sweep removes it so.
     They are recorded in the project's record, swept from it like a home's
     files, and the generated files are listed in the project's ignore
     block. The key and the block are not: they are setup's part of a file
@@ -152,6 +158,12 @@ What ``Run.link`` decides for one link, in this order
     The place decides whose the path is, not what an existing entry leads
     to: a link in this side's directory is this side's entry, also when it
     leads to the other side's home. That one is a conflict, not a skip.
+    In a project a link is told by where it leads (R3.4): one the record
+    holds as setup's that leads, by its real path, to the unit is up to
+    date whatever its text or form (the other side's), and is not asked of
+    the plan; one the record does not hold that leads there was made by
+    hand and is taken over (``fileops.Plan.adopt_link``); anything else is
+    a conflict.
 
 Stale links
     After the parts, every link the user-level record holds that no part
@@ -161,6 +173,13 @@ Stale links
     it, forgotten when it is no longer there, and kept and reported when the
     user changed it. A link in a place this run does not write is left to
     the run that does.
+    A project's link that no part asked for is left alone, and not
+    reported, while its unit is in the project's list and its
+    ``compatibility`` names the provider whose place it is in, where that
+    provider is not installed on this side or the machine has another side,
+    which may have made it (R3.2, ``Run.other_sides``). A project's link
+    is compared with its recorded target from the directory it is in, and
+    one taken over by where it leads.
 
 Nothing is written when there is a conflict or an error in the plan: the
 report is made, ``Outcome.errors`` holds one line per conflict, and the plan
@@ -185,6 +204,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -341,6 +361,8 @@ class Run:
         self._roles: Roles | None = None           # whether the roles are generated; see ``roles``
         self._selection: definitions.Selection | None = None   # the home's units; see ``home_selection``
         self._selection_read = False
+        self._project_selection: definitions.Selection | None = None   # the project's units; see ``project_selection``
+        self._project_selection_read = False
         self.notes: list[str] = []                 # what a part says beside its items; printed as notes
         self.model_notes: list[str] = []           # the model-list note (R3.2): printed after every other note
         # Called once the plan has run, been shown or been refused: a part's
@@ -431,11 +453,14 @@ class Run:
         self._ignore_always = True
 
     def link(self, provider: homes.Provider, place: homes.Place, name: str, target: Path,
-             own_setup: bool = False) -> Item:
-        """Ask for the link ``place/name`` to ``target``; see the module."""
+             own_setup: bool = False, relative: bool = False) -> Item:
+        """Ask for the link ``place/name`` to ``target``; see the module.
+        ``relative``: the link's text is relative (a project's link, from
+        WSL, to a clone on the same Windows drive)."""
         path = place.path / name
+        project = self.in_project(path)
         item = Item(name, path, CREATE, "", provider=provider.name, place=place.name,
-                    target=self.roots.target_key(str(target)))
+                    target=self.roots.target_key(str(target), fileops.PROJECT if project else None), project=project)
         self.items.append(item)
 
         def settle(status: str, says: str, whole_place: bool = False) -> Item:
@@ -463,10 +488,24 @@ class Run:
         base = self.record.get(item.key)
         if base is not None and base.get("kind") not in ("link", *fileops.REPLACEABLE):
             return settle(CONFLICT, f"{path}: the record holds it as {base.get('kind')}, not as a link setup made")
+        held = base
         if base is not None and base.get("kind") != "link":
             base = None  # a link or a directory of the user's that setup removed: not a link setup made
         if entry.kind == homes.UNKNOWN:
             return settle(ERROR, f"{path}: {entry.describe()}")
+        # A project's link is told by where it leads (R3.4): the other
+        # side's link has its own text and form, and is asked of no plan,
+        # whose fold would make another text a new link.
+        if project and entry.kind == homes.LINK_TO_CLONE and _leads_to(entry.real, target):
+            if base is not None and _fold(str(base.get("target"))) == _fold(item.target or ""):
+                return settle(UP_TO_DATE, f"linked to {item.target}" + (
+                    "; made by hand and taken over" if base.get("adopted") else ""))
+            if held is None:
+                self.plan.adopt_link(path, target)
+                return settle(UP_TO_DATE, (
+                    f"linked to {item.target} by a link made by hand, which setup takes over: "
+                    "`uninstall --project` leaves it, and taking the skill off the project's list removes it"
+                ))
         # What the migration part removes there in this same plan (a v1
         # link or copy) is not in the way; what it keeps is, and is named.
         cleared = migrate.cleared(self, path)
@@ -483,19 +522,72 @@ class Run:
                 recorded = self.roots.target_text(base["target"])
             except (SetupError, KeyError, TypeError):
                 return settle(CONFLICT, f"{path}: {entry.describe()}; the record's entry for it cannot be read")
-            if not fsio.same_target(entry.target or "", recorded):
+            if not fsio.same_target(entry.target or "", recorded, path.parent):
                 return settle(
                     CONFLICT,
                     f"{path}: {entry.describe()}; setup made it a link to {recorded}, and it was changed since",
                 )
-            if fsio.same_target(recorded, str(target)):
+            if fsio.same_target(recorded, str(target), path.parent):
                 settle(UP_TO_DATE, f"linked to {item.target}")
         if item.status == CREATE and not item.says:
             item.says = f"link to {item.target}"
         # An up-to-date link is asked for as well: the plan then checks it
         # against the disk once more, and changes nothing.
-        self.plan.create_link(path, target)
+        self.plan.create_link(path, target, relative=relative)
         return item
+
+    def left_out(self, provider: homes.Provider, place: homes.Place, name: str, says: str) -> Item:
+        """A link that is not asked for: an item ``skipped`` with ``says``.
+        A link there is the sweep's to judge (``Run.other_sides``)."""
+        path = place.path / name
+        item = Item(name, path, SKIPPED, says, provider=provider.name, place=place.name,
+                    project=self.in_project(path))
+        self.items.append(item)
+        return item
+
+    def other_sides(self, path: Path) -> bool:
+        """Whether the sweep leaves the project's link ``path`` alone, not
+        asked for by this run: its unit is still in the project's list, the
+        unit's ``compatibility`` names the provider whose place it is in,
+        and either that provider is not installed on this side or the
+        machine has another side, which may have made it (R3.2)."""
+        project = self.homes.project
+        if project is None or not self.in_project(path):
+            return False
+        chosen = project_selection(self)
+        if chosen is None:
+            return False
+        copy = self._rule_copy(path)
+        if copy is not None:
+            # A rule copy (R4.1) is Claude Code's: kept while its rule is in
+            # the list, still holds that file, and Claude Code is not here
+            # or the machine has another side.
+            installed = {found.name for found in self.homes.installed()}
+            return (copy.name in chosen.units and (copy / path.name).is_file()
+                    and (homes.CLAUDE_CODE not in installed or self.homes.host.other is not None))
+        skill = self.sources.skills.get(path.name)
+        if skill is None or path.name not in chosen.units:
+            return False
+        where = paths.fold(paths.absolute(path.parent))
+        provider = next((
+            name for name, parts in homes.PROJECT_SKILLS.items()
+            if paths.fold(paths.absolute(project.joinpath(*parts))) == where
+        ), None)
+        if provider is None or provider not in skill.providers:
+            return False
+        installed = {found.name for found in self.homes.installed()}
+        return provider not in installed or self.homes.host.other is not None
+
+    def _rule_copy(self, path: Path) -> Path | None:
+        """The clone's rule directory when ``path`` is a file of a rule's copy
+        in the project (``.claude/rules/<name>/<file>``), else None."""
+        project = self.homes.project
+        if project is None:
+            return None
+        where = paths.fold(paths.absolute(path.parent.parent))
+        if where != paths.fold(paths.absolute(project / ".claude" / "rules")):
+            return None
+        return self.homes.clone / homes.RULES / path.parent.name
 
     def fail(self, *lines: str) -> None:
         """Say that a part cannot make what it installs. The run stops
@@ -899,7 +991,9 @@ class Run:
                 why = exc.lines[0] if isinstance(exc, SetupError) else "the record's entry cannot be read"
                 self.stale.append(Item(key, Path(key), KEPT, why, key=key))
                 continue
-            item = Item(path.name, path, REMOVE, "", key=key, target=entry.get("target"))
+            if self.other_sides(path):
+                continue
+            item = Item(path.name, path, REMOVE, "", key=key, target=entry.get("target"), project=self.in_project(path))
             self.stale.append(item)
             standing = self.standing(path.parent)
             if standing.kind == homes.UNKNOWN:
@@ -920,7 +1014,10 @@ class Run:
                 item.status, item.says = FORGET, "no longer installed and no longer there; taken out of the record"
                 self.plan.remove_link(path)
                 self.emptied(path)
-            elif seen.kind == fsio.LINK and fsio.same_target(seen.target or "", recorded):
+            elif seen.kind == fsio.LINK and (
+                fsio.same_target(seen.target or "", recorded, path.parent)
+                or (self.in_project(path) and _leads_to(path, recorded))   # a project's link, by where it leads
+            ):
                 item.says = "no longer installed; it still points where setup pointed it, so it is removed"
                 self.plan.remove_link(path, expect_target=recorded)
                 self.emptied(path)
@@ -934,6 +1031,8 @@ class Run:
             path = self.roots.path(key)
         except SetupError as exc:
             self.stale.append(Item(key, Path(key), KEPT, exc.lines[0], key=key, kind=FILE))
+            return
+        if self.other_sides(path):
             return
         item = Item(path.name, path, REMOVE, "", key=key, kind=FILE, project=self.in_project(path))
         self.stale.append(item)
@@ -1004,10 +1103,13 @@ class Run:
             def entry_of(item: Item) -> str:
                 return item.path.relative_to(project).as_posix()
 
-            add = sorted({entry_of(item) for item in self.items if item.project and item.kind == FILE})
+            add = sorted({
+                entry_of(item) for item in self.items
+                if item.project and (item.kind == FILE or (item.kind == LINK and item.status != SKIPPED))
+            })
             remove = sorted({
                 entry_of(item) for item in self.stale
-                if item.project and item.kind == FILE and item.status in (REMOVE, FORGET)
+                if item.project and item.kind in (FILE, LINK) and item.status in (REMOVE, FORGET)
             } - set(add))
             held = self.record.project is not None and self.record.project.on_disk
             if add or remove or held or self._ignore_always:
@@ -1069,6 +1171,16 @@ def _has_place(provider: homes.Provider, name: str) -> bool:
     return any(place.name == name for place in provider.places)
 
 
+def _leads_to(path: Path | str | None, place: Path | str) -> bool:
+    """Whether ``path`` leads, by its real path, to ``place``, by its own."""
+    if path is None:
+        return False
+    try:
+        return paths.fold(os.path.realpath(path)) == paths.fold(os.path.realpath(place))
+    except (OSError, ValueError):
+        return False
+
+
 def home_selection(run: Run) -> definitions.Selection | None:
     """The skills and rules the home installs, read once, with the roles
     of the run (``roles``) deciding whether the skills they need come in.
@@ -1086,6 +1198,25 @@ def home_selection(run: Run) -> definitions.Selection | None:
     return run._selection
 
 
+def project_selection(run: Run) -> definitions.Selection | None:
+    """The skills and rules the project lists, read once; see
+    ``definitions.project_selection``. None where the run has no project or
+    its files hold no list. Its fault is the run's: it then writes nothing."""
+    if not run._project_selection_read:
+        run._project_selection_read = True
+        project = run.homes.project
+        if project is not None:
+            try:
+                found = definitions.project_selection(_locations(run, project), run.sources.skills)
+            except SetupError as exc:
+                run.fail(*exc.lines)
+            else:
+                run._project_selection = found
+                if found is not None:
+                    run.notes.extend(f"project: {line}" for line in found.notes())
+    return run._project_selection
+
+
 def fill_skills(run: Run) -> None:
     """Every skill into the skills place of each installed provider its
     ``compatibility`` line names (R6.2), but those the home's selection
@@ -1101,6 +1232,52 @@ def fill_skills(run: Run) -> None:
         for name, skill in run.sources.skills.items():
             if provider.name in skill.providers and (name in selection.units or skill.own_setup):
                 run.link(provider, place, name, run.homes.clone / name, own_setup=skill.own_setup)
+    fill_project_skills(run, selection)
+
+
+def fill_project_skills(run: Run, selection: definitions.Selection) -> None:
+    """Every skill of the project's selection into the project's skills
+    directory of each installed provider its ``compatibility`` line names
+    (R3.1), in the form ``homes.project_link`` says. One the home installs
+    for that provider is skipped: the home has it (R3.2)."""
+    chosen = project_selection(run)
+    project = run.homes.project
+    if chosen is None or project is None or run.errors:
+        return
+    form = homes.project_link(run.homes.host, project, run.homes.clone)
+    cut: list[str] = []
+    made = False
+    for provider in run.homes.installed():
+        if provider.name not in homes.PROJECT_SKILLS:
+            continue
+        place = homes.Place(PROJECT, project.joinpath(*homes.PROJECT_SKILLS[provider.name]), True)
+        for name, skill in run.sources.skills.items():
+            if provider.name not in skill.providers or name not in chosen.units:
+                continue
+            if name in selection.units and _has_place(provider, homes.SKILLS):
+                run.left_out(provider, place, name, "the home has it")
+            elif form.form == homes.FORM_NONE:
+                run.left_out(provider, place, name, f"not linked from this side: {form.why}")
+                if name not in cut:
+                    cut.append(name)
+            else:
+                run.link(provider, place, name, run.homes.clone / name, relative=form.form == homes.FORM_RELATIVE)
+                made = True
+    if cut:
+        run.notes.append(
+            f"project: {', '.join(sorted(cut))} not linked into {project} ({form.why}); run "
+            f"`render --project {_windows_path(str(project))}` from Windows, whose junctions this side then keeps"
+        )
+    if made and form.form == homes.FORM_ABSOLUTE and form.why:
+        run.notes.append(f"project: {form.why}")
+
+
+def _windows_path(text: str) -> str:
+    """``/mnt/d/proj`` as Windows names it, ``D:\\proj``; any other path as it is."""
+    match = re.fullmatch(r"/mnt/([A-Za-z])(/.*)?", text)
+    if match is None:
+        return text
+    return f"{match.group(1).upper()}:" + (match.group(2) or "\\").replace("/", "\\")
 
 
 def fill_rules(run: Run) -> None:
@@ -1116,6 +1293,47 @@ def fill_rules(run: Run) -> None:
             for rule in rules:
                 if rule.name in selection.units:
                     run.link(provider, place, rule.name, rule)
+    fill_project_rules(run, selection, rules)
+
+
+def fill_project_rules(run: Run, selection: definitions.Selection, rules: list[Path]) -> None:
+    """Every rule of the project's selection copied into the project's
+    ``.claude/rules/<name>/``, for Claude Code only (R4.1): a copy, not a
+    link, so the project holds the rule's text. One the home installs is
+    skipped (R4.2). ``Run.file`` does the rest."""
+    chosen = project_selection(run)
+    project = run.homes.project
+    if chosen is None or project is None or run.errors:
+        return
+    for provider in run.homes.installed():
+        if provider.name != homes.CLAUDE_CODE:
+            continue
+        for rule in rules:
+            if rule.name not in chosen.units:
+                continue
+            place = homes.Place(PROJECT, project / ".claude" / "rules" / rule.name, True)
+            if rule.name in selection.units and _has_place(provider, homes.RULES):
+                run.left_out(provider, homes.Place(PROJECT, place.path.parent, True), rule.name, "the home has it")
+                continue
+            for name, text in rule_files(run, rule):
+                digest = fsio.sha256(text.encode("utf-8"))
+                run.file(provider, place, name, text, f"{GENERATED_PREFIX}rule-copy:{digest}")
+
+
+def rule_files(run: Run, rule: Path) -> list[tuple[str, str]]:
+    """The files of the clone's rule directory as (name, text): UTF-8 with a
+    byte order mark taken off and CRLF made LF, as ``roles.join_text`` does."""
+    found: list[tuple[str, str]] = []
+    for path in paths.entries(rule):
+        if path.name.startswith(".") or fsio.look(path).kind != fsio.FILE:
+            continue
+        try:
+            text = path.read_bytes().decode("utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            run.fail(f"{path}: cannot be copied into a project: {exc}")
+            continue
+        found.append((path.name, text.removeprefix("\ufeff").replace("\r\n", "\n")))
+    return found
 
 
 def configure_roles(parser: Any) -> None:

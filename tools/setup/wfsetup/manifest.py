@@ -120,11 +120,13 @@ A record is data from the disk, and setup acts on it
       not know is let through and left alone by every command.
     - The reach of a record. A project's record names only paths of the
       project: every entry, every listed backup and every pending change
-      has a ``project:`` path, and no other anchor appears in it at all (a
-      link's target is ``project:`` or ``raw:``). The user-level record
-      names no ``project:`` path, as a path or as a target. Neither names a
-      root itself, the clone, setup's own state, or anything under a
-      ``.git`` directory.
+      has a ``project:`` path. A link's target is ``project:``, ``raw:``
+      or a skill's directory in the clone, ``clone:<name>`` with one part
+      that is not ``.``: the one thing of the clone a project links to
+      (its rule is copied, not linked). No other anchor appears in it at
+      all. The user-level record names no ``project:`` path, as a path or
+      as a target. Neither names as a path a root itself, the clone,
+      setup's own state, or anything under a ``.git`` directory.
     - Backups. A backup is where setup wrote it and nowhere else: under the
       ``backups/<stamp>/<anchor>/`` of the record's own state directory, at
       the very path of the entry it belongs to. So a project's record can
@@ -164,7 +166,10 @@ the next run that writes saves the outcome:
     (the clone's own files), not what the run did. A link of the user's,
     which ``--follow-config-symlinks`` writes through, is followed. A
     change whose file backup is not on disk was not made: every backup of
-    a run is written before its first change.
+    a run is written before its first change. A change of the record alone
+    is made, but for the taking over of a link made by hand (``adopted``),
+    which is made when the disk holds a link that leads, by its real path,
+    to the entry's target.
 """
 from __future__ import annotations
 
@@ -285,8 +290,13 @@ def _target_fault(target: Any, scope: str | None = None) -> str | None:
     found = split_key(target)
     if found is None:
         return "its target is not a path a record may hold"
+    if scope == PROJECT and found[0] == CLONE:
+        # A skill's directory, the one thing of the clone a project links to.
+        if found[1] == "." or "/" in found[1]:
+            return "its target is in the clone but not a skill's directory; a project links only to clone:<name>"
+        return None
     if scope == PROJECT and found[0] != PROJECT:
-        return "its target is outside the project; a project's record names only the project"
+        return "its target is outside the project; a project's record names only the project and the clone's skills"
     if scope == HOME and found[0] == PROJECT:
         return "its target is in a project; the user-level record names no project"
     return None
@@ -361,6 +371,12 @@ def entry_fault(key: str, entry: Any) -> str | None:
     if isinstance(key, str) and is_state_key(key):
         return "setup's own state directory, which a record lists only as a directory setup created"
     if kind == "link":
+        if "adopted" in entry:
+            # A link made by hand that setup took over: a project's alone (R3.4).
+            if not isinstance(entry["adopted"], bool):
+                return "its adopted mark is not true or false"
+            if scope != PROJECT:
+                return "it is marked adopted, which only a link in a project is"
         replaced = entry.get("replaced")
         if replaced is not None:
             if not isinstance(replaced, dict) or replaced.get("kind") not in ("removed-link", "removed-directory"):
@@ -593,14 +609,18 @@ class Roots:
 
     def target_key(self, text: str, scope: str | None = None) -> str:
         """A link's text as the record of ``scope`` writes it. A project's
-        record names the project and nothing else, and the user-level one
-        no project: a target the record may not name by an anchor is kept
-        as the link's own text."""
+        record names the project and a skill's directory in the clone
+        (``clone:<name>``) and nothing else, and the user-level one no
+        project: a target the record may not name by an anchor is kept as
+        the link's own text."""
         if os.path.isabs(text):
             key = self.key(text, target=True)
             if key is not None:
-                inside = key.partition(":")[0] == PROJECT
-                if scope is None or (scope == PROJECT) == inside:
+                anchor, _, relative = key.partition(":")
+                if scope == PROJECT and anchor == CLONE:
+                    if relative != "." and "/" not in relative:
+                        return key
+                elif scope is None or (scope == PROJECT) == (anchor == PROJECT):
                     return key
         return f"{RAW}:{text}"
 
@@ -1010,6 +1030,9 @@ class Record:
         ``NOT_MADE`` or ``UNKNOWN``; see the module."""
         after = item.get("after")
         if after is None:  # a change to the record alone
+            entry = item.get("entry")
+            if item.get("set") and isinstance(entry, dict) and entry.get("kind") == "link" and entry.get("adopted"):
+                return self._adopted(item["path"], entry)
             return MADE
         if concerned is None:
             concerned = {paths.fold_key(str(item.get("path")))}
@@ -1035,7 +1058,7 @@ class Record:
                     return NOT_MADE if same else MADE
                 if backup.get("kind") == "link":
                     same = seen.kind == fsio.LINK and fsio.same_target(
-                        seen.target or "", self.roots.target_text(backup["target"])
+                        seen.target or "", self.roots.target_text(backup["target"]), base=path.parent
                     )
                     return NOT_MADE if same else MADE
                 return NOT_MADE
@@ -1047,9 +1070,25 @@ class Record:
                 return MADE if fsio.sha256(fsio.read_bytes(path)) == after.get("sha256") else NOT_MADE
             if kind == fsio.LINK:
                 same = seen.kind == fsio.LINK and fsio.same_target(
-                    seen.target or "", self.roots.target_text(after["target"])
+                    seen.target or "", self.roots.target_text(after["target"]), base=path.parent
                 )
                 return MADE if same else NOT_MADE
             return MADE if seen.kind == kind else NOT_MADE
         except (SetupError, KeyError, TypeError):
+            return NOT_MADE
+
+    def _adopted(self, key: str, entry: dict[str, Any]) -> str:
+        """Whether a pending taking over of a link made by hand was made:
+        the disk holds a link at ``key`` that leads, by its real path, to
+        the entry's target."""
+        try:
+            path = self.roots.path(key)
+        except SetupError:
+            return UNKNOWN
+        try:
+            if fsio.look(path).kind != fsio.LINK:
+                return NOT_MADE
+            here = paths.fold(os.path.realpath(path))
+            return MADE if here == paths.fold(os.path.realpath(self.roots.target_text(entry["target"]))) else NOT_MADE
+        except (SetupError, OSError, ValueError, KeyError, TypeError):
             return NOT_MADE

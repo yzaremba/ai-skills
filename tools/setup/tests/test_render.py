@@ -981,5 +981,470 @@ class ModelListCase(RenderCase):
         self.assertNotIn("note: codex", out)
 
 
+
+class ProjectCase(RenderCase):
+    """A project whose list names alpha and solo, beside a home that may
+    leave them out."""
+
+    ONLY_BETA = '[setup]\nenabled = ["beta"]\ndisabled = ["alpha", "sample", "solo"]\n'
+    LIST = '[project]\nenabled = ["alpha", "solo"]\n'
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.project_claude = self.project / ".claude" / "skills"
+        self.project_agents = self.project / ".agents" / "skills"
+        self.arg = ("--project", str(self.project))
+
+    def ignored(self) -> list[str]:
+        text = (self.project / ".gitignore").read_text(encoding="utf-8")
+        return [line for line in text.splitlines() if "skills/" in line]
+
+    def wsl(self, *drives: Path) -> homes.Host:
+        return homes.Host(homes.WSL, {"PATH": ""}, tuple(str(drive) for drive in drives))
+
+
+class ProjectLinksCase(ProjectCase):
+    """``render --project``: the project's skills, linked in the form for the
+    side and listed in the project's ignore block."""
+
+    def test_the_links_are_made_in_both_places(self) -> None:
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        code, report, err = self.report(*self.arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertLinked(self.project_claude / "alpha", self.clone / "alpha")
+        self.assertLinked(self.project_claude / "solo", self.clone / "solo")
+        self.assertLinked(self.project_agents / "alpha", self.clone / "alpha")
+        self.assertNothingAt(self.project_agents / "solo")   # a skill for Claude Code only
+        self.assertEqual(
+            {item["name"]: item["status"] for item in report["project"]["items"] if item["kind"] == "link"},
+            {".claude/skills/alpha": render.CREATE, ".claude/skills/solo": render.CREATE,
+             ".agents/skills/alpha": render.CREATE},
+        )
+        self.assertEqual(self.ignored(), [
+            ".agents/skills/alpha", ".claude/skills/alpha", ".claude/skills/solo",
+        ])
+        record = json.loads((self.project / ".agents" / "workflow-setup" / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            record["entries"]["project:.claude/skills/alpha"]["target"], "clone:alpha")
+        # A second run changes nothing.
+        before = tree(self.project)
+        code, report, _ = self.report(*self.arg)
+        self.assertEqual(code, 0)
+        self.assertFalse(report["changed"])
+        self.assertEqual(tree(self.project), before)
+
+    def test_a_skill_the_home_has_is_skipped_and_said(self) -> None:
+        self.write(self.project_file, self.LIST)    # the home installs everything
+        code, report, err = self.report(*self.arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertNothingAt(self.project_claude)
+        self.assertNothingAt(self.project_agents)
+        items = {(item["provider"], item["name"]): item for item in report["project"]["items"] if item["kind"] == "link"}
+        self.assertEqual(set(items), {("claude-code", ".claude/skills/alpha"), ("claude-code", ".claude/skills/solo"),
+                                      ("codex", ".agents/skills/alpha")})
+        for item in items.values():
+            self.assertEqual((item["status"], item["says"]), (render.SKIPPED, "the home has it"))
+        self.assertFalse(self.project.joinpath(".gitignore").is_file() and self.ignored())
+
+    def test_a_skill_that_is_needed_comes_with_it_and_is_said(self) -> None:
+        self.put("roles/dependencies.toml", 'schema_version = 1\n\n[needs]\nalpha = ["beta"]\n')
+        self.write(self.user_file, '[setup]\nenabled = ["solo"]\ndisabled = ["alpha", "beta", "sample"]\n')
+        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
+        self.write(self.local_file, '[project]\ndisabled = ["beta"]\n')
+        code, out, err = self.render(*self.arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertLinked(self.project_claude / "beta", self.clone / "beta")
+        self.assertLinked(self.project_agents / "beta", self.clone / "beta")
+        self.assertIn(f"note: project: beta: installed as a dependency of alpha; it overrides project.disabled in "
+                      f"{self.local_file}, which names it", out)
+
+    def test_the_block_that_lists_the_links_is_taken_over_without_a_record(self) -> None:
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        gitignore = (self.project / ".gitignore").read_bytes()
+        shutil.rmtree(self.project / ".agents" / "workflow-setup")
+        for name in ("alpha", "solo"):
+            (self.project_claude / name).unlink()
+        (self.project_agents / "alpha").unlink()
+        code, out, err = self.render(*self.arg)
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual((self.project / ".gitignore").read_bytes(), gitignore)
+
+    def test_a_project_without_the_group_gets_nothing(self) -> None:
+        self.write(self.project_file, "[roles]\nmanager_default = false\n")
+        code, report, err = self.report(*self.arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertNothingAt(self.project_claude)
+        self.assertNothingAt(self.project_agents)
+        self.assertEqual([item for item in report["project"]["items"] if item["kind"] == "link"], [])
+
+    def test_a_fault_of_the_list_stops_the_run(self) -> None:
+        self.write(self.project_file, '[project]\nenabled = ["nothing"]\n')
+        before = tree(self.project)
+        code, out, err = self.render(*self.arg)
+        self.assertEqual(code, 2)
+        self.assertIn("nothing is no skill or rule of this clone", err)
+        self.assertEqual(tree(self.project), before)
+
+    def test_an_item_removed_leaves_the_ignore_block(self) -> None:
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        self.assertNothingAt(self.project_claude / "solo")
+        self.assertEqual(self.ignored(), [".agents/skills/alpha", ".claude/skills/alpha"])
+
+    @unittest.skipUnless(POSIX, "the view from WSL is rebuilt on a POSIX file system")
+    def test_from_wsl_on_one_drive_the_link_is_relative(self) -> None:
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        code, out, err = self.render(*self.arg, host=self.wsl(self.root))
+        self.assertEqual((code, err), (0, ""), out)
+        seen = fsio.look(self.project_claude / "alpha")
+        self.assertEqual(seen.target, "../../../fake-clone/alpha")
+        self.assertEqual(fsio.look(self.project_agents / "alpha").target, "../../../fake-clone/alpha")
+        self.assertEqual(os.path.realpath(self.project_claude / "alpha"), str(self.clone / "alpha"))
+        self.assertNotIn("Windows sessions", out)
+        # The link is setup's own: a second run is up to date.
+        code, report, _ = self.report(*self.arg, host=self.wsl(self.root))
+        self.assertEqual(code, 0)
+        self.assertFalse(report["changed"])
+
+    @unittest.skipUnless(POSIX, "the view from WSL is rebuilt on a POSIX file system")
+    def test_from_wsl_a_clone_on_another_drive_is_not_linked(self) -> None:
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        code, report, err = self.report(*self.arg, host=self.wsl(self.clone, self.project))
+        self.assertEqual((code, err), (0, ""))
+        self.assertNothingAt(self.project_claude)
+        self.assertNothingAt(self.project_agents)
+        links = [item for item in report["project"]["items"] if item["kind"] == "link"]
+        self.assertEqual({item["status"] for item in links}, {render.SKIPPED})
+        self.assertEqual(len(links), 3)
+        lines = [note for note in report["notes"] if "not linked into" in note]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("alpha, solo not linked into", lines[0])
+        self.assertIn(f"run `render --project {self.project}` from Windows", lines[0])
+
+    def test_a_wsl_drive_path_is_named_as_windows_names_it(self) -> None:
+        self.assertEqual(render._windows_path("/mnt/d/proj/sub"), "D:\\proj\\sub")
+        self.assertEqual(render._windows_path("/mnt/d"), "D:\\")
+        self.assertEqual(render._windows_path("/home/me/proj"), "/home/me/proj")
+
+    @unittest.skipUnless(POSIX, "the view from WSL is rebuilt on a POSIX file system")
+    def test_from_wsl_a_clone_in_the_linux_file_system_gets_an_absolute_link_and_a_note(self) -> None:
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        code, out, err = self.render(*self.arg, host=self.wsl(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(fsio.look(self.project_claude / "alpha").target, str(self.clone / "alpha"))
+        self.assertIn("note: project: the clone is in the Linux file system: Windows sessions will not see the links", out)
+
+    def test_the_help_says_what_a_project_gets(self) -> None:
+        code, out, _ = support.run("render", "--help")
+        self.assertEqual(code, 0)
+        self.assertIn("With --project, the skills the project lists", out)
+
+
+class ProjectLinkThereCase(ProjectCase):
+    """What is already at a project's link path, and what the sweep keeps
+    (P3.4)."""
+
+    def by_hand(self, link: Path, target: Path | str) -> Path:
+        link.parent.mkdir(parents=True, exist_ok=True)
+        fsio.make_link(str(target), link, True)
+        return link
+
+    def record(self) -> dict:
+        return json.loads((self.project / ".agents" / "workflow-setup" / "manifest.json").read_text(encoding="utf-8"))
+
+    def link_items(self, report: dict) -> dict[str, dict]:
+        return {item["name"]: item for item in report["project"]["items"] if item["kind"] == "link"}
+
+    def stale_paths(self, report: dict) -> dict[str, str]:
+        return {item["path"]: item["status"] for item in report["stale"]}
+
+    @unittest.skipUnless(POSIX, "a relative link is made on a POSIX file system")
+    def test_setups_link_with_another_text_to_the_unit_is_up_to_date(self) -> None:
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        link = self.project_claude / "alpha"
+        link.unlink()
+        os.symlink("../../../fake-clone/alpha", link)    # as the other side writes it
+        before = tree(self.project)
+        code, report, err = self.report(*self.arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.link_items(report)[".claude/skills/alpha"]["status"], render.UP_TO_DATE)
+        self.assertFalse(report["changed"])
+        self.assertEqual(report["plan"], [])
+        self.assertEqual(tree(self.project), before)
+        # And from WSL, which would write a relative text, an absolute one
+        # is kept as it is.
+        link.unlink()
+        os.symlink(str(self.clone / "alpha"), link)
+        before = tree(self.project)
+        code, report, err = self.report(*self.arg, host=self.wsl(self.root))
+        self.assertEqual((code, err), (0, ""))
+        self.assertFalse(report["changed"])
+        self.assertEqual(tree(self.project), before)
+
+    def test_a_link_made_by_hand_is_taken_over_and_removed_once_off_the_list(self) -> None:
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        link = self.by_hand(self.project_claude / "alpha", self.clone / "alpha")
+        text = fsio.look(link).target
+        code, report, err = self.report(*self.arg)
+        self.assertEqual((code, err), (0, ""))
+        item = self.link_items(report)[".claude/skills/alpha"]
+        self.assertEqual(item["status"], render.UP_TO_DATE)
+        self.assertIn("a link made by hand, which setup takes over", item["says"])
+        self.assertIn("`uninstall --project` leaves it", item["says"])
+        self.assertIn("taking the skill off the project's list removes it", item["says"])
+        self.assertEqual(self.record()["entries"]["project:.claude/skills/alpha"],
+                         {"kind": "link", "target": "clone:alpha", "adopted": True})
+        self.assertEqual(fsio.look(link).target, text)
+        self.assertIn(".claude/skills/alpha", self.ignored())
+        # A second run changes nothing.
+        code, report, _ = self.report(*self.arg)
+        self.assertEqual((code, report["changed"]), (0, False))
+        # Off the list: removed and forgotten.
+        self.write(self.project_file, '[project]\nenabled = ["solo"]\n')
+        code, report, err = self.report(*self.arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.stale_paths(report)[str(link)], render.REMOVE)
+        self.assertNothingAt(link)
+        self.assertNotIn("project:.claude/skills/alpha", self.record()["entries"])
+        self.assertNotIn(".claude/skills/alpha", self.ignored())
+        self.assertTrue((self.clone / "alpha" / "SKILL.md").is_file())
+
+    @unittest.skipUnless(POSIX, "a relative link is made on a POSIX file system")
+    def test_a_link_of_the_other_side_with_another_text_is_removed_once_its_unit_leaves(self) -> None:
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        link = self.project_claude / "alpha"
+        alias = self.root / "alias"
+        os.symlink(str(self.clone), alias)
+        link.unlink()
+        os.symlink(str(alias / "alpha"), link)    # the other side reaches the clone through a link
+        self.assertNotIn("adopted", self.record()["entries"]["project:.claude/skills/alpha"])
+        self.write(self.project_file, '[project]\nenabled = ["solo"]\n')
+        code, report, err = self.report(*self.arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.stale_paths(report)[str(link)], render.REMOVE)
+        self.assertNothingAt(link)
+        self.assertNotIn("project:.claude/skills/alpha", self.record()["entries"])
+
+    @unittest.skipUnless(POSIX, "a link through a link is made on a POSIX file system")
+    def test_a_link_taken_over_is_removed_by_where_it_leads(self) -> None:
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        alias = self.root / "alias"
+        os.symlink(str(self.clone), alias)
+        link = self.by_hand(self.project_claude / "alpha", alias / "alpha")
+        code, report, err = self.report(*self.arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertTrue(self.record()["entries"]["project:.claude/skills/alpha"]["adopted"])
+        self.write(self.project_file, '[project]\nenabled = ["solo"]\n')
+        code, report, err = self.report(*self.arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.stale_paths(report)[str(link)], render.REMOVE)
+        self.assertNothingAt(link)
+        self.assertNotIn("project:.claude/skills/alpha", self.record()["entries"])
+
+    def test_a_link_to_elsewhere_is_a_conflict(self) -> None:
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        elsewhere = self.root / "elsewhere" / "alpha"
+        elsewhere.mkdir(parents=True)
+        self.by_hand(self.project_claude / "alpha", elsewhere)
+        before = tree(self.project)
+        code, out, err = self.render(*self.arg)
+        self.assertEqual(code, 2, out)
+        self.assertIn(f"{self.project_claude / 'alpha'}: a link to elsewhere on this side", err)
+        self.assertIn("and setup did not make it", err)
+        self.assertEqual(tree(self.project), before)
+
+    def test_a_link_of_a_provider_not_installed_here_is_kept(self) -> None:
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        shutil.rmtree(self.codex)                      # Codex is no longer installed on this side
+        code, report, err = self.report(*self.arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertLinked(self.project_agents / "alpha", self.clone / "alpha")
+        self.assertNotIn(str(self.project_agents / "alpha"), self.stale_paths(report))
+        self.assertIn(".agents/skills/alpha", self.ignored())
+
+    def test_on_a_one_sided_host_a_link_of_a_unit_the_home_gained_is_removed(self) -> None:
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        self.write(self.user_file, '[setup]\nenabled = ["alpha", "beta"]\ndisabled = ["sample", "solo"]\n')
+        code, report, err = self.report(*self.arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.link_items(report)[".claude/skills/alpha"]["says"], "the home has it")
+        for link in (self.project_claude / "alpha", self.project_agents / "alpha"):
+            self.assertEqual(self.stale_paths(report)[str(link)], render.REMOVE)
+            self.assertNothingAt(link)
+        self.assertLinked(self.project_claude / "solo", self.clone / "solo")
+        self.assertEqual(self.ignored(), [".claude/skills/solo"])
+
+    @unittest.skipUnless(POSIX, "the view from WSL is rebuilt on a POSIX file system")
+    def test_with_another_side_the_link_of_a_unit_the_home_has_is_kept(self) -> None:
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        self.assertEqual(self.render(*self.arg, host=self.wsl(self.root))[0], 0)
+        self.write(self.user_file, '[setup]\nenabled = ["alpha", "beta"]\ndisabled = ["sample", "solo"]\n')
+        before = tree(self.project)
+        code, report, err = self.report(*self.arg, host=self.wsl(self.root))
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.link_items(report)[".claude/skills/alpha"]["says"], "the home has it")
+        self.assertEqual([item for item in report["stale"] if item["path"].startswith(str(self.project))], [])
+        self.assertEqual(tree(self.project), before)
+
+    @unittest.skipUnless(POSIX, "the view from WSL is rebuilt on a POSIX file system")
+    def test_a_relative_link_whose_unit_left_the_list_is_removed(self) -> None:
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        self.assertEqual(self.render(*self.arg, host=self.wsl(self.root))[0], 0)
+        link = self.project_claude / "alpha"
+        self.assertFalse(os.path.isabs(fsio.look(link).target))
+        self.write(self.project_file, '[project]\nenabled = ["solo"]\n')
+        code, report, err = self.report(*self.arg, host=self.wsl(self.root))
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.stale_paths(report)[str(link)], render.REMOVE)
+        self.assertNothingAt(link)
+        self.assertNothingAt(self.project_agents / "alpha")
+        self.assertEqual(self.ignored(), [".claude/skills/solo"])
+
+    @unittest.skipUnless(POSIX, "the view from WSL is rebuilt on a POSIX file system")
+    def test_a_link_whose_provider_the_compatibility_no_longer_names_is_removed(self) -> None:
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        self.assertEqual(self.render(*self.arg, host=self.wsl(self.root))[0], 0)
+        skill = self.clone / "alpha" / "SKILL.md"
+        skill.write_text(skill.read_text(encoding="utf-8").replace("claude-code, codex", "claude-code"),
+                         encoding="utf-8")
+        code, report, err = self.report(*self.arg, host=self.wsl(self.root))
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.stale_paths(report)[str(self.project_agents / "alpha")], render.REMOVE)
+        self.assertNothingAt(self.project_agents / "alpha")
+        self.assertFalse(os.path.isabs(fsio.look(self.project_claude / "alpha").target))
+
+    def test_the_help_says_what_is_kept_at_a_projects_path(self) -> None:
+        code, out, _ = support.run("render", "--help")
+        self.assertEqual(code, 0)
+        self.assertIn("A link already at a project's path that leads to the skill's", out)
+
+
+class ProjectRuleCopyCase(ProjectCase):
+    """A project's rules are copied, not linked (P3.5)."""
+
+    RULE_LIST = '[project]\nenabled = ["sample"]\n'
+    NO_SAMPLE = '[setup]\ndisabled = ["sample"]\n'
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.copy = self.project / ".claude" / "rules" / "sample" / "sample.md"
+        self.write(self.user_file, self.NO_SAMPLE)
+        self.write(self.project_file, self.RULE_LIST)
+
+    def ignored_rules(self) -> list[str]:
+        text = (self.project / ".gitignore").read_text(encoding="utf-8")
+        return [line for line in text.splitlines() if "rules/" in line]
+
+    def test_the_copy_is_made_and_listed(self) -> None:
+        code, report, err = self.report(*self.arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.copy.read_bytes(), (self.clone / "rules/sample/sample.md").read_bytes())
+        self.assertEqual(fsio.look(self.copy.parent).kind, fsio.DIRECTORY)
+        self.assertEqual(self.ignored_rules(), [".claude/rules/sample/sample.md"])
+        self.assertEqual({item["name"]: item["status"] for item in report["project"]["items"] if item["kind"] == "file"},
+                         {".claude/rules/sample/sample.md": render.CREATE})
+        before = tree(self.project)
+        code, report, _ = self.report(*self.arg)
+        self.assertEqual(code, 0)
+        self.assertFalse(report["changed"])
+        self.assertEqual(tree(self.project), before)
+
+    def test_a_clone_file_with_crlf_is_copied_with_lf(self) -> None:
+        self.put("rules/sample/sample.md", b"\xef\xbb\xbfA rule.\r\nTwo lines.\r\n")
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        self.assertEqual(self.copy.read_bytes(), b"A rule.\nTwo lines.\n")
+
+    def test_a_change_in_the_clone_reaches_the_copy(self) -> None:
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        self.put("rules/sample/sample.md", "A changed rule.\n")
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        self.assertEqual(self.copy.read_text(encoding="utf-8"), "A changed rule.\n")
+
+    def test_an_edited_copy_is_kept_and_reported(self) -> None:
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        self.copy.write_text("mine\n", encoding="utf-8")
+        self.put("rules/sample/sample.md", "A changed rule.\n")
+        code, report, _ = self.report(*self.arg)
+        self.assertEqual(code, 3)
+        self.assertEqual(self.copy.read_text(encoding="utf-8"), "mine\n")
+        statuses = {item["name"]: item["status"] for item in report["project"]["items"] if item["kind"] == "file"}
+        self.assertEqual(statuses[".claude/rules/sample/sample.md"], render.EDITED)
+        self.assertEqual(self.render(*self.arg, "--overwrite-edited")[0], 0)
+        self.assertEqual(self.copy.read_text(encoding="utf-8"), "A changed rule.\n")
+
+    def test_a_rule_leaving_the_list_removes_the_copy(self) -> None:
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        self.assertNothingAt(self.copy)
+        self.assertNothingAt(self.copy.parent)
+        self.assertEqual(self.ignored_rules(), [])
+
+    def test_a_file_the_rule_no_longer_has_is_removed(self) -> None:
+        self.put("rules/sample/extra.md", "More.\n")
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        self.assertTrue((self.copy.parent / "extra.md").is_file())
+        (self.clone / "rules/sample/extra.md").unlink()
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        self.assertNothingAt(self.copy.parent / "extra.md")
+        self.assertTrue(self.copy.is_file())
+
+    def test_a_home_with_the_rule_copies_nothing(self) -> None:
+        self.write(self.user_file, "")
+        code, report, err = self.report(*self.arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertNothingAt(self.project / ".claude" / "rules")
+        skipped = [item for item in report["project"]["items"] if item["name"] == ".claude/rules/sample"]
+        self.assertEqual([(item["status"], item["says"]) for item in skipped], [(render.SKIPPED, "the home has it")])
+
+    def test_the_block_that_lists_a_copy_is_taken_over_without_a_record(self) -> None:
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        gitignore = (self.project / ".gitignore").read_bytes()
+        shutil.rmtree(self.project / ".agents" / "workflow-setup")
+        shutil.rmtree(self.copy.parent)
+        code, out, err = self.render(*self.arg)
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual((self.project / ".gitignore").read_bytes(), gitignore)
+
+    def test_the_copy_of_the_other_side_is_kept_while_claude_code_is_not_here(self) -> None:
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        shutil.rmtree(self.claude)     # Claude Code is not on this side
+        self.assertEqual(self.render(*self.arg, host=self.wsl(self.root))[0], 0)
+        self.assertTrue(self.copy.is_file())
+        # With Claude Code here and the home now installing the rule, the copy is stale.
+        self.claude.mkdir()
+        self.write(self.user_file, "")
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        self.assertNothingAt(self.copy)
+
+    def test_the_help_says_a_project_gets_a_copy(self) -> None:
+        code, out, _ = support.run("render", "--help")
+        self.assertEqual(code, 0)
+        self.assertIn("are copied, not", out)
+
+
 if __name__ == "__main__":
     unittest.main()

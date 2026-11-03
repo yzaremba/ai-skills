@@ -12,12 +12,14 @@ Run from the repository root:
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import unittest
 from pathlib import Path
 
 import interop_support
+import support
 from test_validate import TreeCase
 from wfsetup import fsio, homes
 from wfsetup.locations import Locations
@@ -302,6 +304,68 @@ class WslLinkSeenFromWindowsCase(TreeCase):
         self.assertEqual((code, out), (2, ""))
         self.assertEqual(len(err.splitlines()), 2)
         self.assertFalse((self.home / ".agents").exists())
+
+
+
+class ProjectLinksOfBothSidesCase(TreeCase):
+    """A project on a Windows drive, rendered from both sides: each side
+    reads the other's link as setup's link to the unit, by where it leads,
+    and leaves it as it is (P3.4)."""
+
+    ONLY_BETA = '[setup]\nenabled = ["beta"]\ndisabled = ["alpha", "sample", "solo"]\n'
+
+    def setUp(self) -> None:
+        self.far = interop_support.need(self, python=True)
+        with self.far.as_temp():
+            super().setUp()
+        self.script = self.install_tool()
+        (self.home / ".claude").mkdir()
+        (self.home / ".codex").mkdir()
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
+        self.links = [self.project / ".claude" / "skills" / "alpha", self.project / ".agents" / "skills" / "alpha"]
+
+    run_there = WslLinkSeenFromWindowsCase.run_there
+
+    def render_here(self) -> tuple[int, dict, str]:
+        code, out, err = support.run(
+            "render", "--no-roles", "--json", "--home", str(self.home), "--project", str(self.project))
+        return code, json.loads(out), err
+
+    def render_there(self) -> tuple[int, dict, str]:
+        code, out, err = self.run_there("render", "--no-roles", "--json", "--project", self.far.there(self.project))
+        return code, json.loads(out), err
+
+    def project_items(self, report: dict) -> dict[str, str]:
+        return {item["name"]: item["status"] for item in report["project"]["items"] if item["kind"] == "link"}
+
+    def test_a_relative_link_wsl_made_reads_from_windows_as_setups_link(self) -> None:
+        self.assertEqual(self.run_there("render", "--no-roles")[0], 0)      # the home, from Windows
+        code, report, err = self.render_here()
+        self.assertEqual((code, err), (0, ""), report["errors"])
+        texts = [fsio.look(link).target for link in self.links]
+        for link, text in zip(self.links, texts):
+            self.assertFalse(os.path.isabs(text), text)
+            self.assertEqual(os.path.realpath(link), os.path.realpath(self.clone / "alpha"))
+        code, report, err = self.render_there()
+        self.assertEqual((code, err), (0, ""), report["errors"])
+        self.assertEqual(set(self.project_items(report).values()), {"up-to-date"})
+        self.assertFalse(report["changed"], report["plan"])
+        self.assertEqual([fsio.look(link).target for link in self.links], texts)   # still WSL's links
+
+    def test_the_junction_windows_made_reads_from_wsl_as_setups_link(self) -> None:
+        code, report, err = self.render_there()
+        self.assertEqual((code, err), (0, ""), report["errors"])
+        texts = [fsio.look(link).target for link in self.links]
+        for link, text in zip(self.links, texts):
+            self.assertEqual(text, str(self.clone / "alpha"))      # a junction, read from WSL
+        code, report, err = self.render_here()
+        self.assertEqual((code, err), (0, ""), report["errors"])
+        self.assertEqual(set(self.project_items(report).values()), {"up-to-date"})
+        self.assertFalse(report["changed"], report["plan"])
+        self.assertEqual([fsio.look(link).target for link in self.links], texts)
+        done = self.far.shell("fsutil", "reparsepoint", "query", self.far.there(self.links[0]))
+        self.assertIn("Mount Point", done.stdout.decode("utf-8", "replace"))   # still Windows's junction
 
 
 if __name__ == "__main__":
