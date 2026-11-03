@@ -31,8 +31,9 @@ What is asked
         --memory-dir DIR                  memory.dir
         --allow-unshared-clone / --no-... setup.allow_unshared_clone
                                           (the user's file only)
+        --unset KEY                       take KEY out of the file (below)
 
-    The first three may be given several times. Each answer is checked by
+    The first three, and --unset, may be given several times. Each answer is checked by
     the settings schema, with the schema's own message.
 
     roles.enabled = false is the process alone on every `render`, which
@@ -93,13 +94,36 @@ What is written
     when a later version of the dictionaries proposes other models: a
     model changes cost and behaviour, so it changes when `init` is run
     again and not with an update of the clone. Every other value is
-    written only where it differs from the layers below; a setting left at
-    its shipped default keeps following the shipped default. A project file
-    holds differences only, the mappings included: it is shared, and what
-    it does not set is each user's own.
+    written where an answer stated it, and otherwise only where it differs
+    from the layers below. An answer given by flag or typed at the prompt is
+    stated: it is written even when it equals what the layers below give, so
+    a deliberate --no-manager-default shows in the file. A proposal accepted
+    with Enter or --yes is not stated: when it equals what the layers below
+    give, the key stays out and follows them. This holds for a project's
+    file as for the user's, the provider mappings included; a project's file
+    is shared, and what it does not set is each user's own.
 
     A value already in the file stays as it is unless an answer changes
-    it. An answer equal to what the layers below give takes the key out.
+    it.
+
+Taking a key out
+    --unset KEY takes KEY out of the file being written, so that it follows
+    the layer below again; the output shows it as "taken out; the value is
+    then ...". KEY is a key `init` writes: one of the settings above
+    (setup.allow_unshared_clone only without --project), or
+    providers.<p>.tiers.<t>, providers.<p>.efforts.<e> or
+    providers.<p>.role_models.<role> of a provider this run sets up. Any
+    other key is an error. An unset key is an answer: its question is not
+    asked. A key the file does not hold changes nothing, and a line says
+    so. --unset together with a flag that answers the same key is an error.
+    --role-model PROVIDER:ROLE= with an empty model also takes one entry out.
+
+    At a question about a setting, the answer `default` does the same. At a
+    tier or effort question of a project's file, NAME=default takes that
+    key out; a model that is really named default is given by --tier
+    or --effort. In the user's file the tier and effort mappings are held in
+    full, so --unset of one is refused there, and `default` is not offered at
+    their questions.
 
 Running it again
     The same answers write nothing, and the output says so. Other answers
@@ -108,9 +132,10 @@ Running it again
     first (~/.agents/workflow-setup/backups/<time of the run>/, or for a
     project's file DIR/.agents/workflow-setup/backups/<time of the run>/; a
     full copy, readable by you alone). The file is rewritten from its
-    values: every key it holds is kept, also those `init` asks nothing
-    about ([roles.<id>] overrides, the section of a provider that is not
-    installed), but its comments and layout are not. A file whose values do
+    values: every key it holds is kept, unless --unset or `default` takes it
+    out, also those `init` asks nothing about ([roles.<id>] overrides, the
+    section of a provider that is not installed), but its comments and layout
+    are not. A file whose values do
     not change is not touched, so comments in it stay.
 
     A file that `init` did not write in its present form (one written by
@@ -151,7 +176,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .. import commands, dictionary, fileops, fsio, homes, locations, modellist, profiles, roles, schema, settings
 from .. import tomlio
@@ -221,6 +246,12 @@ def configure(parser: argparse.ArgumentParser) -> None:
         "--role-model", action="append", default=[], metavar="PROVIDER:ROLE=MODEL",
         help="a model for one role definition, whatever its tier; an empty MODEL takes the entry out; "
         "may be given several times",
+    )
+    parser.add_argument(
+        "--unset", action="append", default=[], metavar="KEY",
+        help="take KEY out of the file, so that it follows the layer below again; a setting above, or a "
+        "provider's tier, effort or role model (a tier or an effort is refused when writing the user's file). Not asked. "
+        "May be given several times",
     )
     parser.add_argument(
         "--allow-unlisted", action="store_true",
@@ -343,7 +374,9 @@ class _Provider:
     checked: Dictionary                       # the dictionary as the list corrects it
     maps: dict[str, dict[str, str]]           # "tiers" and "efforts", as they will be
     given: dict[str, set[str]]                # the keys of each that a flag answered
+    stated: dict[str, set[str]]               # the keys of each that a flag or the prompt answered
     notes: dict[str, str] = field(default_factory=dict)
+    unset: dict[str, set[str]] = field(default_factory=lambda: {table: set() for table in _MAPS})   # taken out
 
     def choices(self) -> list[str]:
         """The models offered: the list's where there is one, else the
@@ -421,8 +454,17 @@ class _Provider:
         return ", ".join(entry.efforts) if entry.takes_effort else "none: the model takes no effort setting"
 
 
-def _settle_map(dialogue: _Dialogue, state: _Provider, table: str, allow_unlisted: bool) -> None:
-    """Bring one mapping of a provider to its final values, or raise."""
+def _a(word: str) -> str:
+    return "an" if word[0] in "aeiou" else "a"
+
+
+def _settle_map(
+    dialogue: _Dialogue, state: _Provider, table: str, allow_unlisted: bool, reset: Callable[[str], str] | None,
+    held: Callable[[str], bool] = lambda key: True,
+) -> None:
+    """Bring one mapping of a provider to its final values, or raise. With
+    ``reset`` (a project's file), NAME=default takes a key out, and the value
+    is then the one ``reset`` gives for the name."""
     word, meta, names, flag = _MAPS[table]
     values, given = state.maps[table], state.given[table]
     while True:
@@ -439,17 +481,34 @@ def _settle_map(dialogue: _Dialogue, state: _Provider, table: str, allow_unliste
             print(f"  models: {', '.join(state.choices()) or 'none listed'}")
         for line in problems:
             print(f"  {line}")
-        answer = dialogue.ask(f"  change, as {word}={meta} ..., or nothing to accept ({flag} {state.name}:...): ")
+        offered = f"{word}={meta} ..." if reset is None else f"{word}={meta} ... or {word}=default to take one out"
+        answer = dialogue.ask(f"  change, as {offered}, or nothing to accept ({flag} {state.name}:...): ")
         if not answer:
             if not problems:
                 return
             continue
         try:
             changed: dict[str, str] = {}
+            dropped: set[str] = set()
             for item in answer.split():
                 name, equals, value = item.partition("=")
                 if not equals or not name:
                     raise SetupError(f"{item}: expected {word}={meta}")
+                if value == "default" and reset is not None:
+                    key = f"providers.{state.name}.{table}.{name}"
+                    if name not in names:
+                        _check(key, value, "answer")   # an unknown name is refused as NAME=MODEL is
+                        raise SetupError(f"{item}: {name} is not a {word} of {state.name}")
+                    if not held(key):
+                        print(f"  {item}: the file does not hold {key}; nothing to take out")
+                    dropped.add(name)
+                    changed[name] = reset(name)
+                    continue
+                if value == "default":
+                    raise SetupError(
+                        f"{item}: the user's file holds the {word} mapping in full, so a key is not taken out; "
+                        f"{_a(word)} {word} really named default is given by {flag} {state.name}:{name}=default"
+                    )
                 _check(f"providers.{state.name}.{table}.{name}", value, "answer")
                 changed[name] = value
         except SetupError as exc:
@@ -457,20 +516,31 @@ def _settle_map(dialogue: _Dialogue, state: _Provider, table: str, allow_unliste
                 print(f"  {line}")
             continue
         values.update(changed)
+        state.stated[table].update(name for name in changed if name not in dropped)
+        state.stated[table].difference_update(dropped)
+        state.unset[table].update(dropped)
+        state.unset[table].difference_update(name for name in changed if name not in dropped)
         if not state.faults(table, allow_unlisted):
             return
 
 
-def _settle_setting(dialogue: _Dialogue, key: str, flag: str, kind: str, proposed: Any) -> Any:
+_TAKEN_OUT = object()   # what _settle_setting gives for the answer `default`
+
+
+def _settle_setting(dialogue: _Dialogue, key: str, flag: str, kind: str, proposed: Any) -> tuple[Any, bool]:
+    """The value, and whether it was typed: Enter and --yes accept a proposal, which is not an answer.
+    The answer `default` gives ``_TAKEN_OUT``: the key leaves the file."""
     if dialogue.yes:
-        return proposed
+        return proposed, False
     hint = f"{flag} or --no-{flag[2:]}" if kind == "boolean" else flag
     if not dialogue.interactive:
         raise dialogue.unanswered(key, hint)
     while True:
-        answer = dialogue.ask(f"{key} [{tomlio.format_value(proposed)}] ({hint}): ")
+        answer = dialogue.ask(f"{key} [{tomlio.format_value(proposed)}] ({hint}, or default to take it out): ")
         if not answer:
-            return proposed
+            return proposed, False
+        if answer == "default":
+            return _TAKEN_OUT, False
         value = _typed(kind, answer)
         try:
             _check(key, value, "answer")
@@ -478,7 +548,7 @@ def _settle_setting(dialogue: _Dialogue, key: str, flag: str, kind: str, propose
             for line in exc.lines:
                 print(f"  {line}")
             continue
-        return value
+        return value, True
 
 
 # --- The file -----------------------------------------------------------------
@@ -489,15 +559,15 @@ def _header(scope: str) -> list[str]:
         written = [
             "The tiers and efforts of each installed provider are written in full: they",
             "are the mapping confirmed at `init`, and an update of the clone does not",
-            "change them. Every other key is here only where it differs from the layers",
-            "below; a key that is not here has the value of the layer below.",
+            "change them. Every other key is here where an answer stated it or it differs",
+            "from the layers below; a key that is not here has the value of the layer below.",
         ]
     else:
         what = "the project layer (.agents/workflow.toml in the project)"
         written = [
-            "Only what this project sets differently is here; a key that is not here",
-            "has the value of the layer below, which for the provider mappings is each",
-            "user's own file.",
+            "A key is here where an answer stated it or it differs from the layers below;",
+            "a key that is not here has the value of the layer below, which for the",
+            "provider mappings is each user's own file.",
         ]
     return [
         f"Workflow settings: {what}.",
@@ -592,9 +662,11 @@ def run(args: argparse.Namespace) -> int:
     def proposed(key: str) -> Any:
         return flat[key] if key in flat else below[key].value
 
-    def place(key: str, value: Any, pin: bool = False) -> None:
-        """Set, keep or take out one key; see "What is written"."""
-        if pin or (key in flat and _same(flat[key], value)):
+    def place(key: str, value: Any, pin: bool = False, stated: bool = False) -> None:
+        """Set, keep or take out one key; see "What is written". A stated
+        value (a flag, or typed at a prompt) is written whatever the layers
+        below give."""
+        if pin or stated or (key in flat and _same(flat[key], value)):
             flat[key] = value
         elif key in below and _same(below[key].value, value):
             flat.pop(key, None)
@@ -654,6 +726,40 @@ def run(args: argparse.Namespace) -> int:
             answers[key] = _typed(kind, value) if isinstance(value, str) else value
             _check(key, answers[key], flag)
 
+    # --- What is taken out ----------------------------------------------------
+    unset: set[str] = set()
+    settings_keys = {key for key, _, _, _ in _SETTINGS}
+    for text in args.unset:
+        key = ".".join(schema.parse_key(text))
+        parts = key.split(".")
+        mapped = len(parts) == 4 and parts[0] == "providers" and parts[2] in (*_MAPS, "role_models")
+        if mapped and parts[2] in _MAPS and parts[3] not in _MAPS[parts[2]][2]:
+            mapped = False
+        if not (key in settings_keys or mapped):
+            raise SetupError(
+                f"--unset {text}: not a key `init` writes; those are {', '.join(sorted(settings_keys))}, "
+                "and providers.<provider>.tiers.<tier>, .efforts.<effort> and .role_models.<role>"
+            )
+        if key == homes.UNSHARED_KEY and scope == PROJECT:
+            raise SetupError(f"--unset {text}: {key} is read from the user's file alone; give it to `init` without --project")
+        if mapped and parts[1] not in names:
+            raise SetupError(
+                f"--unset {text}: {parts[1]} is not a provider this run sets up; installed here, "
+                f"with a dictionary: {', '.join(names) or 'none'}"
+            )
+        if mapped and scope == USER and parts[2] in _MAPS:
+            raise SetupError(
+                f"--unset {text}: the user's file holds the {parts[2]} mapping in full, so a key of it is not taken "
+                "out; give --tier or --effort to change one"
+            )
+        if key in answers or (mapped and (parts[1], parts[3]) in flags[parts[2]]):
+            raise SetupError(f"--unset {text}: a flag answers the same key; give one of them")
+        if key in unset:
+            continue
+        unset.add(key)
+        if key not in flat:
+            print(f"--unset {text}: {target} does not hold it; nothing to take out")
+
     # --- The mappings ---------------------------------------------------------
     states: list[_Provider] = []
     for provider in configured:
@@ -668,24 +774,40 @@ def run(args: argparse.Namespace) -> int:
                 for table in _MAPS
             },
             given={table: set() for table in _MAPS},
+            stated={table: set() for table in _MAPS},
         )
         for table in _MAPS:
             for (provider_name, name), value in flags[table].items():
                 if provider_name == provider.name:
                     state.maps[table][name] = value
                     state.given[table].add(name)
+                    state.stated[table].add(name)
+        for table in _MAPS:
+            for name in _MAPS[table][2]:
+                key = f"providers.{state.name}.{table}.{name}"
+                if key in unset:
+                    state.maps[table][name] = below[key].value
+                    state.given[table].add(name)
+                    state.unset[table].add(name)
         print(f"{state.name}: {reading.describe()}")
         if state.comparison is not None:
             for line in state.comparison.lines():
                 print(f"  {line}")
         for table in _MAPS:
-            _settle_map(dialogue, state, table, args.allow_unlisted)
+            reset = None if scope == USER else (lambda name, t=table, n=state.name: below[f"providers.{n}.{t}.{name}"].value)
+            _settle_map(dialogue, state, table, args.allow_unlisted, reset, lambda key: key in flat)
         states.append(state)
 
     for state in states:
         for table in _MAPS:
             for name, value in state.maps[table].items():
-                place(f"providers.{state.name}.{table}.{name}", value, pin=scope == USER)
+                if name in state.unset[table]:
+                    flat.pop(f"providers.{state.name}.{table}.{name}", None)
+                    continue
+                place(
+                    f"providers.{state.name}.{table}.{name}", value,
+                    pin=scope == USER, stated=name in state.stated[table],
+                )
         for (provider_name, role), model in flags["role_models"].items():
             if provider_name != state.name:
                 continue
@@ -696,7 +818,7 @@ def run(args: argparse.Namespace) -> int:
             fault = state.model_fault(key, model, f"--role-model {state.name}:{role}=MODEL", args.allow_unlisted)
             if fault is not None:
                 raise SetupError(fault)
-            place(key, model)
+            place(key, model, stated=True)
 
     # --- The other settings ---------------------------------------------------
     # The clone's question is asked where it applies: the user's file, on a
@@ -709,9 +831,15 @@ def run(args: argparse.Namespace) -> int:
     elif clone.shared is not False:
         why = clone.why.removeprefix("not asked: ")
         unasked[homes.UNSHARED_KEY] = f"the clone needs no such permission here ({why})"
+    for key in unset:
+        if key.split(".")[2:3] == ["role_models"]:
+            flat.pop(key, None)
     for key, flag, _, kind in _SETTINGS:
         if key in answers:
-            place(key, answers[key])
+            place(key, answers[key], stated=True)
+            continue
+        if key in unset:
+            flat.pop(key, None)
             continue
         if key in unasked:
             continue
@@ -721,7 +849,13 @@ def run(args: argparse.Namespace) -> int:
                 f"is given on each run, or {key} is true. Say true only where the {homes.other_side(found)} "
                 f"does not install from this clone ({homes.unshared_cases(found)})"
             )
-        place(key, _settle_setting(dialogue, key, flag, kind, proposed(key)))
+        value, typed = _settle_setting(dialogue, key, flag, kind, proposed(key))
+        if value is _TAKEN_OUT:
+            if key not in flat:
+                print(f"default: the file does not hold {key}; nothing to take out")
+            flat.pop(key, None)
+        else:
+            place(key, value, stated=typed)
 
     # --- What the roles would run with ----------------------------------------
     entries = {key: entry for key, entry in below.items() if key.split(".")[0] in profiles.GROUPS}
