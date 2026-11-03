@@ -15,14 +15,18 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 import unittest
 from pathlib import Path
 
-import interop_support
-import support
-from test_validate import TreeCase
-from wfsetup import fsio, homes
-from wfsetup.locations import Locations
+# Importable by its path or dotted name from the repository root, too.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import interop_support  # noqa: E402
+import support  # noqa: E402
+from test_validate import TreeCase  # noqa: E402
+from wfsetup import fsio, homes  # noqa: E402
+from wfsetup.locations import Locations  # noqa: E402
 
 WSL_NOTE = "a link made in WSL, which Windows cannot follow"
 

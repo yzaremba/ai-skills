@@ -822,7 +822,7 @@ stand for an option `render` would otherwise need on every run; the option still
 | `roles.enabled` | `true` | The user's file for the homes; a project's files, over the user's, for that project | `false` installs the process alone, as `render --no-roles` does for one run. A project gets roles only where the home has them; one rendered with roles before keeps its starting role until `render --project DIR`. `init --roles` / `--no-roles` sets it. |
 | `project.enabled` | none | A project's `.agents/workflow.toml` and `.agents/workflow.local.toml`; in the user's file it is an error | The skills and the rule the project uses. The two files' lists combine instead of the later replacing the earlier. `init --project DIR --skills NAME...` sets it. |
 | `project.disabled` | none | A project's `.agents/workflow.local.toml` alone: in the shared file it is an error | Takes a name out of the project's set on this machine. A skill that an enabled one needs stays. Written by hand. |
-| `setup.allow_unshared_clone` | `false` | The user's file alone: a project's file that holds `[setup]` is an error | `true` lets `render` and `doctor` accept a clone that only this side of a Windows and WSL machine reads, as `--allow-unshared-clone` does for one run: only where the other side does not install from this clone (WSL used alone, or a clone for each side). `init --allow-unshared-clone` sets it. |
+| `setup.allow_unshared_clone` | `false` | The user's file alone: a project's file that holds `[setup]` is an error | `true` lets `render` and `doctor` accept a clone that only this side of a Windows and WSL machine reads, as `--allow-unshared-clone` does for one run: only where the other side does not install from this clone (WSL used alone, or a clone for each side). A project on a Windows drive used from both sides with a clone for each side is not supported. `init --allow-unshared-clone` sets it. |
 
 All four are newer than the first version 2 tools: an older clone's setup tool, and the
 `check.py` of an older `prd-implementation`, refuse a user file that holds `roles.enabled`
@@ -931,6 +931,11 @@ and each skill's `SKILL.md`.
   writes itself (`projects`, `notice`) pass without a word; any other key there is
   named, and `doctor` warns of one that changes what the role may do, such as
   `sandbox_mode` or `approval_policy`.
+- **A skill seen twice on Codex is not checked.** When the same skill is found in the home
+  and in a project, whether Codex takes one or both has not been checked.
+- **WSL following a junction to another drive is untested.** Whether WSL's clients follow a
+  junction to another drive is not yet tested. It matters only where the clone is on
+  another Windows drive than the project: render from Windows ([WSL makes no link there](#using-it)).
 - **Discovery cannot be shown for everything.** No provider output that was found lists
   Codex's role definitions, and Claude Code lists nothing without a session: `doctor`
   reports those items as unproven. `doctor --prove-discovery` starts one session for
