@@ -38,9 +38,9 @@ The checks, in the order they run:
                          starting role's keys, "agent" and "effortLevel" in
                          .claude/settings.json, and its block; its links and
                          rule copies whose unit left the project's list)
-                         made from other
-                         sources or settings than today's, and one that
-                         render would no longer make: warnings. Run render.
+                         made from other sources or settings than today's,
+                         and one that render would no longer make:
+                         warnings. Run render.
     hand-edits           a generated file whose content is not what setup
                          wrote, and a block or a key setup wrote that was
                          changed since: warnings. render keeps such a thing
@@ -63,9 +63,11 @@ The checks, in the order they run:
                          Something at a path where render would
                          install, which setup did not make: an error, since
                          render stops on it. With --project: a unit of the
-                         project's list (project.enabled) that is in neither
-                         the project nor the home, and the faults of the
-                         project's lists, with their file.
+                         project's list (project.enabled, and the units it
+                         needs) that is in neither the project nor the home:
+                         a warning, as for any other thing render would
+                         create now; and the faults of the project's lists,
+                         with their file.
     links                a link the record lists that is missing, is no
                          longer a link, leads elsewhere than setup pointed
                          it, leads to something that does not exist (a moved
@@ -81,8 +83,7 @@ The checks, in the order they run:
                          does not merge two skills of one name; with
                          --project the project's .claude/skills and
                          .agents/skills. A project's link the record holds
-                         is not one: the home has the unit (render skips
-                         it there) and the link is the other side's.
+                         is not reported here: `links` and `drift` judge it.
     other-clones         a link in a skills or rules directory, or in the
                          record, that leads into another clone of this
                          repository, and a clone inside a skills directory:

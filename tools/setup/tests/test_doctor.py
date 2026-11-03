@@ -1350,7 +1350,7 @@ class ProjectSetCase(DoctorCase):
         self.assertFinding(findings, doctor.ERROR, "project:.claude/skills/alpha", "outside the clone", "changed since")
         self.assertEqual(self.subjects(findings, doctor.ERROR), ["project:.claude/skills/alpha"])
 
-    def test_a_link_that_is_gone_or_a_directory(self) -> None:
+    def test_a_link_that_is_gone(self) -> None:
         self.project_rendered()
         fsio.remove_link(self.skills / "solo")
         code, findings = self.only("links", *self.project_arg)
@@ -1358,7 +1358,7 @@ class ProjectSetCase(DoctorCase):
         self.assertFinding(findings, doctor.ERROR, "project:.claude/skills/solo", "the link is missing")
 
     @unittest.skipUnless(POSIX, "a relative symlink")
-    def test_a_relative_link_and_a_link_by_hand_read_as_setups(self) -> None:
+    def test_a_relative_link_reads_as_setups(self) -> None:
         self.project_rendered()
         fsio.remove_link(self.skills / "alpha")
         os.symlink(os.path.relpath(self.clone / "alpha", self.skills), self.skills / "alpha")
