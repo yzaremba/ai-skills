@@ -908,6 +908,112 @@ class KeptCase(UninstallCase):
         self.assertAsAtTheStart(start)
 
 
+class ProjectInstallCase(UninstallCase):
+    """A project's skill links and rule copy, and the way back (P4.2: R3.6, R3.4)."""
+
+    LIST = '[project]\nenabled = ["beta", "solo", "sample"]\n'
+    NO_HOME = '[setup]\ndisabled = ["alpha", "beta", "solo", "sample"]\n'
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.before = self.start(v1_copies=False)
+        self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home)
+        self.data(self.user_file, USER_SETTINGS + self.NO_HOME)
+        self.done("init", "--yes", "--rewrite-settings", *self.at_home, *self.in_project)
+        self.data(self.project / ".agents" / "workflow.toml", PROJECT_SETTINGS + self.LIST)
+        self.skills = self.project / ".claude" / "skills"
+        self.copy = self.project / ".claude" / "rules" / "sample" / "sample.md"
+
+    def render_project(self, **how) -> None:
+        self.done("render", *self.at_home, *self.in_project, **how)
+
+    def assertAsItWas(self) -> None:
+        """The project as at the start, but for the list this test wrote in
+        the project's own settings file, which is the user's."""
+        after = picture(self.project)
+        self.assertEqual(after.pop(".agents/workflow.toml")[1], (PROJECT_SETTINGS + self.LIST).encode("utf-8"))
+        start = dict(self.before["project"])
+        start.pop(".agents/workflow.toml")
+        self.assertEqual(after, start)
+
+    def entries(self) -> dict:
+        return json.loads(self.project_record.read_text(encoding="utf-8"))["entries"]
+
+    @unittest.skipUnless(SYMLINKS, "links")
+    def test_every_link_and_the_rule_copy_of_the_project_are_removed(self) -> None:
+        self.render_project()
+        self.assertTrue(fsio.look(self.skills / "beta").kind == fsio.LINK)
+        self.assertTrue(self.copy.is_file())
+        report = self.uninstall(project=True)
+        self.assertEqual((report["kept"], report["left"]), ([], []))
+        self.assertNothingAt(self.skills / "beta")
+        self.assertNothingAt(self.skills / "solo")
+        self.assertNothingAt(self.copy)
+        self.assertNothingAt(self.project / ".claude" / "rules")
+        self.assertNothingAt(self.project_state)
+        self.assertTrue((self.clone / "beta" / "SKILL.md").is_file())
+        self.assertAsItWas()
+
+    @unittest.skipUnless(POSIX and SYMLINKS, "a relative link is made on a POSIX file system")
+    def test_a_relative_link_is_removed(self) -> None:
+        self.render_project(host=homes.Host(homes.WSL, {"PATH": ""}, (str(self.root),)))
+        link = self.skills / "beta"
+        self.assertFalse(os.path.isabs(fsio.look(link).target), fsio.look(link).target)
+        self.assertEqual(self.entries()["project:.claude/skills/beta"]["target"], "clone:beta")
+        report = self.uninstall(project=True)
+        self.assertEqual((report["kept"], report["left"]), ([], []))
+        self.assertNothingAt(link)
+        self.assertAsItWas()
+
+    @unittest.skipUnless(SYMLINKS, "links")
+    def test_an_adopted_link_stays_and_is_reported_as_left(self) -> None:
+        link = self.skills / "beta"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        fsio.make_link(str(self.clone / "beta"), link, True)
+        text = fsio.look(link).target
+        self.render_project()
+        self.assertTrue(self.entries()["project:.claude/skills/beta"]["adopted"])
+        report = self.uninstall(project=True)
+        self.assertEqual(report["kept"], [])
+        self.assertEqual([item["key"] for item in report["left"]], ["project:.claude/skills/beta"])
+        self.assertEqual(fsio.look(link).kind, fsio.LINK)
+        self.assertEqual(fsio.look(link).target, text)
+        self.assertNothingAt(self.skills / "solo")
+        self.assertNothingAt(self.copy)
+        self.assertNothingAt(self.project_record)
+        shown = self.done("uninstall", *self.at_home, *self.in_project)
+        self.assertNotIn("Traceback", shown)
+
+    @unittest.skipUnless(SYMLINKS, "links")
+    def test_the_text_says_an_adopted_link_is_left(self) -> None:
+        link = self.skills / "beta"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        fsio.make_link(str(self.clone / "beta"), link, True)
+        self.render_project()
+        out = self.done("uninstall", *self.at_home, *self.in_project)
+        self.assertIn("left, and yours from now on:", out)
+        self.assertIn("project:.claude/skills/beta", out)
+        self.assertEqual(fsio.look(link).kind, fsio.LINK)
+
+    @unittest.skipUnless(SYMLINKS, "links")
+    def test_a_recorded_link_that_is_already_gone_is_dropped_without_a_fault(self) -> None:
+        self.render_project()
+        (self.skills / "beta").unlink()
+        shutil.rmtree(self.copy.parent)
+        report = self.uninstall(project=True)
+        self.assertEqual((report["kept"], report["left"]), ([], []))
+        self.assertTrue(any("project:.claude/skills/beta" in line for line in report["forgotten"]), report["forgotten"])
+        self.assertNothingAt(self.skills / "solo")
+        self.assertNothingAt(self.project_state)
+        self.assertAsItWas()
+
+    def test_the_help_says_what_a_projects_links_and_copies_become(self) -> None:
+        code, out, _ = support.run("uninstall", "--help")
+        self.assertEqual(code, 0)
+        self.assertIn("A project's skill links (relative ones included,", out)
+        self.assertIn("A link you made by hand that setup", out)
+
+
 class ProjectKeptCase(UninstallCase):
     def setUp(self) -> None:
         super().setUp()
