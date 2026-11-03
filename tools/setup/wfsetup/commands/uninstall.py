@@ -30,6 +30,14 @@ What is undone
       - a directory setup created is removed once it is empty;
       - the settings file `init` wrote (see "The settings file" below).
 
+    A project's skill links (relative ones included, as one side or the
+    other made them) and its rule copy are removed with the rest of its
+    record, and a link the record lists that is already gone is dropped
+    from the record without a fault. A link you made by hand that setup
+    took over (`render --project`) stays where it is, and is yours: the
+    output lists it as left. Taking the skill off the project's list
+    removes it; `uninstall --project` does not.
+
     Nothing else is removed: not a v1 copy the migration kept, not the
     collaboration skill's links, not a settings file you wrote yourself,
     not a project's own settings file that `init` found and did not change.
