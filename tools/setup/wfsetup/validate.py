@@ -51,7 +51,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import definitions, dictionary, entry, paths, roles, schema, settings, tomlio
+from . import definitions, dictionary, entry, homes, paths, roles, schema, settings, tomlio
 from .errors import SetupError
 from .locations import Locations
 
@@ -93,6 +93,8 @@ RULES: dict[str, str] = {
     "role-reserved": "a role definition's id is a scalar key of Codex's [agents] table",
     "bindings": "roles/bindings.toml: a key, a name that does not exist, a row given twice, or a skill that is "
                 "not installed for a provider the row's role is made for",
+    "dependencies": "roles/dependencies.toml: a key, a name that is no skill of the clone or has a setup of its own, "
+                    "a list that names its own key or a name twice",
     "stage-unbound": "a stage file of a process skill has no row in roles/bindings.toml",
     "provider-actions": "a provider directory has no readable actions.md",
     "dictionary": "a provider's dictionary.toml fails its schema",
@@ -108,6 +110,8 @@ OPENAI_FILE = ("agents", "openai.yaml")
 ACTIONS_FILE = "actions.md"
 BINDINGS_FILE = "bindings.toml"
 BINDINGS_VERSION = 1
+DEPENDENCIES_FILE = "dependencies.toml"
+DEPENDENCIES_VERSION = 1
 NOTE_LIMIT = 200
 
 # An id becomes a file's and a directory's name in every home
@@ -383,7 +387,7 @@ def check(where: Locations) -> Report:
         raise SetupError(f"{where.clone}: not a directory; the clone to validate is not there")
     run = _Run(where)
     for step in (_find_skills, _check_skills, _check_ids, _check_scripts, _check_texts, _check_roles,
-                 _check_embedded, _check_bindings, _check_providers, _check_defaults, _check_launchers,
+                 _check_embedded, _check_bindings, _check_dependencies, _check_providers, _check_defaults, _check_launchers,
                  _check_not_text, _check_loaded):
         try:
             step(run)
@@ -1454,6 +1458,76 @@ def _check_bindings(run: _Run) -> None:
                     f"no row of roles/{BINDINGS_FILE} names this stage file; every stage file of a process skill "
                     "has a row with the role that follows it",
                 )
+
+
+def _check_dependencies(run: _Run) -> None:
+    """``roles/dependencies.toml``. The file may be missing: no skill then
+    needs another."""
+    where = run.where
+    if not _is_directory(run, where.roles_dir):
+        return
+    file = where.roles_dir / DEPENDENCIES_FILE
+    try:
+        data = tomlio.load_if_present(file)
+    except SetupError as exc:
+        run.loader(file, "dependencies", exc.lines)
+        return
+    if data is None:
+        return
+
+    def fault(message: str, key: str | None = None) -> None:
+        run.add(file, "dependencies", message, key=key)
+
+    version = data.get(schema.VERSION_KEY)
+    if version is None:
+        fault("missing; the file holds schema_version = 1", schema.VERSION_KEY)
+    elif tomlio.type_name(version) != "integer":
+        fault(f"expected an integer, got {tomlio.article(tomlio.type_name(version))}", schema.VERSION_KEY)
+    elif version != DEPENDENCIES_VERSION:
+        fault(f"{version} is not the version this tool reads ({DEPENDENCIES_VERSION})", schema.VERSION_KEY)
+    for key in data:
+        if key not in (schema.VERSION_KEY, "needs"):
+            fault(f"unknown key; known here: {schema.VERSION_KEY}, needs", tomlio.format_key(key))
+    needs = data.get("needs", {})
+    if not isinstance(needs, dict):
+        fault(f"expected a table, got {tomlio.article(tomlio.type_name(needs))}", "needs")
+        return
+    try:
+        rule_names = {rule.name for rule in homes.rule_directories(where.clone)}
+    except SetupError:
+        rule_names = set()
+
+    def skill_fault(name: str, key: str) -> bool:
+        """Report ``name`` when it is no skill that setup installs."""
+        if name in OWN_SETUP and name in run.skills:
+            fault(f"{name!r} has a setup of its own; a dependency is a skill that this tool installs", key)
+        elif name in rule_names and name not in run.skills:
+            fault(f"{name!r} is a rule, not a skill; a dependency is a skill", key)
+        elif name not in run.skills:
+            fault(f"{name!r} is not a skill: a directory at the repository root that holds {SKILL_FILE}, "
+                  "named and never given as a path", key)
+        else:
+            return False
+        return True
+
+    for name, listed in needs.items():
+        place = f"needs.{tomlio.format_key(name)}"
+        skill_fault(name, place)
+        if not isinstance(listed, list):
+            fault(f"expected a list of skill names, got {tomlio.article(tomlio.type_name(listed))}", place)
+            continue
+        seen: set[str] = set()
+        for number, item in enumerate(listed, 1):
+            spot = f"{place}[{number}]"
+            if not isinstance(item, str):
+                fault(f"expected a string, got {tomlio.article(tomlio.type_name(item))}", spot)
+            elif item == name:
+                fault("a skill does not need itself", spot)
+            elif item in seen:
+                fault(f"{item!r} is named twice", spot)
+            else:
+                seen.add(item)
+                skill_fault(item, spot)
 
 
 def _made_for(run: _Run) -> dict[str, tuple[str, ...]]:

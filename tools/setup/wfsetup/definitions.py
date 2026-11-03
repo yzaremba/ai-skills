@@ -181,6 +181,7 @@ CACHE_TTLS = dictionary.CACHE_VALUES[CLAUDE_CODE]
 
 READ_ONLY = "read-only"
 BINDINGS_FILE = "bindings.toml"
+DEPENDENCIES_FILE = "dependencies.toml"
 ACTIONS_FILE = "actions.md"
 OWNS = "owns"
 
@@ -357,6 +358,20 @@ def bindings(where: Locations) -> dict[str, tuple[Binding, ...]]:
         note = " ".join(note.split()) if isinstance(note, str) and note.strip() else None
         found.setdefault(values[0], []).append(Binding(*values, note))
     return {role: tuple(rows) for role, rows in found.items()}
+
+
+def dependencies(where: Locations) -> dict[str, tuple[str, ...]]:
+    """The skills each skill needs, from ``roles/dependencies.toml``, by
+    skill, in the file's order. A missing file is no dependency; an entry
+    that is not a list of non-empty strings is left out, and source
+    validation reports it."""
+    data = tomlio.load_if_present(where.roles_dir / DEPENDENCIES_FILE) or {}
+    needs = data.get("needs", {})
+    found: dict[str, tuple[str, ...]] = {}
+    for name, listed in (needs.items() if isinstance(needs, dict) else ()):
+        if isinstance(listed, list) and all(isinstance(item, str) and item.strip() for item in listed):
+            found[name] = tuple(listed)
+    return found
 
 
 ENABLED_KEY = "setup.enabled"
