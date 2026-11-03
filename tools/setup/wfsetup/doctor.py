@@ -157,8 +157,8 @@ BELOW_OLDEST = {
     homes.CLAUDE_CODE: "below it some Claude Code sessions do not read a repository's AGENTS.md",
 }
 
-# Where a provider looks for skills in a project.
-PROJECT_SKILLS = {homes.CLAUDE_CODE: (".claude", "skills"), homes.CODEX: (".agents", "skills")}
+# Where a provider looks for skills in a project (``homes.PROJECT_SKILLS``).
+PROJECT_SKILLS = homes.PROJECT_SKILLS
 
 # The checks that start a program, each with the option that leaves it out.
 STARTERS = {
@@ -565,6 +565,12 @@ def check_hand_edits(context: Context) -> list[Finding]:
     return findings
 
 
+def roles_are_on(home_roles: dict[str, Any] | None) -> bool:
+    """Whether the home's roles are on, so that render would add the skills
+    only they need."""
+    return home_roles is not None and bool(home_roles["enabled"])
+
+
 def check_missing(context: Context) -> list[Finding]:
     """What the record lists and is gone; what ``render`` would create and
     is not there; what is in the way. See the module for the severities."""
@@ -607,6 +613,15 @@ def check_missing(context: Context) -> list[Finding]:
         _generated(found) and key.partition(":")[0] != fileops.PROJECT for key, found in record.entries.items()
     )
     waiting: dict[str, list[str]] = {"home": [], "roles": [], "project": []}
+    # A home rendered with --no-roles also lacks the skills only the roles
+    # need (render leaves them out): those are the "roles" wait, not missing.
+    roles_only: set[str] = set()
+    if home_rendered and not home_generated and roles_are_on(home_roles):
+        try:
+            roles_only = definitions.bound_skills(context.where) - definitions.home_selection(
+                context.user_level, context.sources.skills, False).units
+        except SetupError:
+            roles_only = set()  # a fault in setup.enabled/disabled: no filter; the check goes on
     skipped: dict[tuple[str | None, str | None], tuple[str, list[str]]] = {}
     v1 = migrate.leftover_paths(context)
     for item in probe.items:
@@ -637,6 +652,8 @@ def check_missing(context: Context) -> list[Finding]:
                 continue  # the record lists it and it is gone: said above, or by the check `links`
             if item.project:
                 group = None if project_rendered else "project"
+            elif item.kind == render.LINK and item.name in roles_only:
+                group = "roles"
             elif not home_rendered:
                 group = "home"
             elif item.kind == render.FILE and not home_generated:

@@ -490,6 +490,23 @@ class MissingCase(DoctorCase):
         self.assertQuiet(findings)
         self.assertFinding(findings, doctor.INFO, "no role definition or entry point is installed", "--no-roles")
 
+    def test_a_fault_in_the_selection_does_not_lose_the_missing_check_after_no_roles(self) -> None:
+        self.ok("--no-roles")
+        self.write(self.user_file, '[setup]\nenabled = ["nope"]\n')
+        code, findings = self.only("missing")
+        self.assertNotIn("could not be made", json.dumps(findings))
+
+    def test_a_process_skill_the_roles_need_is_not_missing_after_no_roles(self) -> None:
+        self.write(self.user_file, '[setup]\nenabled = ["beta", "solo", "sample"]\ndisabled = ["alpha"]\n')
+        self.ok("--no-roles")
+        code, findings = self.only("missing")
+        self.assertEqual(code, 0)
+        self.assertQuiet(findings)
+        self.ok()
+        code, findings = self.only("missing")
+        self.assertEqual(code, 0)
+        self.assertQuiet(findings)
+
     def test_roles_off_by_the_setting_are_info_and_nothing_of_them_is_missing(self) -> None:
         self.write(self.user_file, "[roles]\nenabled = false\n")
         self.ok()
