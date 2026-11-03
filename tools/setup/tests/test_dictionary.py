@@ -198,7 +198,8 @@ class RepositoryDictionaryTests(support.ScratchCase):
         """Review findings on the comments, pinned by their substance."""
         codex = " ".join(self.files["codex"].read_text(encoding="utf-8").replace("#", " ").split())
         self.assertNotIn("three current models", codex)
-        self.assertIn("share a model by choice", codex)
+        self.assertNotIn("share a model by choice", codex)
+        self.assertIn("Deep stays on `gpt-6.1-sol`", codex)
         claude = " ".join(self.files["claude-code"].read_text(encoding="utf-8").replace("#", " ").split())
         self.assertNotIn("every kind of session", claude)
         self.assertIn("`agents-md` plugin is disabled", claude)

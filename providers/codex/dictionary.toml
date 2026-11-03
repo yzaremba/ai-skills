@@ -13,27 +13,29 @@
 #
 # Source: the output of `codex debug models` (the refreshed catalog) on the
 # checked version and date. What an account can actually use may differ.
-# The catalog shipped in the 0.162.1 binary (`--bundled`) is another list: it
-# has no `gpt-reserve`, two hidden models more, and other defaults.
+# The catalog shipped in the 0.166.0 binary (`--bundled`) is another list: it
+# has no `gpt-reserve`, it has `gpt-5.5` and two hidden models more, and it gives
+# `gpt-6-astra` another default.
 # Read on the same date:
 #   https://learn.chatgpt.com/docs/config-file/config-advanced  (profile files)
 #   https://learn.chatgpt.com/docs/developer-commands           (`codex debug models`)
-#   https://github.com/openai/codex/releases                    (0.160.1 to 0.162.1)
+#   https://github.com/openai/codex/releases                    (0.165.0 and 0.166.0;
+#                                       the page no longer shows 0.163.0 and 0.164.0)
 
 schema_version = 1
 
 # The product name setup's messages use.
 display_name = "Codex"
 
-checked_on_version = "0.162.1"
-checked_on_date = "2026-10-11"
+checked_on_version = "0.166.0"
+checked_on_date = "2026-11-02"
 # A starting role is given to Codex as a profile file, <name>.config.toml in
 # the Codex home. The configuration page (Profiles) says: "In Codex 0.134.0
 # and later, `--profile` no longer reads `[profiles.profile-name]` from
 # `config.toml`", and has such settings moved into that file. The floor is
 # higher still: every Codex action note was checked on 0.160.0, and the
-# start command's `--no-daemon` was seen in `codex --help` of 0.160.0 and
-# 0.163.0; nothing older was run, so nothing older is supported.
+# start command's `--no-daemon` was seen in `codex --help` of 0.160.0, 0.163.0
+# and 0.166.0; nothing older was run, so nothing older is supported.
 oldest_supported_version = "0.160.0"
 
 [model_list]
@@ -48,12 +50,13 @@ offline_command = ["codex", "debug", "models", "--bundled"]
 experimental = true
 note = "Read with a debug command that Codex marks experimental; it can change without notice."
 
-# Standard and deep share a model by choice and differ by the role's effort.
-# The catalog offers a fourth current model, `gpt-6-sol`, which a settings
+# Standard is `gpt-6.1-terra`, half the price of `gpt-6.1-sol` in API prices and
+# plan credits (both read 2026-11-02). Deep stays on `gpt-6.1-sol`, for the hard
+# steps and the reviewers. The catalog also offers `gpt-6-sol`, which a settings
 # file can map to either tier.
 [tiers]
 fast = "gpt-6-luna"
-standard = "gpt-6.1-sol"
+standard = "gpt-6.1-terra"
 deep = "gpt-6.1-sol"
 frontier = "gpt-6-astra"
 
@@ -88,19 +91,24 @@ efforts = ["low", "medium", "high", "xhigh", "max", "ultra"]
 visibility = "list"
 default_effort = "medium"
 
-[models.gpt-6-sol]
+[models."gpt-6.1-terra"]
 efforts = ["low", "medium", "high", "xhigh", "max", "ultra"]
 visibility = "list"
-default_effort = "medium"
+default_effort = "low"
 
-[models.gpt-6-luna]
-efforts = ["low", "medium", "high", "xhigh", "max"]
+[models.gpt-6-sol]
+efforts = ["low", "medium", "high", "xhigh", "max", "ultra"]
 visibility = "list"
 default_effort = "medium"
 
 [models.gpt-reserve]
 efforts = ["low", "medium", "high", "xhigh", "max"]
 visibility = "hide"
+default_effort = "medium"
+
+[models.gpt-6-luna]
+efforts = ["low", "medium", "high", "xhigh", "max"]
+visibility = "list"
 default_effort = "medium"
 
 [models."gpt-5.6-sol"]
@@ -116,11 +124,6 @@ default_effort = "medium"
 [models."gpt-5.6-luna"]
 efforts = ["low", "medium", "high", "xhigh", "max"]
 visibility = "list"
-default_effort = "medium"
-
-[models."gpt-5.5"]
-efforts = ["low", "medium", "high", "xhigh"]
-visibility = "hide"
 default_effort = "medium"
 
 [models.codex-auto-review]

@@ -439,13 +439,14 @@ standard library. Below, `python` stands for your interpreter: `python3` on Linu
 and WSL, `py -3` on Windows. Where `python` is a project's virtual environment, use a
 system interpreter.
 
-The provider dictionaries were checked on 2026-10-11 against these versions; `doctor`
-warns of a version newer than the one checked or older than the oldest supported:
+The provider dictionaries were checked against these versions, Claude Code's on 2026-10-11
+and Codex's on 2026-11-02; `doctor` warns of a version newer than the one checked or older
+than the oldest supported:
 
 | Provider | Checked on | Oldest supported |
 |----------|------------|------------------|
 | Claude Code | 2.1.296 | 2.1.281 |
-| Codex CLI | 0.162.1 | 0.160.0 |
+| Codex CLI | 0.166.0 | 0.160.0 |
 
 On Claude Code the fast tier is the `haiku` alias, which is Haiku 5.5 with effort levels
 from 2.1.293 on; an older client runs a fast-tier role on Haiku 4.5, which has none.
