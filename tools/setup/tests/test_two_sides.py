@@ -12,15 +12,16 @@ Run from the repository root:
 """
 from __future__ import annotations
 
+# The tests directory is on sys.path however this file is run (by path, by dotted name, discover, run.py).
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path[:0] = {str(_Path(__file__).resolve().parent)} - set(_sys.path)
+
 import json
 import os
 import shutil
-import sys
 import unittest
 from pathlib import Path
-
-# Importable by its path or dotted name from the repository root, too.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import interop_support  # noqa: E402
 import support  # noqa: E402

@@ -124,7 +124,8 @@ Taking a key out
     then ...". KEY is a key `init` writes: one of the settings above
     (setup.allow_unshared_clone only without --project), or
     providers.<p>.tiers.<t>, providers.<p>.efforts.<e> or
-    providers.<p>.role_models.<role> of a provider this run sets up, or
+    providers.<p>.role_models.<role> of a provider this run sets up (a role
+    id that no role definition has only if the file holds it), or
     project.enabled (with --project). Any other key is an error. An unset
     key is an answer: its question is not asked. A key the file does not
     hold changes nothing, and a line says so. --unset together with a flag
@@ -777,6 +778,12 @@ def run(args: argparse.Namespace) -> int:
                 f"--unset {text}: {parts[1]} is not a provider this run sets up; installed here, "
                 f"with a dictionary: {', '.join(names) or 'none'}"
             )
+        if mapped and parts[2] == "role_models" and key not in flat:
+            ids = [definition.id for definition in roles.definitions(where)]
+            if parts[3] not in ids:
+                raise SetupError(
+                    f"--unset {text}: no role definition has the id {parts[3]}; definitions: {', '.join(ids) or 'none'}"
+                )
         if mapped and scope == USER and parts[2] in _MAPS:
             raise SetupError(
                 f"--unset {text}: the user's file holds the {parts[2]} mapping in full, so a key of it is not taken "

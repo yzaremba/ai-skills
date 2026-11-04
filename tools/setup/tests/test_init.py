@@ -8,6 +8,11 @@ Claude Code counts as installed because its scratch home exists.
 """
 from __future__ import annotations
 
+# The tests directory is on sys.path however this file is run (by path, by dotted name, discover, run.py).
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path[:0] = {str(_Path(__file__).resolve().parent)} - set(_sys.path)
+
 import builtins
 import json
 import os
@@ -1069,6 +1074,21 @@ class UnsetTests(InitCase):
         self.assertIn("--unset roles.coder.tier: not a key `init` writes", self.refused("--yes", "--unset", "roles.coder.tier"))
         self.assertIn("no such setting", self.refused("--yes", "--unset", "nothing.here"))
         self.assertIn("is not a provider this run sets up", self.refused("--yes", "--unset", "providers.other.role_models.coder"))
+
+    def test_unset_of_a_role_model_of_a_known_role_is_accepted(self) -> None:
+        out = self.ok("--yes", "--unset", "providers.codex.role_models.coder")
+        self.assertIn("--unset providers.codex.role_models.coder:", out)
+
+    def test_unset_of_a_role_model_of_an_unknown_role_the_file_holds_takes_it_out(self) -> None:
+        self.ok("--yes", "--role-model", "codex:reviewer=gpt-6-sol")
+        self.assertEqual(self.data()["providers"]["codex"]["role_models"], {"reviewer": "gpt-6-sol"})
+        self.ok("--yes", "--unset", "providers.codex.role_models.reviewer")
+        self.assertNotIn("role_models", self.data()["providers"]["codex"])
+
+    def test_unset_of_a_role_model_of_an_unknown_role_the_file_lacks_is_refused(self) -> None:
+        err = self.refused("--yes", "--unset", "providers.codex.role_models.coderr")
+        self.assertIn("--unset providers.codex.role_models.coderr: no role definition has the id coderr; definitions: ", err)
+        self.assertIn("coder", err.split("definitions: ", 1)[1])
 
     def test_unset_with_a_flag_for_the_same_key_is_an_error(self) -> None:
         self.assertIn("a flag answers the same key", self.refused("--yes", "--unset", "roles.enabled", "--roles"))

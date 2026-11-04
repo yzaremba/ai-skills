@@ -15,6 +15,11 @@ and counts those calls; it can stop a run before, or after, the n-th of them:
 """
 from __future__ import annotations
 
+# The tests directory is on sys.path however this file is run (by path, by dotted name, discover, run.py).
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path[:0] = {str(_Path(__file__).resolve().parent)} - set(_sys.path)
+
 import json
 import os
 import stat
