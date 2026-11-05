@@ -63,14 +63,7 @@ Severities, where the step left the choice
               ``roles.enabled`` are one ``info`` line: the probe, like
               ``render``, then asks for none of them. Something in the
               way that setup did not make is an error: ``render`` stops
-              on it. Where that is
-              what a v1 install left, the check ``v1`` says it and this
-              one does not: one thing is reported once.
-    v1        Every v1 import line, copy, link and clone that remains in a
-              home this side can change is an error (R6.11), with the
-              command that deals with it. What the other side owns is read
-              where it can be and is ``info``: that side migrates it. See
-              ``migrate``.
+              on it.
     collaboration skill
               Its doctor's own severities are kept: a check it fails as an
               error is an error here, a warning a warning. That it could
@@ -114,7 +107,6 @@ from . import profiles, render, settings, validate
 from . import discovery
 from . import codexsettings
 from . import instructions
-from . import migrate
 from .errors import SetupError
 from .locations import Locations
 
@@ -162,7 +154,7 @@ PROJECT_SKILLS = homes.PROJECT_SKILLS
 
 # The checks that start a program, each with the option that leaves it out.
 STARTERS = {
-    "models": "--no-model-list",
+    "models": "--skip models",
     "versions": "--no-versions",
     "discovery": "--skip discovery",
     "collaboration-skill": "--no-collab",
@@ -623,11 +615,8 @@ def check_missing(context: Context) -> list[Finding]:
         except SetupError:
             roles_only = set()  # a fault in setup.enabled/disabled: no filter; the check goes on
     skipped: dict[tuple[str | None, str | None], tuple[str, list[str]]] = {}
-    v1 = migrate.leftover_paths(context)
     for item in probe.items:
         subject = _item_subject(item)
-        if item.status == render.CONFLICT and migrate.fold(item.path) in v1:
-            continue  # what a v1 install left: the check `v1` says it, once
         if item.status == render.CONFLICT:
             says = item.says if item.says.startswith(str(item.path)) else f"{item.path}: {item.says}"
             findings.append(error(f"{says}; render stops on it and writes nothing", subject))
@@ -839,15 +828,10 @@ def holds_clone(directory: Path, skills: Iterable[str] = ()) -> bool:
     """Whether a directory is a clone of this repository by what it holds:
     the marks of ``looks_like_clone``, or a ``.git`` entry beside one of
     the clone's skills (a clone from before the setup tool). The check
-    ``other-clones`` and the v1 migration share the rule."""
+    ``other-clones`` and ``render`` share the rule."""
     return looks_like_clone(directory) or (
         os.path.lexists(directory / ".git") and any(_is_skill(directory / name) for name in skills)
     )
-
-
-def check_v1(context: Context) -> list[Finding]:
-    """What a v1 install left (R6.11): see ``migrate.findings``."""
-    return [Finding(severity, detail, subject) for severity, detail, subject in migrate.findings(context)]
 
 
 def check_other_clones(context: Context) -> list[Finding]:
@@ -1485,10 +1469,8 @@ CHECKS: tuple[Check, ...] = (
     Check("links", check_links, "every recorded link is there and leads into the clone"),
     Check("duplicate-skills", check_duplicate_skills, "no skill setup installs is in a second skill location"),
     Check("other-clones", check_other_clones, "no link leads into another clone of this repository"),
-    Check("v1", check_v1, "no import line, copy or link of a v1 install remains"),
     Check("clone", check_clone, "the clone can be read by both sides"),
-    Check("models", check_models, "every mapped model is in its provider's list", switch="no_model_list",
-          configure=_switch("--no-model-list", "do not start a provider's list command; the check `models` is left out")),
+    Check("models", check_models, "every mapped model is in its provider's list"),
     Check("versions", check_versions, "every provider is a version the dictionaries were checked on", switch="no_versions",
           configure=_switch("--no-versions", "do not start `<program> --version`; the check `versions` is left out")),
     Check("codex-settings", codexsettings.check, "the Codex settings are as the framework needs",
@@ -1497,7 +1479,7 @@ CHECKS: tuple[Check, ...] = (
     Check("interrupted-run", check_interrupted_run, "no run of setup was interrupted"),
     Check("loaded-skill-size", check_loaded_skill_size, "no loaded role is over the compaction limit"),
     Check(instructions.NAME, instructions.check, "both providers load the project's AGENTS.md"),
-    Check("discovery", discovery.check_discovery, "each provider lists what setup installed", configure=discovery.configure),
+    Check("discovery", discovery.check_discovery, "each provider lists what setup installed"),
     Check("collaboration-skill", check_collaboration_skill, "the collaboration skill's doctor reports no problem",
           switch="no_collab",
           configure=_switch("--no-collab", "do not start the collaboration skill's own doctor; that check is left out")),
@@ -1574,7 +1556,6 @@ def report(context: Context, outcomes: list[Outcome], left_out: Iterable[str] = 
         ],
         "not_run": list(left_out),
         "starts_programs": [outcome.name for outcome in outcomes if outcome.name in STARTERS],
-        "saves_probe": context.option("save_probe") if "discovery" in [outcome.name for outcome in outcomes] else None,
         "counts": counts,
         "summary": summary,
         "exit_code": 1 if counts[ERROR] else 0,
@@ -1584,19 +1565,15 @@ def report(context: Context, outcomes: list[Outcome], left_out: Iterable[str] = 
 def report_lines(found: dict[str, Any]) -> list[str]:
     """The report as text: the findings by check, then one line of counts."""
     started = list(found.get("starts_programs") or [])
-    # The one thing doctor writes, and only where it was asked for.
-    writes = "writes nothing" if not found.get("saves_probe") else (
-        f"writes nothing but the probe output asked for, into {found['saves_probe']}"
-    )
     if started:
         banner = (
-            f"doctor: setup itself {writes}. The {'check' if len(started) == 1 else 'checks'} "
+            f"doctor: setup itself writes nothing. The {'check' if len(started) == 1 else 'checks'} "
             f"{', '.join(started)} {'starts a program' if len(started) == 1 else 'start programs'} of the "
             "providers, which may write state of their own into their own home; left out with "
             f"{', '.join(STARTERS[name] for name in started)}"
         )
     else:
-        banner = f"doctor: setup itself {writes}, and this run starts no program of a provider"
+        banner = f"doctor: setup itself writes nothing, and this run starts no program of a provider"
     lines = [
         banner,
         f"clone: {found['clone']}",

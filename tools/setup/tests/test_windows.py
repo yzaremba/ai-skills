@@ -240,26 +240,6 @@ class LinkCaseCase(RenderCase):
             self.assertEqual(code, 2)                        # no such clone
             self.assertEqual(tree(self.root), before)
 
-    def test_where_the_clone_was_named_in_other_letters(self) -> None:
-        self.assertEqual(self.render()[0], 0)
-        was, moved = self.clone, self.root / "moved-clone"
-        os.rename(was, moved)
-        with mock.patch.object(locations, "CLONE", moved):
-            code, report, _ = uninstall(self)
-            self.assertEqual(code, 3)
-            self.assertTrue(report["kept"])
-            self.assertTrue(any(f"--clone-was {was}" in item["finish"] for item in report["kept"]), report["kept"])
-            code, report, err = uninstall(self, "--clone-was", other_case(was))
-        if WINDOWS:
-            self.assertEqual((code, err, report["kept"]), (0, "", []))
-            self.assertNothingAt(self.claude_skills / "alpha")
-        else:
-            self.assertEqual(code, 3)                        # not the directory the links name
-            self.assertEqual(fsio.look(self.claude_skills / "alpha").kind, fsio.LINK)
-            with mock.patch.object(locations, "CLONE", moved):
-                self.assertEqual(uninstall(self, "--clone-was", str(was))[0], 0)
-        self.assertTrue((moved / "alpha" / "SKILL.md").is_file())
-
     def test_a_record_whose_keys_are_in_other_letters(self) -> None:
         # The stale sweep and the conflict check both ask the record by key.
         self.assertEqual(self.render()[0], 0)
@@ -287,25 +267,6 @@ class LinkCaseCase(RenderCase):
         code, _, err = self.render()
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(mine.read_text(encoding="utf-8"), "the user's own text\n")
-
-
-class StaleCaseCase(UninstallCase):
-    def test_a_stale_location_named_in_other_letters(self) -> None:
-        if not LINKS:
-            self.skipTest("needs links to directories")
-        before = self.start()
-        retyped = [part for path in self.edited_copies for part in ("--remove-stale", other_case(path))]
-        self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home)
-        code, out, err = self.cli("render", "--migrate-v1", *retyped, *self.at_home)
-        if not WINDOWS:
-            self.assertEqual(code, 2, out)
-            self.assertIn("--remove-stale", err)
-            return
-        self.assertEqual((code, err), (0, ""), out[-800:])
-        for path in self.edited_copies:
-            self.assertNotEqual(fsio.look(path).kind, fsio.DIRECTORY, path)   # removed, after a backup
-        self.take_back(project=False)
-        self.assertAsAtTheStart(before)
 
 
 class CloneCheckCase(HomesCase):
@@ -597,7 +558,7 @@ class ShortNameCase(RenderCase):
         self.assertEqual(sorter.entry(link).kind, homes.LINK_TO_CLONE)
         code, report, err = self.report()
         self.assertEqual((code, err, report["plan"]), (0, "", []))
-        code, report, err = uninstall(self, "--clone-was", self.short_clone)
+        code, report, err = uninstall(self)
         self.assertEqual((code, err, report["kept"]), (0, "", []))
         self.assertNothingAt(link)
         self.assertTrue((self.clone / "alpha" / "SKILL.md").is_file())
@@ -607,7 +568,7 @@ class ShortNameCase(RenderCase):
 
 @unittest.skipUnless(WINDOWS, "junctions are made on Windows")
 class JunctionInstallCase(UninstallCase):
-    """``init``, ``render`` with the migration, and ``uninstall``, as the
+    """``init``, ``render`` and ``uninstall``, as the
     user runs them: every link is a junction, and none is ever entered."""
 
     def links(self) -> list[Path]:
@@ -624,7 +585,7 @@ class JunctionInstallCase(UninstallCase):
             self.assertFalse(os.path.islink(link), link)
             seen = fsio.look(link)
             self.assertEqual((seen.kind, seen.directory, seen.junction), (fsio.LINK, True, True), link)
-        # The migration put setup's junction where a v1 copy was.
+        # An earlier setup put its junction where a copy was.
         self.assertIn(self.claude_skills / "self-reflection", links)
         self.assertTrue(fsio.is_junction(self.claude_skills / "csv-tools"))   # in place of the user's junction
         self.assertEqual(picture(self.clone), before["clone"])
@@ -934,7 +895,7 @@ class LineEndingCase(UninstallCase):
     def test_every_byte_printed_and_written_is_lf(self) -> None:
         if not LINKS:
             self.skipTest("needs links to directories")
-        self.start(v1_copies=False)
+        self.start(earlier=False)
         script = self.tool()
         before = self.files()
         project = ("--project", str(self.project))
@@ -943,8 +904,8 @@ class LineEndingCase(UninstallCase):
             (("render", "--apply-codex-settings"), 0), (("render", *project), 0),
             (("render", "--json", "--dry-run", *project), 0),
             (("homes",), 0), (("homes", "--json"), 0), (("show",), 0), (("show", "--json", *project), 0),
-            (("validate",), 0), (("doctor", "--no-collab", "--no-model-list", "--no-versions"), None),
-            (("doctor", "--json", "--no-collab", "--no-model-list", "--no-versions", *project), None),
+            (("validate",), 0), (("doctor", "--no-collab", "--skip", "models", "--no-versions"), None),
+            (("doctor", "--json", "--no-collab", "--skip", "models", "--no-versions", *project), None),
             (("uninstall", "--dry-run"), 0), (("uninstall", "--dry-run", "--json", *project), 0),
             (("render", "--help"), 0), (("render", "--no-such-option"), 2), (("show", "no.such.key"), 2),
         ]

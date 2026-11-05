@@ -2,7 +2,6 @@
 
     uninstall [--project DIR] [--home DIR] [--dry-run] [--json]
               [--follow-config-symlinks] [--keep-settings]
-              [--clone-was DIR]
     uninstall --discard-backups [--yes] [--project DIR] [--home DIR] [--dry-run]
 
 What is undone
@@ -25,8 +24,9 @@ What is undone
         held before, if nothing changed it since. If it was changed, setup's
         blocks and keys are taken out, the lines setup removed are put back
         where they were, and the rest of the file is left as it is;
-      - what the v1 migration removed is put back: a file from its backup,
-        a link with its own text and form, a directory;
+      - what an earlier setup removed and recorded is put back: a file from
+        its backup, a link with its own text and form (one into the clone is
+        put back below where the clone is now), a directory;
       - a directory setup created is removed once it is empty;
       - the settings file `init` wrote (see "The settings file" below).
 
@@ -38,9 +38,9 @@ What is undone
     output lists it as left. Taking the skill off the project's list
     removes it; `uninstall --project` does not.
 
-    Nothing else is removed: not a v1 copy the migration kept, not the
-    collaboration skill's links, not a settings file you wrote yourself,
-    not a project's own settings file that `init` found and did not change.
+    Nothing else is removed: not the collaboration skill's links, not a
+    settings file you wrote yourself, not a project's own settings file
+    that `init` found and did not change.
 
 The settings file
     No value you set in a settings file is removed by `uninstall`. The file
@@ -132,19 +132,6 @@ Backups setup does not remove
     confirm (or with --yes; --dry-run only lists). It removes nothing a
     record lists and undoes nothing.
 
-A clone that moved
-    A link that leads into another directory than the clone this command
-    runs from is not the link setup made, and is kept. If the clone was
-    moved since the install, --clone-was DIR names where it was: a link
-    into DIR is then setup's, and is removed, and a link of yours into the
-    clone that the v1 migration removed is put back with the text it had,
-    into DIR. Without the option such a link of yours is kept, not put
-    back, when a link setup made shows that the clone was elsewhere: the
-    text it had cannot be known then, and the output names the option.
-    The option changes nothing else: the clone is still the one this
-    command runs from, and nothing is ever written, removed or linked
-    inside it.
-
 --dry-run prints what would be removed, restored, left and kept, and
 changes nothing. A second `uninstall` finds no record, says that there is
 nothing to do, and ends with 0. An interrupted run of another command is
@@ -198,7 +185,7 @@ import json
 import sys
 from pathlib import Path
 
-from .. import fileops, homes, locations, paths, uninstall
+from .. import fileops, homes, locations, uninstall
 from ..errors import SetupError
 
 SUMMARY = "take back what setup installed in a home, or with --project in one project"
@@ -216,13 +203,6 @@ def configure(parser: argparse.ArgumentParser) -> None:
         "exactly what `init` wrote and `init` never rewrote a version you had edited; else it is left as well",
     )
     parser.add_argument(
-        uninstall.CLONE_WAS_OPTION,
-        metavar="DIR",
-        help="where the clone was when setup made its links, if it was moved since: a link into DIR is "
-        "then taken for setup's, and a link of yours into the clone that setup removed is put back into DIR. "
-        "An absolute path, or one that starts with ~; it need not exist",
-    )
-    parser.add_argument(
         uninstall.DISCARD_OPTION,
         action="store_true",
         help="undo nothing; list the backups under the state directory that no record lists, and remove them "
@@ -236,21 +216,8 @@ def configure(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _clone_was(text: str) -> Path:
-    if not text.strip():
-        raise SetupError(f"{uninstall.CLONE_WAS_OPTION}: an empty value is not a directory")
-    locations.path_argument(text, uninstall.CLONE_WAS_OPTION)
-    try:
-        path = Path(text).expanduser()
-    except (RuntimeError, KeyError):
-        raise SetupError(f"{uninstall.CLONE_WAS_OPTION}: {text}: the home directory of that user cannot be found") from None
-    if not path.is_absolute():
-        raise SetupError(f"{uninstall.CLONE_WAS_OPTION}: {text}: not an absolute path")
-    return paths.absolute(path)
-
-
 def _discard(args: argparse.Namespace, found: homes.Homes, project: bool) -> int:
-    for name in ("keep_settings", "clone_was", "json"):
+    for name in ("keep_settings", "json"):
         if getattr(args, name):
             raise SetupError(f"{uninstall.DISCARD_OPTION}: is a command of its own; give it without --{name.replace('_', '-')}")
 
@@ -286,7 +253,6 @@ def _discard(args: argparse.Namespace, found: homes.Homes, project: bool) -> int
 
 def run(args: argparse.Namespace) -> int:
     where = locations.from_args(args)
-    clone_was = None if args.clone_was is None else _clone_was(args.clone_was)
     found = homes.resolve(where)
     if args.discard_backups:
         return _discard(args, found, where.project is not None)
@@ -294,7 +260,7 @@ def run(args: argparse.Namespace) -> int:
         raise SetupError(f"--yes: only confirms {uninstall.DISCARD_OPTION}; an uninstall asks nothing")
     outcome = uninstall.execute(
         found, project=where.project is not None, dry_run=args.dry_run, follow=args.follow_config_symlinks,
-        keep_settings=args.keep_settings, clone_was=clone_was,
+        keep_settings=args.keep_settings,
     )
     if args.json:
         print(json.dumps(outcome.report, indent=2, ensure_ascii=False))

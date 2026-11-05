@@ -2,11 +2,9 @@
 
 How ``doctor`` uses it
 
-    Check("discovery", discovery.check_discovery, "...", configure=discovery.configure)
+    Check("discovery", discovery.check_discovery, "...")
 
-    doctor                                  # the offline part: no session is started
-    doctor --prove-discovery                # also the session probes: each spends quota
-    doctor --prove-discovery --save-probe DIR
+    doctor                                  # offline commands only: no session is started
 
 What counts (R6.3, R8.1)
     A provider's own output that lists the item. A model's answer does not
@@ -23,11 +21,9 @@ The items, per installed provider
 The states
     proven     the provider's output lists the item; the finding names the
                command. An ``ok`` finding.
-    unproven   no provider output that was read could list it. On a plain
-               run that is ``info``, and all of it is one line: the items
-               by provider, each with why and what would prove it. With
-               ``--prove-discovery`` an item the probes did not prove is a
-               warning, a finding of its own. Never an error.
+    unproven   no provider output that was read could list it. That is
+               ``info``, and all of it is one line: the items by provider,
+               each with why. Never an error.
     missing    an output was read that should list the item, and does not.
                An error.
     Two more things are said and are no state: an item that is not on disk
@@ -75,46 +71,15 @@ Code 2.1.290)
     Role definitions have no offline proof: the prompt input holds messages
     and no tool text, ``config/read`` of the app server gives ``agents`` as
     null with three agent files in place, and no request of the app server
-    lists custom agents.
+    lists custom agents. They are unproven.
 
   Claude Code, offline: nothing. ``claude agents`` lists background
   sessions, ``claude doctor`` prints "installation and settings
   diagnostics", and ``claude plugin validate <dir>`` validates files and
-  names none of them (code.claude.com/docs/en/cli-reference). Every item is
-  unproven until a session is started.
+  names none of them (code.claude.com/docs/en/cli-reference). Every item
+  is unproven. Setup starts no session with a model, so it spends no quota.
 
-  The session probes (``--prove-discovery``). EACH STARTS ONE SESSION WITH
-  A MODEL AND SPENDS QUOTA. Each has a fixed argument list, no shell, a
-  time limit, the working directory and environment of the offline probes,
-  and prints nothing of the session but the names it extracted.
-    ``claude -p <prompt> --output-format stream-json --verbose
-      --no-session-persistence --max-turns 1``
-        "The `system/init` event reports session metadata including the
-        model, tools, MCP servers, and loaded plugins. It is the first
-        event in the stream unless startup events precede it"
-        (code.claude.com/docs/en/headless). The Agent SDK reference gives
-        the event ``agents``, ``skills`` and ``slash_commands`` as well;
-        that is not said on the headless page, so the reader takes any of
-        those keys that is there and reports the keys it saw. The stream
-        is read up to that event and no further, and the program is then
-        ended: on Linux with SIGTERM, on which "Claude Code exits with
-        code 143 ... starts no new tool call, sends no new model request"
-        (the same page); on Windows by ending its process tree. The first
-        request may already be on its way by then: the cost is at most one
-        turn of a one-line prompt.
-    ``codex exec --json --skip-git-repo-check --ephemeral --sandbox
-      read-only <prompt>``
-        "Print newline-delimited JSON events" (developer-commands). The
-        reader looks for a tool definition named ``spawn_agent`` that the
-        provider wrote (an object with that ``name`` and a ``description``
-        or ``parameters``, and no ``arguments``: a call of the tool is a
-        model's doing and is not read) and for the agent names in its
-        text. UNVERIFIED: no document says the event stream carries tool
-        definitions, and the session records of 0.160.0 that were looked
-        at hold none. Where it does not, the definitions stay unproven
-        with the event types seen, and the question goes to the user.
-
-Where the probes run
+Where the commands run
     The working directory is the project (``--project``), else the home.
     The environment is ``homes.child_environment``'s, as for every program
     setup starts: the caller's, and for a scratch home (``--home``) it
@@ -125,16 +90,6 @@ Where the probes run
     A provider's program may write state of its own into its home when it
     starts (Codex: its bundled skills, an installation id). Setup writes
     nothing there.
-
-``--save-probe DIR``
-    Writes what each probe gave, reduced to its listing parts, as one JSON
-    file per probe in DIR (created if absent), so that the readers here
-    can be tested on output captured from a real provider. Saved: the
-    arguments the program was started with after its name, how the run
-    ended, the names of keys, the names of event and message types, and
-    the lists of names (skills, agents, commands, tools, plugins, servers).
-    Not saved: any description, prompt or instruction text, anything a
-    model wrote, any path, any id.
 """
 from __future__ import annotations
 
@@ -165,7 +120,6 @@ START = "starting role"
 
 # How long a started program may take, in seconds. Read when it is started.
 OFFLINE_TIMEOUT = 60.0
-SESSION_TIMEOUT = 180.0
 # How long a program that was told to stop is waited for before it is ended.
 STOP_GRACE = 10.0
 
@@ -173,28 +127,10 @@ MAX_OUTPUT = modellist.MAX_OUTPUT
 
 # The user prompt ``codex debug prompt-input`` appends. Nothing is sent.
 OFFLINE_PROMPT = "workflow setup discovery check"
-# The prompt of a session probe: one line that needs no tool.
-SESSION_PROMPT = "Reply with the single word ok."
 
 APP_SERVER_ARGS = ("app-server", "--listen", "stdio://")
 CLIENT_NAME = "workflow-setup-doctor"
 LIST_REQUEST_ID = 1
-CLAUDE_SESSION_ARGS = (
-    "-p", SESSION_PROMPT, "--output-format", "stream-json", "--verbose", "--no-session-persistence",
-    "--max-turns", "1",
-)
-CODEX_SESSION_ARGS = (
-    "exec", "--json", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only", SESSION_PROMPT,
-)
-
-# The keys of Claude Code's ``system/init`` event that list what a session
-# found, where the event has them.
-AGENT_KEYS = ("agents",)
-SKILL_KEYS = ("skills", "slash_commands")
-# The tool whose text names the agent types of a Codex session.
-SPAWN_TOOL = "spawn_agent"
-# What marks an object as a call of a tool, which a model made.
-_CALL_KEYS = frozenset({"arguments", "call_id", "input", "output"})
 
 _ROOT = re.compile(r"^- `(r\d+)` = `([^`]+)`\s*$")
 _ENTRY = re.compile(r"^- (\S+): .*\(file: (r\d+)/([^)]*SKILL\.md)\)\s*$")
@@ -202,7 +138,6 @@ _SKILLS_HEADING = "### Available skills"
 _SKILLS_TAG = "skills_instructions"
 _TAG = re.compile(r"^<([A-Za-z_][A-Za-z0-9_ ]*)>")
 _SKIPPED = ("skipped loading", "ignoring invalid")
-_NAME = re.compile(r"[A-Za-z0-9_.:/-]{1,80}")
 
 
 # --- Starting a program ----------------------------------------------------------
@@ -222,12 +157,6 @@ class Ran:
     @property
     def text(self) -> str:
         return "\n".join(self.lines)
-
-    def outcome(self) -> str:
-        """How the run ended, in a few words and with nothing it printed."""
-        if self.fault is not None:
-            return self.fault.split(":")[0]
-        return "ended here after the line that was waited for" if self.stopped else f"exited with code {self.code}"
 
 
 def start(argv: Iterable[str], environ: dict[str, str], cwd: Path, timeout: float, *,
@@ -422,17 +351,6 @@ def skipped_lines(*texts: str) -> list[str]:
     ]
 
 
-def reduce_prompt_input(found: PromptInput) -> dict[str, Any]:
-    return {
-        "message_roles": list(found.roles),
-        "tags": list(found.tags),
-        "skills_section": found.skills is not None,
-        "skill_roots": sorted(found.roots),
-        "skills": sorted(found.skills or {}),
-        "unread_entry_lines": found.unread,
-    }
-
-
 # --- Reading: the app server's skills list ---------------------------------------
 
 @dataclass(frozen=True)
@@ -511,173 +429,6 @@ def parse_skills_list(lines: Iterable[str]) -> SkillsList:
                 skill.get("path") if isinstance(skill.get("path"), str) else None,
             ))
     return SkillsList(tuple(listed), errors, tuple(sorted(keys)))
-
-
-def reduce_skills_list(found: SkillsList) -> dict[str, Any]:
-    return {
-        "skill_keys": list(found.keys),
-        "load_errors": found.errors,
-        "skills": [{"name": one.name, "enabled": one.enabled, "scope": one.scope} for one in found.skills],
-    }
-
-
-# --- Reading: Claude Code's first event ------------------------------------------
-
-@dataclass(frozen=True)
-class Listing:
-    """The ``system/init`` event, reduced: the names of its keys, and for
-    each key that holds a list of names, the names."""
-
-    keys: tuple[str, ...]
-    lists: dict[str, tuple[str, ...]]
-
-    def names(self, keys: Iterable[str]) -> set[str] | None:
-        """The names under those of ``keys`` that the event has, without a
-        leading ``/``; None when it has none of them."""
-        found = [self.lists[key] for key in keys if key in self.lists]
-        if not found:
-            return None
-        return {name.removeprefix("/") for names in found for name in names}
-
-    def has(self, keys: Iterable[str]) -> list[str]:
-        return [key for key in keys if key in self.lists]
-
-
-def claude_init(line: str) -> dict[str, Any] | None:
-    """The event, when ``line`` is the ``system/init`` line of a stream."""
-    found = _json_object(line)
-    if found is not None and found.get("type") == "system" and found.get("subtype") == "init":
-        return found
-    return None
-
-
-def _names(value: Any) -> tuple[str, ...] | None:
-    """The names of a list of strings, or of objects with a ``name``; None
-    for anything else. A string that is no name (a sentence, a path of
-    several lines) makes the list no list of names."""
-    if not isinstance(value, list):
-        return None
-    found = []
-    for one in value:
-        name = one if isinstance(one, str) else one.get("name") if isinstance(one, dict) else None
-        if not isinstance(name, str) or not _NAME.fullmatch(name):
-            return None
-        found.append(name)
-    return tuple(found)
-
-
-def listing_of(event: dict[str, Any]) -> Listing:
-    lists = {}
-    for key, value in event.items():
-        names = _names(value)
-        if names is not None:
-            lists[key] = names
-    return Listing(tuple(sorted(event)), lists)
-
-
-def reduce_listing(found: Listing) -> dict[str, Any]:
-    return {"keys": list(found.keys), "lists": {key: list(names) for key, names in sorted(found.lists.items())}}
-
-
-# --- Reading: Codex's event stream -----------------------------------------------
-
-@dataclass(frozen=True)
-class Events:
-    """``codex exec --json``, as far as it is read. ``spawn`` is every
-    string of the spawn tool's definition, where the stream holds one."""
-
-    types: tuple[str, ...]
-    keys: dict[str, tuple[str, ...]]
-    tools: tuple[str, ...]
-    spawn: tuple[str, ...] | None
-    spawn_paths: tuple[str, ...]
-
-    def names(self, wanted: Iterable[str]) -> set[str]:
-        """Those of ``wanted`` that the spawn tool's text holds as whole
-        names."""
-        found = set()
-        for name in wanted:
-            whole = re.compile(r"(?<![A-Za-z0-9_-])" + re.escape(name) + r"(?![A-Za-z0-9_-])")
-            if any(whole.search(text) for text in self.spawn or ()):
-                found.add(name)
-        return found
-
-
-def _is_definition(value: dict[str, Any]) -> bool:
-    return (isinstance(value.get("name"), str) and ("description" in value or "parameters" in value)
-            and not _CALL_KEYS & set(value))
-
-
-def _strings(value: Any, path: str, texts: list[str], where: list[str]) -> None:
-    if isinstance(value, str):
-        texts.append(value)
-        where.append(path)
-    elif isinstance(value, dict):
-        for key, inner in value.items():
-            _strings(inner, f"{path}.{key}" if path else str(key), texts, where)
-    elif isinstance(value, list):
-        for inner in value:
-            _strings(inner, path + "[]", texts, where)
-
-
-def _definitions(value: Any, depth: int = 0) -> Iterable[dict[str, Any]]:
-    if depth > 40:
-        return
-    if isinstance(value, dict):
-        if _is_definition(value):
-            yield value
-            return
-        if _CALL_KEYS & set(value):
-            return  # a tool call and what came of it: a model's doing
-        for inner in value.values():
-            yield from _definitions(inner, depth + 1)
-    elif isinstance(value, list):
-        for inner in value:
-            yield from _definitions(inner, depth + 1)
-
-
-def parse_events(lines: Iterable[str]) -> Events:
-    """Read what ``codex exec --json`` printed. A ``ValueError`` when no
-    line is a JSON event."""
-    types: list[str] = []
-    keys: dict[str, set[str]] = {}
-    tools: list[str] = []
-    spawn: list[str] | None = None
-    where: list[str] = []
-    for line in lines:
-        event = _json_object(line)
-        if event is None:
-            continue
-        kind = event.get("type") if isinstance(event.get("type"), str) else "(no type)"
-        item = event.get("item")
-        if isinstance(item, dict) and isinstance(item.get("type"), str):
-            kind = f"{kind}/{item['type']}"
-        if kind not in types:
-            types.append(kind)
-        keys.setdefault(kind, set()).update(event)
-        for found in _definitions(event):
-            if found["name"] not in tools:
-                tools.append(found["name"])
-            if found["name"] == SPAWN_TOOL:
-                spawn = [] if spawn is None else spawn
-                _strings({key: value for key, value in found.items() if key != "name"}, "", spawn, where)
-    if not types:
-        raise ValueError("printed no JSON event")
-    return Events(
-        tuple(types), {kind: tuple(sorted(found)) for kind, found in keys.items()}, tuple(tools),
-        None if spawn is None else tuple(spawn), tuple(dict.fromkeys(where)),
-    )
-
-
-def reduce_events(found: Events, wanted: Iterable[str] = ()) -> dict[str, Any]:
-    return {
-        "event_types": list(found.types),
-        "event_keys": {kind: list(keys) for kind, keys in found.keys.items()},
-        "tool_definitions": list(found.tools),
-        "spawn_tool_found": found.spawn is not None,
-        "spawn_tool_text_at": list(found.spawn_paths),
-        "agent_names_found": sorted(found.names(wanted)),
-    }
 
 
 # --- The items ---------------------------------------------------------------------
@@ -808,65 +559,6 @@ def structure(item: Item) -> None:
 
 # --- The probes --------------------------------------------------------------------
 
-class Saver:
-    """Writes the reduced form of each probe into a directory; see the
-    module. With no directory it keeps nothing."""
-
-    def __init__(self, directory: str | None) -> None:
-        # The path as ``save_directory`` settled it: absolute, with no
-        # ``..`` left for the system to read otherwise than the text does.
-        self.directory = None if not directory else Path(os.path.realpath(os.path.expanduser(directory)))
-        self.saved: list[str] = []
-
-    def save(self, name: str, args: Iterable[str], ran: Ran, reduced: dict[str, Any] | None,
-             unread: str | None = None) -> None:
-        if self.directory is None:
-            return
-        # The prompts are fixed texts of this module and are left out all the same.
-        shown = ["<prompt>" if one in (OFFLINE_PROMPT, SESSION_PROMPT) else one for one in args]
-        # Why nothing was read, without what the program itself said.
-        why = None if unread is None else unread.split(":")[0]
-        data = {"probe": name, "arguments": shown, "outcome": ran.outcome(), "unread": why, "listing": reduced}
-        try:
-            # The directory the user named is the one place this may write,
-            # and ``fsio`` refuses it where its real place is in the clone.
-            with fsio.confined([_existing(self.directory)]):
-                fsio.make_directories(self.directory)
-                file = self.directory / f"{name}.json"
-                fsio.atomic_write(
-                    file, (json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
-                )
-        except SetupError as exc:
-            raise SetupError(f"{self.directory}: the probe output cannot be saved: {exc.lines[0]}") from None
-        self.saved.append(f"{name}.json")
-
-
-def save_directory(text: str, clone: Path) -> str:
-    """``--save-probe DIR`` as it may be used: a path with no control
-    character, outside the clone setup runs from."""
-    from . import locations
-
-    locations.path_argument(text, SAVE_OPTION)
-    # Every link is followed first and ``..`` taken out after: ``link/../x``
-    # is where the system finds it, not where the text seems to say.
-    real = os.path.realpath(os.path.expanduser(text))
-    # Asked of the directory it will be made in, where it is not there yet.
-    with fsio.confined([_existing(Path(real))], [clone]):
-        refused = fsio.admits(os.path.join(real, "probe.json"))
-    if paths.inside(real, os.path.realpath(clone)) or (refused is not None and "never writes to" in refused):
-        raise SetupError(f"{SAVE_OPTION}: {text}: inside the clone setup runs from; setup writes nothing there")
-    return real
-
-
-def _existing(directory: Path) -> Path:
-    """``directory``, or the nearest directory above it that exists: the
-    place a directory that is still to be made is made in."""
-    probe = Path(directory)
-    while not os.path.isdir(probe) and probe.parent != probe:
-        probe = probe.parent
-    return probe
-
-
 def child_environment(context: Any) -> dict[str, str]:
     """The environment a provider is started in; see the module."""
     found = context.homes
@@ -882,7 +574,7 @@ def working_directory(context: Any) -> Path:
 
 
 def _shown(program: str, args: Iterable[str]) -> str:
-    words = ["<prompt>" if one in (OFFLINE_PROMPT, SESSION_PROMPT) else one for one in args]
+    words = ["<prompt>" if one == OFFLINE_PROMPT else one for one in args]
     return "`" + " ".join([program, *words]) + "`"
 
 
@@ -892,8 +584,7 @@ def _set(items: Iterable[Item], state: str, why: str) -> None:
             item.settle(state, why)
 
 
-def probe_codex(context: Any, provider: homes.Provider, items: list[Item], notes: list[tuple[str, str]],
-                saver: Saver, prove: bool) -> None:
+def probe_codex(context: Any, provider: homes.Provider, items: list[Item], notes: list[tuple[str, str]]) -> None:
     program = provider.program_file
     environ, cwd = child_environment(context), working_directory(context)
     skills = [item for item in items if item.kind in (SKILL, LOADED)]
@@ -915,7 +606,6 @@ def probe_codex(context: Any, provider: homes.Provider, items: list[Item], notes
             except ValueError as exc:
                 visible_fault = str(exc)
         notes.extend(("warning", f"codex: {asked} says: {line}") for line in skipped_lines(ran.text, ran.said))
-        saver.save("codex-prompt-input", args, ran, None if visible is None else reduce_prompt_input(visible), visible_fault)
 
         ran = start((program, *APP_SERVER_ARGS), environ, cwd, OFFLINE_TIMEOUT, send=list_requests(cwd),
                     until=is_list_answer)
@@ -927,8 +617,6 @@ def probe_codex(context: Any, provider: homes.Provider, items: list[Item], notes
                 listed_fault = str(exc)
         if listed is not None and listed.errors:
             notes.append(("warning", f"codex: {server} reports {listed.errors} skills that it could not load"))
-        saver.save("codex-skills-list", APP_SERVER_ARGS, ran, None if listed is None else reduce_skills_list(listed),
-                   listed_fault)
 
     for item in skills:
         in_prompt = visible is not None and item.name in (visible.skills or {})
@@ -978,91 +666,15 @@ def probe_codex(context: Any, provider: homes.Provider, items: list[Item], notes
                 f"{shown} does not show the role's instructions (the line they begin with is in no developer "
                 "message); Codex takes a profile it cannot find for no profile, without a word"
             ))
-        saver.save(f"codex-profile-{item.name}", args, ran,
-                   None if found is None else {**reduce_prompt_input(found),
-                                               "instructions_shown": item.state == PROVEN}, fault)
 
-    agents = [item for item in items if item.kind == DEFINITION]
-    if not agents:
-        return
-    if not prove:
-        _set(agents, UNPROVEN, (
-            "no offline output of Codex lists custom agents: the prompt input holds no tool text and the app "
-            f"server has no request for them; `doctor {PROVE_OPTION}` starts one session and looks for the agent "
-            "names in the spawn tool's text"
-        ))
-        return
-    shown = _shown("codex", CODEX_SESSION_ARGS)
-    ran = start((program, *CODEX_SESSION_ARGS), environ, cwd, SESSION_TIMEOUT)
-    fault, events = _failed(ran), None
-    if fault is None or ran.lines:
-        try:
-            events = parse_events(ran.lines)
-        except ValueError as exc:
-            fault = fault or str(exc)
-    wanted = [item.name for item in agents]
-    saver.save("codex-exec-events", CODEX_SESSION_ARGS, ran, None if events is None else reduce_events(events, wanted),
-               fault)
-    if events is None:
-        _set(agents, UNPROVEN, f"{shown} {fault}")
-    elif events.spawn is None:
-        _set(agents, UNPROVEN, (
-            f"{shown} {f'{fault}, and ' if fault else ''}printed no definition of the {SPAWN_TOOL} tool; its "
-            f"events were: {', '.join(events.types)}. No output of Codex that setup can read lists custom agents"
-        ))
-    else:
-        found = events.names(wanted)
-        for item in agents:
-            if item.name in found:
-                item.settle(PROVEN, f"named in the {SPAWN_TOOL} tool's text in the event stream of {shown}")
-            else:
-                item.settle(MISSING, f"not named in the {SPAWN_TOOL} tool's text in the event stream of {shown}")
+    _set([item for item in items if item.kind == DEFINITION], UNPROVEN, (
+        "no offline output of Codex lists custom agents: the prompt input holds no tool text and the app "
+        "server has no request for them"
+    ))
 
 
-def probe_claude(context: Any, provider: homes.Provider, items: list[Item], notes: list[tuple[str, str]],
-                 saver: Saver, prove: bool) -> None:
-    if not prove:
-        _set(items, UNPROVEN, (
-            "Claude Code has no command that lists agents or skills without a session; "
-            f"`doctor {PROVE_OPTION}` starts one and reads its first event"
-        ))
-        return
-    shown = _shown("claude", CLAUDE_SESSION_ARGS)
-    ran = start((provider.program_file, *CLAUDE_SESSION_ARGS), child_environment(context), working_directory(context),
-                SESSION_TIMEOUT, until=lambda line: claude_init(line) is not None)
-    event = next((found for found in map(claude_init, ran.lines) if found is not None), None)
-    if event is None:
-        fault = _failed(ran) or "printed no `system/init` event"
-        saver.save("claude-code-init", CLAUDE_SESSION_ARGS, ran, None, fault)
-        _set(items, UNPROVEN, f"{shown} {fault}")
-        return
-    listing = listing_of(event)
-    saver.save("claude-code-init", CLAUDE_SESSION_ARGS, ran, reduce_listing(listing))
-    first = f"the `system/init` event of {shown}"
-    seen = f"its keys were: {', '.join(listing.keys)}"
-    agents, skills = listing.names(AGENT_KEYS), listing.names(SKILL_KEYS)
-    for item in items:
-        if item.state is not None:
-            continue
-        if item.kind in (DEFINITION, START):
-            if agents is None:
-                item.settle(UNPROVEN, f"{first} has no key that lists agents ({' or '.join(AGENT_KEYS)}); {seen}")
-            elif item.name in agents:
-                item.settle(PROVEN, f"listed under `{'`, `'.join(listing.has(AGENT_KEYS))}` in {first}")
-            else:
-                item.settle(MISSING, f"not listed under `{'`, `'.join(listing.has(AGENT_KEYS))}` in {first}")
-        elif skills is None:
-            item.settle(UNPROVEN, f"{first} has no key that lists skills ({' or '.join(SKILL_KEYS)}); {seen}")
-        elif item.name in skills:
-            under = [key for key in listing.has(SKILL_KEYS) if item.name in {n.removeprefix("/") for n in listing.lists[key]}]
-            item.settle(PROVEN, f"listed under `{'`, `'.join(under)}` in {first}")
-        elif item.invoke_only:
-            item.settle(UNPROVEN, (
-                f"not listed under `{'`, `'.join(listing.has(SKILL_KEYS))}` in {first}; it is invoke-only, and no "
-                "document says such a skill is listed there"
-            ))
-        else:
-            item.settle(MISSING, f"not listed under `{'`, `'.join(listing.has(SKILL_KEYS))}` in {first}")
+def probe_claude(context: Any, provider: homes.Provider, items: list[Item], notes: list[tuple[str, str]]) -> None:
+    _set(items, UNPROVEN, "Claude Code has no command that lists agents or skills without a session")
 
 
 PROBES = {homes.CODEX: probe_codex, homes.CLAUDE_CODE: probe_claude}
@@ -1070,30 +682,10 @@ PROBES = {homes.CODEX: probe_codex, homes.CLAUDE_CODE: probe_claude}
 
 # --- The check ---------------------------------------------------------------------
 
-PROVE_OPTION = "--prove-discovery"
-SAVE_OPTION = "--save-probe"
-
-
-def configure(parser: Any) -> None:
-    parser.add_argument(
-        PROVE_OPTION, action="store_true",
-        help="the check `discovery` also starts the session probes: one `claude -p` session, ended at its first "
-        "event, and one `codex exec` session. EACH STARTS A SESSION WITH A MODEL AND SPENDS QUOTA. Without it "
-        "the check starts offline commands only",
-    )
-    parser.add_argument(
-        SAVE_OPTION, metavar="DIR", default=None,
-        help="write what each probe of the check `discovery` gave into DIR, one JSON file per probe, reduced to "
-        "names: keys, event types and the lists of skills, agents, commands and tools. No description, prompt, "
-        "model output, path or id is saved. The one thing doctor writes",
-    )
-
-
 @dataclass
 class Survey:
     items: list[Item]
     notes: list[tuple[str, str]]     # (severity, line)
-    saved: list[str]
 
     def count(self, state: str) -> int:
         return sum(1 for item in self.items if item.state == state)
@@ -1102,12 +694,7 @@ class Survey:
 def survey(context: Any) -> Survey:
     """Every item of every installed provider with its state; see the
     module. A ``SetupError`` where the sources do not allow a plan."""
-    prove = bool(context.option("prove_discovery", False))
-    save = context.option("save_probe")
-    if save is not None:
-        save = save_directory(save, context.homes.clone)
-    saver = Saver(save)
-    found = Survey([], [], saver.saved)
+    found = Survey([], [])
     for provider in context.installed():
         if provider.name not in PROBES:
             continue
@@ -1122,7 +709,7 @@ def survey(context: Any) -> Survey:
             for item in ready:
                 item.unchecked = True
             continue
-        PROBES[provider.name](context, provider, ready, found.notes, saver, prove)
+        PROBES[provider.name](context, provider, ready, found.notes)
     return found
 
 
@@ -1154,10 +741,8 @@ def check_discovery(context: Any) -> list[Any]:
             findings.append(doctor.error(
                 f"{item.provider}: the {item.kind} {item.name} cannot be loaded: {item.path}: {item.fault}", item.path,
             ))
-    # Unproven is a warning only where proof was asked for and not had; on
-    # a plain run it is what was to be expected, said in one line.
-    prove = bool(context.option("prove_discovery", False))
-    severity = {PROVEN: doctor.fine, UNPROVEN: doctor.warning, MISSING: doctor.error}
+    # Unproven is what was to be expected of an offline check, said in one line.
+    severity = {PROVEN: doctor.fine, MISSING: doctor.error}
     groups: dict[tuple[str, str, str, str], list[str]] = {}
     for item in found.items:
         if item.state is not None:
@@ -1166,13 +751,13 @@ def check_discovery(context: Any) -> list[Any]:
     for (provider, state, kind, why), names in groups.items():
         what = f"the {kind} {names[0]}" if len(names) == 1 else f"{_plural(len(names), kind)} ({', '.join(names)})"
         line = f"{provider}: {state}: {what}: {why}"
-        if state == UNPROVEN and not prove:
+        if state == UNPROVEN:
             unproven.append(line)
         else:
             findings.append(severity[state](line, f"{provider}: {state}"))
     if unproven:
         findings.append(doctor.info(
-            f"{_plural(found.count(UNPROVEN), 'item')} not proven on this run, which started no session: "
+            f"{_plural(found.count(UNPROVEN), 'item')} not proven offline: "
             + "; ".join(unproven), UNPROVEN,
         ))
     for provider in dict.fromkeys(item.provider for item in found.items if item.unchecked):
@@ -1187,15 +772,8 @@ def check_discovery(context: Any) -> list[Any]:
             "not in this home, so not checked (the check `missing` is about these): "
             + ", ".join(f"{item.provider} {item.kind} {item.name}" for item in absent)
         ))
-    if found.saved:
-        findings.append(doctor.info(
-            f"saved, reduced to names, in {context.option('save_probe')}: {', '.join(found.saved)}"
-        ))
     checked = [item for item in found.items if item.state is not None]
     if checked:
         counts = ", ".join(f"{found.count(state)} {state}" for state in STATES)
-        more = "" if context.option("prove_discovery", False) or not found.count(UNPROVEN) else (
-            f"; `doctor {PROVE_OPTION}` starts one session for each provider, which spends quota, to prove more"
-        )
-        findings.append(doctor.info(f"{_plural(len(checked), 'item')} asked of the providers: {counts}{more}"))
+        findings.append(doctor.info(f"{_plural(len(checked), 'item')} asked of the providers: {counts}"))
     return findings

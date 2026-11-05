@@ -227,7 +227,7 @@ class WslLinkSeenFromWindowsCase(TreeCase):
             self.assertIn("nothing was written", out.splitlines()[-1])
         self.assertEqual(os.readlink(link), str(self.clone / "alpha"))   # as WSL made it
         self.assertEqual(sorted(os.listdir(self.claude / "skills")), ["alpha"])
-        code, out, _ = self.run_there("doctor", "--only", "links", "--only", "v1")
+        code, out, _ = self.run_there("doctor", "--only", "links")
         self.assertIn(code, (0, 1, 2))
 
     def test_where_setups_own_link_was(self) -> None:
@@ -237,7 +237,7 @@ class WslLinkSeenFromWindowsCase(TreeCase):
         self.wsl_link(link, str(self.clone / "alpha"))
         code, out, err = self.run_there("render", "--no-roles")
         self.assertEqual(code, 2)
-        self.assertEqual(len(err.splitlines()), 2, err)            # the conflict, and the hint
+        self.assertEqual(len(err.splitlines()), 1, err)            # the conflict
         code, out, err = self.run_there("doctor", "--only", "links")
         self.assertNotEqual(code, 0)
         self.assertIn("home:.claude/skills/alpha: no longer a link: a file is there", out)
@@ -270,7 +270,7 @@ class WslLinkSeenFromWindowsCase(TreeCase):
         ]))
         self.assertIn("nothing was written", out.splitlines()[-1])
         self.assertFalse((self.home / ".agents").exists())
-        code, out, err = self.run_there("doctor", "--only", "links", "--only", "codex-settings", "--only", "v1")
+        code, out, err = self.run_there("doctor", "--only", "links", "--only", "codex-settings")
         self.assertEqual(err, "")
         self.assertIn(WSL_NOTE, out)
         code, out, err = self.run_there("uninstall")

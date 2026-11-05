@@ -4,10 +4,9 @@ and with --project what a project gets.
 
     render [--dry-run] [--home DIR] [--project DIR] [--json] [--no-roles]
            [--overwrite-edited] [--follow-config-symlinks]
-           [--allow-unshared-clone] [--no-model-list]
+           [--allow-unshared-clone]
            [--apply-codex-settings [--worktree-root DIR]
             [--default-codex-permissions]] [--remove-codex-settings]
-           [--migrate-v1 [--remove-stale PATH]...]
 
 In this order: the clone's sources are checked ("validate"), and any problem
 stops the run; on a machine with a Windows side and a WSL side the clone must
@@ -36,8 +35,7 @@ it starts the list command of Codex's dictionary (`codex debug models`, also
 with --dry-run), a program of the provider's that may write state of its own
 into its home, and ends the output with a note on the models the list offers
 and the dictionary lacks (the line `doctor` warns of). A list that cannot be
-read is one line, and neither changes the exit code. --no-model-list starts
-nothing and leaves the note out.
+read is one line, and neither changes the exit code.
 
 Whatever the options, nothing is written, removed or linked inside the
 clone setup runs from, outside the home and the project of the run (a
@@ -404,64 +402,6 @@ the effort of a Claude Code session that starts as the starting role: the
 role's model and effort, "setting" (what effortLevel is set to, or null) and
 "why" (why it is not set, or null).
 
-Migrating v1 (--migrate-v1). Without the option render removes nothing a v1
-install left, and stops on one that is in the way of a link. With it, in the
-same plan as everything else and so with the same dry run and backups, for
-each home this run may write:
-
-    - In the Claude Code CLAUDE.md the lines "@rules/prd-implementation.md"
-      and "@rules/epic-implementation.md" are removed, exactly those and
-      only as whole lines, and a marked block is added at the end that
-      points to the two skills. This is the one place setup edits a user's
-      text outside a marked block. The Codex AGENTS.md gets the same block;
-      another tool's block in it is not touched. A file that is not there
-      is created with the block alone.
-    - The v1 rule files in the Claude Code rules directory
-      (prd-implementation.md, epic-implementation.md and the loose
-      avoid-bash-injection-heuristics.md), agents/sprint-coder.md, and the
-      loose copies of the v1 skills in the skills directories, with Codex's
-      deprecated <codex home>/skills among them, are removed when they are
-      known: a regular file whose content is a committed version of the v1
-      file (the hashes are in tools/setup/v1-known-hashes.json, for LF and
-      CRLF line endings); a skill directory in which every file is one and
-      which holds nothing else but the __pycache__ of its scripts. Every
-      removed file is backed up first.
-    - A link is removed as a link and never followed, and without being
-      asked for only in these cases: it leads to a known copy (every file a
-      committed version, wherever the copy is), or into the clone this
-      command runs from, or nowhere at a path inside that clone, which
-      moved on to v2. A link into any other tree (another clone, a git
-      tree of your own that holds a skill of a v1 skill's name) is kept and
-      reported; --remove-stale PATH removes it. A link whose text names a
-      credentials file is never removed, with the option or without.
-    - Anything else at one of those places is kept and reported with what
-      differs: a copy edited by hand, a link setup does not recognise. The
-      exit code is then 3, and "doctor" reports the item as an error until
-      you decide. --remove-stale PATH (repeatable) removes the one named,
-      after a backup; the dry run prints the option for each. It removes
-      only what the dry run names at a v1 place: any other path stops the
-      run.
-    - A git clone inside a skills directory is never removed, with or
-      without --remove-stale. It is reported, and is yours to move away. A
-      skills directory that is a clone, or is a link that leads into one
-      (the clone setup runs from among them), is left alone as a whole:
-      nothing in it is removed or linked, with any option.
-    - A migration that was interrupted is finished by running the same
-      command again: a copy whose files were already removed is known by
-      the install record, and what is left of it is removed.
-    - A place the other side of the machine owns is skipped and reported,
-      as always; run the migration on that side too.
-
-Where migration removes a copy or a link at a path that render then links, the
-install record keeps both, and undoing the install puts the copy or the link
-back. Whenever a rule copy is to be removed the run warns that a project
-whose .claude/rules/ links to it will be left with a dangling link: setup
-does not know which projects do, and does not migrate a project. A second run
-with the same options plans nothing. "migration" in the --json output lists
-each item with its status ("remove", "edit", "up-to-date", "kept",
-"never-removed", "skipped", "needs-flag") and the warnings; it is null
-without the option.
-
 Known limit. A Cowork session on the desktop does not load a linked
 user-level rule: there Claude Code skips "a symlinked ~/.claude/rules/
 directory or rule file that points outside the working directory"
@@ -481,7 +421,7 @@ was refused, and where a change failed while it was applied the error says
 how many were made; 3 when the rest was done (or, with --dry-run, would be)
 and at least one path was skipped that --follow-config-symlinks would write,
 or one generated file, key or block was kept that --overwrite-edited would
-replace, or one v1 copy or link was kept that --remove-stale would remove;
+replace;
 130 when interrupted with Ctrl-C, and 128 plus the signal's number when told
 to end by a signal (143 for SIGTERM): what was changed until then is
 recorded, and the next run goes on; 141 when the reader of the output went

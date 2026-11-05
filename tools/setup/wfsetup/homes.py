@@ -510,7 +510,7 @@ def resolve(locations: Locations, host: Host | None = None) -> Homes:
                 Place(INSTRUCTIONS, codex / "AGENTS.md", False),
                 Place(CONFIG, codex / "config.toml", False),
                 # Deprecated, and still read by Codex: setup installs
-                # nothing here; doctor and the v1 migration look at it.
+                # nothing here; doctor looks at it.
                 Place(OLD_SKILLS, codex / "skills", True),
                 # The home itself, where a profile file goes. Last: it
                 # holds the places above, and is asked for after them.

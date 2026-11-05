@@ -218,7 +218,7 @@ class OutputCase(DoctorCase):
         self.assertIn("not run: sources", out.splitlines())
 
     def test_the_switches_leave_their_checks_out(self) -> None:
-        _, report = self.doctor("--no-model-list", "--no-versions", "--no-collab")
+        _, report = self.doctor("--skip", "models", "--no-versions", "--no-collab")
         self.assertEqual(report["not_run"], ["models", "versions", "collaboration-skill"])
         _, report = self.doctor("--only", "versions", "--only", "clone", "--no-versions")
         self.assertEqual([check["name"] for check in report["checks"]], ["clone"])
@@ -921,8 +921,8 @@ class ModelsCase(DoctorCase):
         self.assertQuiet(findings)
         self.assertFinding(findings, doctor.INFO, "codex: the program `codex` is not on PATH")
 
-    def test_no_model_list_starts_nothing(self) -> None:
-        _, report = self.doctor("--no-model-list", "--no-versions", host=self.at)
+    def test_skipping_models_starts_nothing(self) -> None:
+        _, report = self.doctor("--skip", "models", "--no-versions", host=self.at)
         self.assertEqual(self.codex_stub.calls(), [])
         self.assertIn("models", report["not_run"])
 
@@ -1523,7 +1523,7 @@ class RepositoryCase(DoctorCase):
         self.assertEqual(code, 0)
         for name in doctor.names():
             self.assertIn(name, out)
-        for option in ("--only", "--skip", "--no-model-list", "--no-versions", "--no-collab", "--json",
+        for option in ("--only", "--skip", "--no-versions", "--no-collab", "--json",
                        "--allow-unshared-clone", "--project", "--home"):
             self.assertIn(option, out)
 

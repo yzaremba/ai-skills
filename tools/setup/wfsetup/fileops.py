@@ -261,7 +261,7 @@ Undoing (R8.1)
     record, the backups it lists and the directories that held them, if
     no entry is left.
 
-Setup's link where something of the user's was (the v1 migration)
+Setup's link where something of the user's was (an earlier setup)
     One plan may remove a link or a directory of the user's and then create
     setup's link at the same path: ``remove_link`` (or the files, then
     ``remove_directory(path, users=True)``), then ``create_link``. A path
@@ -663,7 +663,7 @@ class Plan:
         that empty it, and for a directory before its parent.
 
         With ``users`` the directory is one of the user's that this plan
-        empties (the v1 migration): it is removed and recorded as
+        empties (an earlier setup): it is removed and recorded as
         ``removed-directory``, so a reversal makes it again. One that still
         holds anything the plan does not remove is a conflict, and nothing
         is removed.
@@ -2856,10 +2856,10 @@ class _Fold:
         # A project's link is setup's by its real path too, as in
         # ``do_remove_link``: the other side may have made it with another text.
         project_link = records.scope_of(key) == PROJECT
-        if state.kind == LINK and any(
+        text = self.roots.target_text(entry["target"]) if state.kind == LINK else ""
+        if state.kind == LINK and (
             fsio.same_target(state.target or "", text, base=path.parent)
             or (project_link and self._leads_to(path, text))
-            for text in self.roots.target_texts(entry["target"])
         ):
             self.now[ident] = _State(ABSENT)
         elif state.kind != ABSENT:
@@ -3047,27 +3047,10 @@ class _Fold:
             return
         ident, key, state = found
         try:
-            texts = self.roots.target_texts(entry["target"])
+            target = self.roots.target_text(entry["target"])
         except (SetupError, KeyError) as exc:
             self._keep(key, " ".join(str(exc).split()))
             return
-        # A link of the user's that led into the clone is put back with the
-        # text it had: below where the clone was then. Where the clone was
-        # moved since, that place is the one ``clone_was`` names; without
-        # it the text the link had cannot be known, and a link into the
-        # clone as it is now would not be the user's link.
-        target = texts[-1]
-        if state.kind == ABSENT and str(entry["target"]).startswith(f"{CLONE}:") and self.roots.clone_was is None:
-            moved = self._clone_seems_moved()
-            if moved is not None:
-                self._keep(
-                    key,
-                    "the link that was removed led into the clone, and the clone seems to have been moved since "
-                    f"(a link setup made leads into {moved}): the text the link had cannot be known, so it was not "
-                    "put back. Run uninstall with --clone-was DIR, DIR being where the clone was, and it is put "
-                    "back as it was",
-                )
-                return
         if state.kind == ABSENT and fsio.is_credentials(target):
             # Found before anything is changed: setup makes no link to a
             # credentials file, on the way back either.
@@ -3080,41 +3063,10 @@ class _Fold:
             )
             if not self._put(ident, key, again):
                 return
-        elif state.kind != LINK or not any(
-            fsio.same_target(state.target or "", text, base=path.parent) for text in texts
-        ):
+        elif state.kind != LINK or not fsio.same_target(state.target or "", target, base=path.parent):
             self._keep(key, "something is there again; the removed link was not put back")
             return
         self.entries[key] = None
-
-    def _clone_seems_moved(self) -> str | None:
-        """Where the clone seems to have been when this record was made,
-        if not where it is now: the directory that a link setup made still
-        leads into, with the very path below it that the record holds.
-        None where every link of setup's leads into the clone as it is,
-        or none is left to tell."""
-        if self.roots.clone is None:
-            return None
-        for key, entry in self.record.entries.items():
-            target = entry.get("target") if entry.get("kind") == "link" else None
-            if not isinstance(target, str) or not target.startswith(f"{CLONE}:"):
-                continue
-            relative = target.partition(":")[2]
-            try:
-                place = self.roots.path(key)
-                seen = fsio.look(place)
-                here = self.roots.target_text(target)
-            except SetupError:
-                continue
-            if seen.kind != LINK or not seen.target or relative in ("", "."):
-                continue
-            if fsio.same_target(seen.target, here, base=place.parent):
-                return None  # a link of setup's leads into the clone where it is: it was not moved
-            text = os.path.normpath(paths.long_form(fsio.link_place(seen.target, place.parent)))
-            tail = os.sep + relative.replace("/", os.sep)
-            if paths.fold(text).endswith(paths.fold(tail)):
-                return text[:len(text) - len(tail)] or os.sep
-        return None
 
     def _reverse_removed_directory(self, path: Path, entry: dict[str, Any]) -> None:
         found = self._state(path)

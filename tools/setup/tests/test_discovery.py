@@ -7,7 +7,8 @@ Run from the repository root:
 
 No real provider is started (R6.8) and no session with a model: ``codex``
 and ``claude`` are ``discovery_stub.DiscoveryStub``, found on a PATH that
-holds nothing else.
+holds nothing else. The stub still tells a session (``exec``, ``-p``) from
+an offline command, so that a test can show none was started.
 """
 from __future__ import annotations
 
@@ -25,7 +26,7 @@ from pathlib import Path
 from unittest import mock
 
 import support
-from discovery_stub import APP_SERVER, EXEC, PRINT, PROFILE, PROMPT_INPUT, SESSION_MODES, DiscoveryStub
+from discovery_stub import APP_SERVER, PROFILE, PROMPT_INPUT, SESSION_MODES, DiscoveryStub
 from provider_stub import VERSION
 from test_doctor import DoctorCase
 from test_validate import OPENAI
@@ -72,42 +73,7 @@ def skills_list(skills=(), disabled=()) -> str:
     return json.dumps({"method": "remoteControl/status/changed", "params": {}}) + "\n" + json.dumps(answer) + "\n"
 
 
-def init_event(**lists) -> str:
-    """The first lines of ``claude -p --output-format stream-json``: the
-    ``system/init`` event with these lists, after a hook event."""
-    event = {"type": "system", "subtype": "init", "session_id": "0000", "cwd": f"/home/{MARKER}", "model": "sonnet",
-             "tools": ["Read", "Bash"], "mcp_servers": [{"name": "files", "status": "connected"}],
-             "apiKeySource": MARKER, **lists}
-    return json.dumps({"type": "system", "subtype": "hook_started", "hook_name": MARKER}) + "\n" + json.dumps(event) + "\n"
-
-
-def named(names, described: bool = True) -> list:
-    return [{"name": name, "description": MARKER, "source": "user"} if described else name for name in names]
-
-
 REFUSED = json.dumps({"id": discovery.LIST_REQUEST_ID, "error": {"code": -32601, "message": "Method not found"}}) + "\n"
-ASSISTANT = json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": MARKER}]}}) + "\n"
-
-
-def events(spawn: str | None = None, extra: dict | None = None) -> str:
-    """What ``codex exec --json`` prints: the documented events, and with
-    ``spawn`` a definition of the spawn tool whose text is ``spawn``."""
-    lines: list[dict] = [{"type": "thread.started", "thread_id": "0000"}, {"type": "turn.started"}]
-    if spawn is not None:
-        lines.append({"type": "session.configured", "tools": [
-            {"type": "function", "name": "exec_command", "description": "Runs a command."},
-            {"type": "function", "name": discovery.SPAWN_TOOL, "description": spawn,
-             "parameters": {"properties": {"agent_type": {"type": "string", "description": "One of the roles."}}}},
-        ]})
-    if extra is not None:
-        lines.append(extra)
-    lines += [
-        {"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": MARKER}},
-        {"type": "turn.completed", "usage": {"input_tokens": 1}},
-    ]
-    return "".join(json.dumps(line) + "\n" for line in lines)
-
-
 # --- The readers -------------------------------------------------------------------
 
 class CapturedCase(unittest.TestCase):
@@ -209,48 +175,6 @@ class ReadersCase(unittest.TestCase):
                 discovery.parse_skills_list(lines)
             self.assertIn(why, str(caught.exception))
 
-    def test_the_init_event_is_found_and_its_lists_are_read_as_names(self) -> None:
-        lines = init_event(agents=named(["worker"]), skills=["alpha"], slash_commands=["/beta", "clear"],
-                           notes=["a sentence, not a name"], plugins=[]).splitlines()
-        self.assertIsNone(discovery.claude_init(lines[0]))
-        self.assertIsNone(discovery.claude_init("not json"))
-        self.assertIsNone(discovery.claude_init('["system", "init"]'))
-        event = discovery.claude_init(lines[1])
-        found = discovery.listing_of(event)
-        self.assertEqual(found.lists["agents"], ("worker",))
-        self.assertEqual(found.lists["tools"], ("Read", "Bash"))
-        self.assertEqual(found.lists["mcp_servers"], ("files",))
-        self.assertEqual(found.lists["plugins"], ())
-        self.assertNotIn("notes", found.lists)
-        self.assertNotIn("cwd", found.lists)
-        self.assertEqual(found.names(discovery.SKILL_KEYS), {"alpha", "beta", "clear"})
-        self.assertEqual(found.names(discovery.AGENT_KEYS), {"worker"})
-        self.assertIsNone(discovery.listing_of({"type": "system", "tools": ["Read"]}).names(discovery.AGENT_KEYS))
-        self.assertEqual(found.keys, tuple(sorted(event)))
-
-    def test_agent_names_are_read_from_the_spawn_tools_definition_as_whole_names(self) -> None:
-        found = discovery.parse_events(events("Roles: worker_hard (hard steps), reviewer.").splitlines())
-        self.assertEqual(found.tools, ("exec_command", discovery.SPAWN_TOOL))
-        self.assertEqual(found.names(["worker", "worker_hard", "reviewer", "runner"]), {"worker_hard", "reviewer"})
-        self.assertIn("description", found.spawn_paths)
-        self.assertEqual(found.types[:2], ("thread.started", "turn.started"))
-        self.assertIn("item.completed/agent_message", found.types)
-
-    def test_a_call_of_the_spawn_tool_and_what_a_model_wrote_are_not_read(self) -> None:
-        call = {"type": "item.completed", "item": {
-            "type": "function_call", "name": discovery.SPAWN_TOOL, "description": "worker",
-            "arguments": '{"agent_type": "worker"}', "call_id": "c1",
-        }}
-        found = discovery.parse_events(events(extra=call).splitlines())
-        self.assertIsNone(found.spawn)
-        self.assertEqual(found.tools, ())
-        self.assertEqual(found.names(["worker"]), set())
-        message = {"type": "item.completed", "item": {"type": "agent_message", "text": "spawn_agent can use worker"}}
-        self.assertIsNone(discovery.parse_events(events(extra=message).splitlines()).spawn)
-        with self.assertRaises(ValueError):
-            discovery.parse_events(["please log in", ""])
-
-
 # --- The check ---------------------------------------------------------------------
 
 class DiscoveryCase(DoctorCase):
@@ -291,25 +215,19 @@ class DiscoveryCase(DoctorCase):
         stub.answer(APP_SERVER, skills_list(listed, disabled))
         return stub
 
-    def claude_stub(self, text: str | None = None, **how) -> DiscoveryStub:
-        stub = self.stubbed("claude")
-        if text is None:
-            text = init_event(agents=named(CLAUDE_AGENTS), skills=named(CLAUDE_SKILLS + CODEX_LOADED),
-                              slash_commands=named(["clear"], described=False))
-        stub.answer(PRINT, text, **how)
-        return stub
+    def claude_stub(self) -> DiscoveryStub:
+        return self.stubbed("claude")
 
     def discovery(self, *stubs: DiscoveryStub, argv=()) -> tuple[int, list[dict]]:
-        self.proving = discovery.PROVE_OPTION in argv
         return self.only("discovery", *argv, host=self.stub_host(*stubs) if stubs else None)
 
     def state(self, findings: list[dict], provider: str, state: str, *words: str) -> str:
-        """The finding of one group of items. An unproven one is a warning
-        of its own where proof was asked for (``--prove-discovery``); on a
-        plain run it is a part of the one info line (review finding S16)."""
-        severity = {discovery.PROVEN: doctor.OK, discovery.UNPROVEN: doctor.WARNING, discovery.MISSING: doctor.ERROR}
-        if state == discovery.UNPROVEN and not getattr(self, "proving", False):
-            line = self.assertFinding(findings, doctor.INFO, "not proven on this run")
+        """The finding of one group of items. An unproven one is a part of
+        the one info line (review finding S16); nothing unproven is a
+        warning."""
+        severity = {discovery.PROVEN: doctor.OK, discovery.MISSING: doctor.ERROR}
+        if state == discovery.UNPROVEN:
+            line = self.assertFinding(findings, doctor.INFO, "not proven offline")
             parts = line.split(f"{provider}: {state}: ")[1:]
             for part in parts:
                 if all(word in part for word in words):
@@ -335,19 +253,19 @@ class OfflineCase(DiscoveryCase):
         self.state(findings, "codex", discovery.PROVEN, "the starting role lead",
                    "`codex --profile lead debug prompt-input <prompt>` shows the role's instructions")
         self.state(findings, "codex", discovery.UNPROVEN, f"5 role definitions ({', '.join(CODEX_AGENTS)})",
-                   "no offline output of Codex lists custom agents", "--prove-discovery")
+                   "no offline output of Codex lists custom agents")
         for what in ("3 skills (alpha, beta, solo)", "2 loaded roles (lead, quick)",
                      f"6 role definitions ({', '.join(CLAUDE_AGENTS)})", "the starting role lead"):
-            self.state(findings, "claude-code", discovery.UNPROVEN, what, "without a session", "--prove-discovery")
+            self.state(findings, "claude-code", discovery.UNPROVEN, what, "without a session")
         self.assertEqual(self.details(findings, doctor.ERROR), [])
         self.assertIn("22 items asked of the providers: 5 proven, 17 unproven, 0 missing", self.summary(findings))
-        self.assertIn("spends quota", self.summary(findings))
+        self.assertNotIn("quota", self.summary(findings))
         # Review finding S16: on a plain run nothing unproven is a warning,
         # and all of it is one info line.
         self.assertQuiet(findings)
         unproven = [line for line in self.details(findings, doctor.INFO) if "unproven: " in line]
         self.assertEqual(len(unproven), 1, unproven)
-        self.assertTrue(unproven[0].startswith("17 items not proven on this run, which started no session: "))
+        self.assertTrue(unproven[0].startswith("17 items not proven offline: "))
         self.assertEqual(unproven[0].count("unproven: "), 5)
         # The commands started, each with a fixed argument list; no session among them.
         self.assertEqual(codex.calls(), [
@@ -566,232 +484,11 @@ class OfflineCase(DiscoveryCase):
         codex, claude = self.codex_stub(), self.claude_stub()
         codex.answer(VERSION, "codex-cli 0.160.0\n")
         claude.answer(VERSION, "2.1.289 (Claude Code)\n")
-        code, report = self.doctor("--no-model-list", "--no-collab", host=self.stub_host(codex, claude))
+        code, report = self.doctor("--skip", "models", "--no-collab", host=self.stub_host(codex, claude))
         self.assertIn("discovery", [check["name"] for check in report["checks"]])
         self.assertEqual([call for call in claude.calls() if call != ["--version"]], [])
         self.assertFalse(set(codex.modes()) & set(SESSION_MODES))
         self.assertFalse(set(claude.modes()) & set(SESSION_MODES))
-
-
-class SessionCase(DiscoveryCase):
-    PROVE = ("--prove-discovery",)
-
-    def test_each_provider_gets_exactly_one_session_with_fixed_arguments(self) -> None:
-        self.rendered()
-        codex, claude = self.codex_stub(), self.claude_stub()
-        codex.answer(EXEC, events("Agent types: " + ", ".join(CODEX_AGENTS) + "."))
-        code, findings = self.discovery(codex, claude, argv=self.PROVE)
-        self.assertEqual(code, 0, findings)
-        self.assertEqual(claude.calls(), [list(discovery.CLAUDE_SESSION_ARGS)])
-        self.assertEqual(claude.calls()[0], [
-            "-p", "Reply with the single word ok.", "--output-format", "stream-json", "--verbose",
-            "--no-session-persistence", "--max-turns", "1",
-        ])
-        self.assertEqual([call for call in codex.calls() if "exec" in call], [list(discovery.CODEX_SESSION_ARGS)])
-        self.assertEqual(codex.calls()[-1], [
-            "exec", "--json", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only",
-            "Reply with the single word ok.",
-        ])
-        for call in (*claude.starts(), *codex.starts()):
-            self.assertEqual(os.path.normcase(os.path.realpath(call["cwd"])), os.path.normcase(str(self.home)))
-            self.assertEqual(call["environ"]["CLAUDE_CONFIG_DIR"], str(self.claude))
-        init = "the `system/init` event of `claude -p <prompt> --output-format stream-json"
-        self.state(findings, "claude-code", discovery.PROVEN, f"6 role definitions ({', '.join(CLAUDE_AGENTS)})",
-                   "listed under `agents`", init)
-        self.state(findings, "claude-code", discovery.PROVEN, "the starting role lead", "listed under `agents`")
-        self.state(findings, "claude-code", discovery.PROVEN, "3 skills (alpha, beta, solo)", "listed under `skills`")
-        self.state(findings, "claude-code", discovery.PROVEN, "2 loaded roles (lead, quick)")
-        self.state(findings, "codex", discovery.PROVEN, f"5 role definitions ({', '.join(CODEX_AGENTS)})",
-                   "named in the spawn_agent tool's text in the event stream of `codex exec --json")
-        self.assertIn("22 items asked of the providers: 22 proven, 0 unproven, 0 missing", self.summary(findings))
-        self.assertNotIn("spends quota", self.summary(findings))
-        self.assertEqual([found["severity"] for found in findings if found["severity"] in ("warning", "error")], [])
-
-    def test_the_claude_session_is_ended_at_its_first_event_and_what_follows_is_not_waited_for(self) -> None:
-        self.rendered()
-        claude = self.claude_stub(hold=120, tail=ASSISTANT)
-        before = time.monotonic()
-        code, findings = self.discovery(claude, argv=self.PROVE)
-        self.assertLess(time.monotonic() - before, 60)
-        self.assertEqual(code, 0)
-        self.state(findings, "claude-code", discovery.PROVEN, "the starting role lead")
-        self.assertNotIn(MARKER, json.dumps(findings))
-
-    def test_an_event_with_none_of_the_expected_keys_leaves_the_items_unproven_with_the_keys_seen(self) -> None:
-        self.rendered()
-        claude = self.claude_stub(init_event(plugins=[]))
-        code, findings = self.discovery(claude, argv=self.PROVE)
-        self.assertEqual(code, 0)
-        keys = "its keys were: apiKeySource, cwd, mcp_servers, model, plugins, session_id, subtype, tools, type"
-        self.state(findings, "claude-code", discovery.UNPROVEN, "6 role definitions", "no key that lists agents (agents)", keys)
-        self.state(findings, "claude-code", discovery.UNPROVEN, "3 skills (alpha, beta, solo)",
-                   "no key that lists skills (skills or slash_commands)", keys)
-        self.assertIn("0 proven, 12 unproven, 0 missing", self.summary(findings))
-        self.assertNotIn(MARKER, json.dumps(findings))
-
-    def test_what_a_key_lists_decides_between_proven_missing_and_unproven(self) -> None:
-        self.rendered()
-        claude = self.claude_stub(init_event(agents=["lead", "worker"], slash_commands=["/alpha", "/lead", "clear"]))
-        code, findings = self.discovery(claude, argv=self.PROVE)
-        self.assertEqual(code, 1)
-        self.state(findings, "claude-code", discovery.PROVEN, "2 role definitions (lead, worker)", "listed under `agents`")
-        self.state(findings, "claude-code", discovery.MISSING, "4 role definitions (quick, reviewer, runner, worker-hard)",
-                   "not listed under `agents`")
-        self.state(findings, "claude-code", discovery.PROVEN, "the skill alpha", "listed under `slash_commands`")
-        self.state(findings, "claude-code", discovery.PROVEN, "the loaded role lead")
-        self.state(findings, "claude-code", discovery.MISSING, "the skill solo", "not listed under `slash_commands`")
-        # An invoke-only skill that is not listed is not known to be missing.
-        self.state(findings, "claude-code", discovery.UNPROVEN, "the skill beta", "it is invoke-only")
-        self.state(findings, "claude-code", discovery.UNPROVEN, "the loaded role quick", "it is invoke-only")
-
-    def test_a_claude_session_that_gives_no_event_leaves_the_items_unproven(self) -> None:
-        self.rendered()
-        for how, why in (
-            (dict(text=""), "printed nothing"),
-            (dict(text=ASSISTANT), "printed no `system/init` event"),
-            (dict(text="Invalid API key\n", code=1, stderr="error: not logged in\n"), "exited with code 1: error: not logged in"),
-        ):
-            with self.subTest(why=why):
-                claude = self.claude_stub(how.pop("text"), **how)
-                code, findings = self.discovery(claude, argv=self.PROVE)
-                self.assertEqual(code, 0)
-                self.state(findings, "claude-code", discovery.UNPROVEN, "3 skills (alpha, beta, solo)", why)
-                self.assertNotIn(MARKER, json.dumps(findings))
-        with mock.patch.object(discovery, "SESSION_TIMEOUT", 1.0):
-            claude = self.claude_stub(init_event(agents=[]), sleep=60)
-            code, findings = self.discovery(claude, argv=self.PROVE)
-        self.assertEqual(code, 0)
-        self.state(findings, "claude-code", discovery.UNPROVEN, "the starting role lead", "did not finish within 1 seconds")
-
-    def test_a_codex_session_with_no_tool_text_leaves_the_definitions_unproven_with_its_events(self) -> None:
-        self.rendered()
-        codex = self.codex_stub()
-        codex.answer(EXEC, events())
-        code, findings = self.discovery(codex, argv=self.PROVE)
-        self.assertEqual(code, 0)
-        self.state(findings, "codex", discovery.UNPROVEN, "5 role definitions", "printed no definition of the spawn_agent tool",
-                   "its events were: thread.started, turn.started, item.completed/agent_message, turn.completed")
-        self.assertNotIn(MARKER, json.dumps(findings))
-
-    def test_a_codex_session_names_some_definitions_and_not_others(self) -> None:
-        self.rendered()
-        codex = self.codex_stub()
-        codex.answer(EXEC, events("Agent types: worker_hard, quick."))
-        code, findings = self.discovery(codex, argv=self.PROVE)
-        self.assertEqual(code, 1)
-        self.state(findings, "codex", discovery.PROVEN, "2 role definitions (quick, worker_hard)")
-        self.state(findings, "codex", discovery.MISSING, "3 role definitions (reviewer, runner, worker)",
-                   "not named in the spawn_agent tool's text")
-
-    def test_a_codex_session_that_fails_leaves_the_definitions_unproven(self) -> None:
-        self.rendered()
-        codex = self.codex_stub()
-        for how, why in ((dict(stdout=""), "printed nothing"), (dict(stdout="please log in\n"), "printed no JSON event"),
-                         (dict(stdout="", code=1, stderr="error: 401 Unauthorized\n"), "exited with code 1: error: 401")):
-            with self.subTest(why=why):
-                codex.answer(EXEC, how.pop("stdout"), **how)
-                code, findings = self.discovery(codex, argv=self.PROVE)
-                self.assertEqual(code, 0)
-                self.state(findings, "codex", discovery.UNPROVEN, "5 role definitions", why)
-        with mock.patch.object(discovery, "SESSION_TIMEOUT", 1.0):
-            codex.answer(EXEC, events(), sleep=60)
-            code, findings = self.discovery(codex, argv=self.PROVE)
-        self.state(findings, "codex", discovery.UNPROVEN, "5 role definitions", "did not finish within 1 seconds")
-
-    def test_without_the_switch_no_session_is_started_even_with_save_probe(self) -> None:
-        self.rendered()
-        codex, claude = self.codex_stub(), self.claude_stub()
-        saved = self.root / "saved"
-        self.discovery(codex, claude, argv=("--save-probe", str(saved)))
-        self.assertEqual(claude.calls(), [])
-        self.assertFalse(set(codex.modes()) & set(SESSION_MODES))
-        self.assertEqual(sorted(os.listdir(saved)),
-                         ["codex-profile-lead.json", "codex-prompt-input.json", "codex-skills-list.json"])
-
-
-class SaveCase(DiscoveryCase):
-    def saved(self, *stubs: DiscoveryStub) -> tuple[Path, dict[str, dict], list[dict]]:
-        directory = self.root / "probe" / "saved"
-        _, findings = self.discovery(*stubs, argv=("--prove-discovery", "--save-probe", str(directory)))
-        return directory, {
-            file.name: json.loads(file.read_text(encoding="utf-8")) for file in sorted(directory.iterdir())
-        }, findings
-
-    def test_only_the_reduced_form_is_saved_and_nothing_a_model_wrote(self) -> None:
-        self.rendered()
-        codex = self.codex_stub()
-        codex.answer(EXEC, events(f"Agent types: worker, quick. {MARKER}"))
-        claude = self.claude_stub(
-            init_event(agents=named(CLAUDE_AGENTS), skills=named(CLAUDE_SKILLS), slash_commands=["/lead"],
-                       notes=[f"a note: {MARKER}"]) + ASSISTANT,
-        )
-        directory, files, findings = self.saved(codex, claude)
-        self.assertEqual(sorted(files), ["claude-code-init.json", "codex-exec-events.json", "codex-profile-lead.json",
-                                         "codex-prompt-input.json", "codex-skills-list.json"])
-        self.assertFinding(findings, doctor.INFO, "saved, reduced to names", str(directory), "claude-code-init.json")
-        # The marker stood in the model's reply, in every description, in a
-        # path, in the user prompt and in a list that is no list of names.
-        for file in directory.iterdir():
-            raw = file.read_bytes()
-            self.assertNotIn(MARKER.encode(), raw, file.name)
-            self.assertNotIn(b"\r", raw)
-            self.assertNotIn(str(self.home).encode(), raw, file.name)
-            self.assertNotIn(b"/home/user", raw, file.name)
-            self.assertNotIn(discovery.SESSION_PROMPT.encode(), raw, file.name)
-            self.assertNotIn(b"Does alpha work", raw, file.name)
-            self.assertNotIn(b"roles/lead", raw, file.name)
-        init = files["claude-code-init.json"]
-        self.assertEqual(sorted(init), ["arguments", "listing", "outcome", "probe", "unread"])
-        self.assertEqual(init["arguments"][:2], ["-p", "<prompt>"])
-        self.assertEqual(init["listing"]["lists"]["agents"], list(CLAUDE_AGENTS))
-        self.assertEqual(init["listing"]["lists"]["slash_commands"], ["/lead"])
-        self.assertEqual(init["listing"]["lists"]["tools"], ["Read", "Bash"])
-        self.assertNotIn("notes", init["listing"]["lists"])
-        self.assertIn("notes", init["listing"]["keys"])
-        self.assertEqual(sorted(init["listing"]), ["keys", "lists"])
-        exec_events = files["codex-exec-events.json"]["listing"]
-        self.assertEqual(exec_events["tool_definitions"], ["exec_command", "spawn_agent"])
-        self.assertEqual(exec_events["agent_names_found"], ["quick", "worker"])
-        self.assertTrue(exec_events["spawn_tool_found"])
-        self.assertIn("description", exec_events["spawn_tool_text_at"])
-        self.assertIn("item.completed/agent_message", exec_events["event_types"])
-        self.assertEqual(files["codex-prompt-input.json"]["listing"]["skills"], ["alpha"])
-        self.assertEqual(files["codex-prompt-input.json"]["listing"]["skill_roots"], ["r0"])
-        self.assertEqual(files["codex-skills-list.json"]["listing"]["skills"][0],
-                         {"name": "alpha", "enabled": True, "scope": "user"})
-        self.assertTrue(files["codex-profile-lead.json"]["listing"]["instructions_shown"])
-        self.assertEqual(files["codex-profile-lead.json"]["arguments"],
-                         ["--profile", "lead", "debug", "prompt-input", "<prompt>"])
-
-    def test_a_probe_that_gave_nothing_is_saved_as_that(self) -> None:
-        self.rendered()
-        codex = self.stubbed("codex")
-        codex.answer(PROMPT_INPUT, f"please log in {MARKER}\n", code=1, stderr=f"error: {MARKER}\n")
-        claude = self.claude_stub(ASSISTANT)
-        directory, files, _ = self.saved(codex, claude)
-        self.assertIsNone(files["codex-prompt-input.json"]["listing"])
-        self.assertEqual(files["codex-prompt-input.json"]["outcome"], "exited with code 1")
-        self.assertIsNone(files["claude-code-init.json"]["listing"])
-        self.assertEqual(files["claude-code-init.json"]["unread"], "printed no `system/init` event")
-        for file in directory.iterdir():
-            self.assertNotIn(MARKER.encode(), file.read_bytes(), file.name)
-
-    def test_a_directory_that_cannot_be_made_is_the_checks_error(self) -> None:
-        self.rendered()
-        blocker = self.root / "file"
-        blocker.write_bytes(b"x")
-        code, findings = self.discovery(self.codex_stub(), argv=("--save-probe", str(blocker / "inside")))
-        self.assertEqual(code, 1)
-        self.assertFinding(findings, doctor.ERROR, "the check discovery could not be made", "cannot be saved")
-
-
-class HelpCase(DiscoveryCase):
-    def test_the_help_says_which_option_starts_a_session_and_what_is_saved(self) -> None:
-        code, out, _ = support.run("doctor", "--help")
-        self.assertEqual(code, 0)
-        text = " ".join(out.split())
-        for words in ("--prove-discovery", "--save-probe DIR", "SPENDS QUOTA", "discovery", "No description, prompt"):
-            self.assertIn(words, text)
 
 
 if __name__ == "__main__":

@@ -292,17 +292,11 @@ class ConflictCase(RenderCase):
         self.keep(self.rules / "sample" / "sample.md")
         self.refused(f"{self.rules / 'sample'}: a directory of its own, not a link")
 
-    def test_every_conflict_has_a_line_and_the_hint_points_to_migration(self) -> None:
+    def test_every_conflict_has_a_line(self) -> None:
         self.keep(self.claude_skills / "alpha" / "SKILL.md")
         self.keep(self.codex_skills / "alpha" / "SKILL.md")
-        err = self.refused(str(self.claude_skills / "alpha"), str(self.codex_skills / "alpha"), "--migrate-v1")
-        lines = err.splitlines()
-        self.assertEqual(len(lines), 3)
-        self.assertTrue(render.MIGRATION_AVAILABLE)
-        self.assertIn("render --migrate-v1 --dry-run", lines[-1])
-        self.assertNotIn("not have yet", lines[-1])
-        with mock.patch.object(render, "MIGRATION_AVAILABLE", False):
-            self.assertIn("does not have yet", render.migration_hint())
+        err = self.refused(str(self.claude_skills / "alpha"), str(self.codex_skills / "alpha"))
+        self.assertEqual(len(err.splitlines()), 2)
 
     def test_the_json_report_lists_the_conflicts(self) -> None:
         self.keep(self.claude_skills / "alpha" / "SKILL.md")
@@ -312,7 +306,7 @@ class ConflictCase(RenderCase):
         self.assertEqual(report["counts"]["conflict"], 1)
         self.assertEqual(self.items(report, "claude-code", "skills")["alpha"], render.CONFLICT)
         self.assertEqual(report["plan"], [])
-        self.assertEqual(len(report["errors"]), 2)
+        self.assertEqual(len(report["errors"]), 1)
         self.assertIn(report["errors"][0], err)
 
     def test_setups_own_link_pointed_elsewhere_is_a_conflict(self) -> None:
@@ -393,7 +387,6 @@ class OtherSideCase(RenderCase):
             "and setup did not make it",
             err,
         )
-        self.assertIn("--migrate-v1", err)
         self.assertIn("    solo: conflict: a link to the other side (windows)", out)
 
 
@@ -765,7 +758,7 @@ class PartsCase(RenderCase):
         # The first four keep their places: tests slice ``PARTS`` by position.
         names = [part.name for part in render.PARTS]
         self.assertEqual(names[:4], ["skills", "rules", "roles", "entry"])
-        self.assertIn("migrate", names)
+        self.assertEqual(names[4:], ["codex-settings", "model-list"])
 
     def test_a_part_adds_to_the_one_plan_and_reads_its_own_option(self) -> None:
         import argparse
@@ -946,13 +939,6 @@ class ModelListCase(RenderCase):
         code, out = self.note()
         self.assertEqual(code, 0)
         self.assertEqual(len([line for line in out.splitlines() if line.startswith("note: codex")]), 1)
-
-    def test_no_model_list_starts_nothing(self) -> None:
-        self.stub.answer(provider_stub.LIVE, provider_stub.fixture("model-list-new-model.json"))
-        code, out = self.note("--no-model-list")
-        self.assertEqual(code, 0)
-        self.assertEqual(self.stub.calls(), [])
-        self.assertNotIn("gpt-7-nova", out)
 
     def test_a_home_with_no_program_on_path_is_one_line_and_exit_0(self) -> None:
         code, out = self.note(host=self.host)  # the home exists, no codex program on PATH

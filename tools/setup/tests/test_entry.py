@@ -1467,14 +1467,15 @@ class ProjectEffortCase(EntryCase):
         (point,) = self.effort_points(report)
         self.assertEqual((point["provider"], point["how"], point["status"]),
                          (CLAUDE, f'"effortLevel": "medium" in {SETTINGS}', render.CREATE))
-        out = self.with_project("--no-model-list")
+        out = self.with_project()
         lines = out.splitlines()
         self.assertIn(f'  {SETTINGS}: key effortLevel: up to date: is "medium"', lines)
         self.assertIn(
             f'  claude-code: a session in the project runs at the effort of lead: "effortLevel": "medium" in {SETTINGS}',
             lines,
         )
-        self.assertEqual([line for line in lines if line.startswith("note: ")], [])
+        # The note on the model list is the run's own: Codex is not on PATH here.
+        self.assertEqual([line for line in lines if line.startswith("note: ") and "no model list" not in line], [])
 
     def test_the_setting_is_the_projects_effort_and_the_launch_the_users(self) -> None:
         self.write(self.project_file, DEFAULT_ON + '[roles.lead]\neffort = "high"\n')

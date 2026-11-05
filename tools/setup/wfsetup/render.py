@@ -20,9 +20,7 @@ A part
     and recorded (``fileops``), and the next run goes on from there. A
     later step adds a part to ``PARTS`` and does not change the others.
 
-    The parts now: ``migrate`` (R6.11: what a v1 install left, removed with
-    ``--migrate-v1``; it plans before the first link, see ``migrate``),
-    ``skills`` (R6.2), ``rules`` (R2.2), ``roles`` (R6.2:
+    The parts now: ``skills`` (R6.2), ``rules`` (R2.2), ``roles`` (R6.2:
     each provider's role definitions, built by ``definitions``) and
     ``entry`` (R4.4, R4.5: how a session becomes a role, built by ``entry``,
     and what a project gets).
@@ -196,9 +194,7 @@ Exit codes
                       write: a path ``--follow-config-symlinks`` would
                       write, or a generated file, a key or a block that
                       was edited by hand or is not setup's, which
-                      ``--overwrite-edited`` would replace, or a v1 copy or
-                      link the migration kept, which ``--remove-stale``
-                      would remove (``migrate.left``)
+                      ``--overwrite-edited`` would replace
 """
 from __future__ import annotations
 
@@ -212,7 +208,6 @@ from typing import Any, Callable
 
 from . import blocks, carried, definitions, dictionary, entry, fileops, fsio, homes, jsonkeys, modellist, paths, settings
 from . import codexsettings
-from . import migrate
 from .errors import EXIT_ERROR, SetupError
 from .locations import Locations
 from .validate import Report as Sources
@@ -254,30 +249,27 @@ FOLLOW_OPTION = "--follow-config-symlinks"
 OVERWRITE_OPTION = "--overwrite-edited"
 NO_ROLES_OPTION = "--no-roles"
 ROLES_KEY = "roles.enabled"
-MIGRATE_OPTION = "--migrate-v1"
 # Why the roles are off, in ``Roles``: the option of this run, the setting,
 # or (for a project) the home's roles being off.
 OFF_BY_OPTION = "option"
 OFF_BY_SETTING = "setting"
 OFF_BY_HOME = "home"
-# The migration part is ``migrate``, in ``PARTS``. False only in a setup
-# without it: the hint below then says that the option is not there.
-MIGRATION_AVAILABLE = True
 
 
-def migration_hint() -> str:
-    """The line that follows the conflicts: what removes a v1 install."""
-    if MIGRATION_AVAILABLE:
-        return (
-            f"where a conflict is what an earlier (v1) install left, a copy or a link to one, "
-            f"`render {MIGRATE_OPTION} --dry-run` shows what migration would remove; anything else is "
-            "yours to move away before render links there"
-        )
-    return (
-        f"where a conflict is what an earlier (v1) install left, a copy or a link to one, removing it is "
-        f"the work of `render {MIGRATE_OPTION}`, which this version of setup does not have yet; until "
-        "then move it away yourself, and render links there on the next run"
-    )
+def _repository_around(path: Path, clone: Path) -> Path | None:
+    """The clone of this repository that the real path of ``path`` is, or
+    lies inside: the clone setup runs from, or a directory that holds what
+    a clone holds (``doctor.looks_like_clone``), at the path or above it.
+    None where there is none. The rule under which ``render`` writes
+    nothing in a place, so a ``.git`` entry alone does not count: a user
+    may keep a home's own directory under git."""
+    from . import doctor
+    try:
+        real = Path(os.path.realpath(path))
+        own = Path(os.path.realpath(clone))
+    except (OSError, ValueError):
+        return None
+    return own if paths.inside(real, own) else doctor.clone_above(real)
 
 
 @dataclass
@@ -434,7 +426,7 @@ class Run:
         option makes setup write into a clone."""
         ident = paths.fold(paths.absolute(directory))
         if ident not in self._clones:
-            around = None if self.in_project(directory) else migrate.repository_around(directory, self.homes.clone)
+            around = None if self.in_project(directory) else _repository_around(directory, self.homes.clone)
             self._clones[ident] = None if around is None else (
                 f"{directory} is, or leads into, a clone of this repository ({around}); setup writes nothing into "
                 "a clone. Point it at a directory of its own, or remove the link"
@@ -506,18 +498,11 @@ class Run:
                     f"linked to {item.target} by a link made by hand, which setup takes over: "
                     "`uninstall --project` leaves it, and taking the skill off the project's list removes it"
                 ))
-        # What the migration part removes there in this same plan (a v1
-        # link or copy) is not in the way; what it keeps is, and is named.
-        cleared = migrate.cleared(self, path)
-        if cleared is not None:
-            item.says = f"link to {item.target}, in place of what migration removes there ({cleared})"
-        elif entry.kind == homes.PLAIN:
-            return settle(CONFLICT, migrate.conflict(self, path) or f"{path}: {entry.describe()}, and setup did not make it")
+        if entry.kind == homes.PLAIN:
+            return settle(CONFLICT, f"{path}: {entry.describe()}, and setup did not make it")
         elif entry.kind != homes.ABSENT:
             if base is None:
-                return settle(
-                    CONFLICT, migrate.conflict(self, path) or f"{path}: {entry.describe()}, and setup did not make it"
-                )
+                return settle(CONFLICT, f"{path}: {entry.describe()}, and setup did not make it")
             try:
                 recorded = self.roots.target_text(base["target"])
             except (SetupError, KeyError, TypeError):
@@ -1781,17 +1766,7 @@ def _keys_outside(path: Path, content: str) -> list[str]:
     return [key for key in mine if key in there]
 
 
-NO_MODEL_LIST_OPTION = "--no-model-list"
 MODEL_LIST_PART = "model-list"
-
-
-def configure_model_list(parser: Any) -> None:
-    parser.add_argument(
-        NO_MODEL_LIST_OPTION,
-        action="store_true",
-        help="do not start Codex's list command (`codex debug models`); the note on a model that Codex lists and the "
-        "dictionary lacks is left out",
-    )
 
 
 def fill_model_list(run: Run) -> None:
@@ -1801,7 +1776,7 @@ def fill_model_list(run: Run) -> None:
     cannot be read is one line, also where the program is not on PATH.
     Nothing is started where Codex is not installed (no home, no program) or
     the dictionary names no list command. The note goes last of all notes."""
-    if run.option("no_model_list", False) or run.errors:
+    if run.errors:
         return
     provider = run.homes.provider(homes.CODEX)
     if not provider.installed:
@@ -1827,10 +1802,7 @@ PARTS: tuple[Part, ...] = (
     Part("roles", fill_roles, configure_roles),
     Part("entry", fill_entry),
     Part("codex-settings", codexsettings.fill, codexsettings.configure),
-    # Its removals are planned when the first link asks (``migrate.cleared``),
-    # so they come before the links whatever this part's place is.
-    Part("migrate", migrate.fill, migrate.configure),
-    Part(MODEL_LIST_PART, fill_model_list, configure_model_list),
+    Part(MODEL_LIST_PART, fill_model_list),
 )
 
 
@@ -1870,17 +1842,14 @@ def execute(found: homes.Homes, sources: Sources, options: Any = None, *, dry_ru
     everything = [*run.items, *run.stale]
     errors = [*run.errors, *[item.says for item in everything if item.status in _BLOCKING]]
     result: fileops.Result | None = None
-    if errors:
-        if any(item.status == CONFLICT for item in everything):
-            errors.append(migration_hint())
-    else:
+    if not errors:
         try:
             result = run.plan.run(dry_run)
         except fileops.PlanError as exc:
             errors = list(exc.lines)
     for call in run.settled:
         call()
-    needs_flag = sum(1 for item in everything if item.status in (NEEDS_FLAG, EDITED)) + migrate.left(run)
+    needs_flag = sum(1 for item in everything if item.status in (NEEDS_FLAG, EDITED))
     needs_flag += len(result.edited) if result is not None else 0
     code = EXIT_ERROR if errors else EXIT_NEEDS_FLAG if needs_flag else 0
     report = _report(run, result, errors, dry_run, code)
@@ -1981,14 +1950,13 @@ def _report(run: Run, result: fileops.Result | None, errors: list[str], dry_run:
         "definitions": generated,
         "entry_points": list(run.points),
         "project": project,
-        "migration": migrate.report(run),
         "stale": [item.as_json() for item in run.stale],
         "plan": list(result.lines) if changed else [],
         "notes": [*run.notes, *(result.notes if result else []), *run.model_notes],
         "errors": list(errors),
         "counts": counts,
     }
-    report["summary"] = _summary(report) + ("" if errors else migrate.summary(report["migration"]))
+    report["summary"] = _summary(report)
     return report
 
 
@@ -2021,9 +1989,8 @@ def _summary(report: dict[str, Any]) -> str:
     if not report["changed"]:
         return f"{fileops.UP_TO_DATE}; nothing was written{tail}"
     # A link made where a link of the user's was (the plan's "replace link"
-    # lines) is one of the links created, and its removal is counted with
-    # the migration, not here: said, so that the two numbers are not read
-    # as "nothing was taken away".
+    # lines) is one of the links created: said, so that the two numbers are
+    # not read as "nothing was taken away".
     swapped = sum(1 for line in report.get("plan") or [] if line.startswith("replace link "))
     dry = bool(report["dry_run"])
     instead = f" ({swapped} of them in place of a link that {'is' if dry else 'was'} there)" if swapped else ""
@@ -2129,7 +2096,6 @@ def report_lines(report: dict[str, Any]) -> list[str]:
             # A settings file may hold two keys of setup's: said which.
             part = f": key {item['name']}" if item.get("kind") == KEY else ""
             lines.append(f"  {item['key']}{part}: {_shown(item)}")
-    lines.extend(migrate.lines(report.get("migration")))
     lines.append("plan:")
     if report["errors"]:
         lines.append("  none: the run stopped before the plan")

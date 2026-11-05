@@ -11,14 +11,13 @@ picks its answer by what is among its arguments:
                    input does. With an exit code that is not 0 it reads
                    nothing: it prints and fails, as a server that cannot
                    start
-    exec           ``exec``           (the Codex session probe)
-    print          ``-p``             (the Claude Code session probe)
+    exec           ``exec``           (a Codex session)
+    print          ``-p``             (a Claude Code session)
+                   Setup starts neither; the modes are here so that a test can
+                   show it.
     profile        ``--profile``
     prompt-input   ``prompt-input``
     bundled, live  as ``provider_stub`` has them
-
-An answer may also have ``hold``: seconds the stub stays running after it
-printed, as a session does, and ``tail``, which it prints after that.
 
 ``calls()`` gives the argument lists as before; ``starts()`` gives each
 start whole: ``argv``, ``mode``, ``cwd`` and the variables of ``ENVIRON``
@@ -62,7 +61,7 @@ elif "--bundled" in arguments:
     mode = "bundled"
 else:
     mode = "live"
-answer = {"stdout": "", "stderr": "", "code": 0, "sleep": 0, "hold": 0, "tail": ""}
+answer = {"stdout": "", "stderr": "", "code": 0, "sleep": 0}
 answer.update(answers.get(mode, {}))
 with open(os.path.join(here, "calls.jsonl"), "a", encoding="utf-8") as handle:
     handle.write(json.dumps({
@@ -91,8 +90,6 @@ if mode == "app-server" and answer["code"] == 0:
             say(answer["stdout"])
 else:
     say(answer["stdout"])
-time.sleep(answer["hold"])
-say(answer["tail"])
 sys.stderr.write(answer["stderr"])
 sys.exit(answer["code"])
 '''
@@ -103,10 +100,8 @@ class DiscoveryStub(provider_stub.StubProgram):
         super().__init__(directory, name)
         self.script.write_text(_STUB, encoding="utf-8", newline="\n")
 
-    def answer(self, mode: str, stdout: str = "", *, code: int = 0, stderr: str = "", sleep: float = 0,
-               hold: float = 0, tail: str = "") -> None:
-        self._answers[mode] = {"stdout": stdout, "stderr": stderr, "code": code, "sleep": sleep, "hold": hold,
-                               "tail": tail}
+    def answer(self, mode: str, stdout: str = "", *, code: int = 0, stderr: str = "", sleep: float = 0) -> None:
+        self._answers[mode] = {"stdout": stdout, "stderr": stderr, "code": code, "sleep": sleep}
         self._save()
 
     def starts(self) -> list[dict]:

@@ -153,28 +153,14 @@ class SyntaxTreeTests(unittest.TestCase):
             )
             self.assertLess(first_admit, first_change, f"{name} changes the disk before it asks")
 
-    def test_the_scripts_beside_the_package_and_the_one_deliberate_exception(self) -> None:
-        """Every script in ``tools/setup`` is read as well. The command
-        line changes no disk by itself. ``build_v1_hashes.py`` does, on
-        purpose and outside ``fsio``: a developer's script that writes one
-        committed file of the clone, which ``admit`` would refuse. It is
-        the one exception, it is exactly that one write, it says so at its
-        top, and nothing of the package reaches it."""
-        exception = "build_v1_hashes.py"
+    def test_the_script_beside_the_package_changes_no_disk(self) -> None:
+        """The one script in ``tools/setup`` is read as well. The command
+        line changes no disk by itself."""
         scripts = sorted(support.SETUP.glob("*.py"))
-        self.assertEqual([path.name for path in scripts], [exception, support.SCRIPT.name])
-        found = {
-            path.name: [(what, inside) for _, what, inside in changes(ast.parse(path.read_text(encoding="utf-8")))]
-            for path in scripts
-        }
-        self.assertEqual(found[support.SCRIPT.name], [])
-        self.assertEqual(found[exception], [(".write_bytes()", "main")])
-        text = (support.SETUP / exception).read_text(encoding="utf-8")
-        self.assertIn("Outside the choke point, on purpose", text)
-        self.assertIn("OUTPUT.write_bytes(to_bytes(found))", text)
-        self.assertNotIn("fsio.", text.split('"""', 2)[2].split("import argparse", 1)[1])
-        for path in [*modules(), support.SCRIPT]:
-            self.assertNotIn("build_v1_hashes", path.read_text(encoding="utf-8"), path.name)
+        self.assertEqual([path.name for path in scripts], [support.SCRIPT.name])
+        self.assertEqual(
+            [(what, inside) for _, what, inside in changes(ast.parse(support.SCRIPT.read_text(encoding="utf-8")))], []
+        )
 
     def test_the_junction_maker_asks_too(self) -> None:
         tree = ast.parse((PACKAGE / "fsio.py").read_text(encoding="utf-8"))
@@ -480,70 +466,6 @@ class ScopeTests(AdmitCase):
                         else:
                             os.unlink(agents / "workflow-setup")
                             agents.rmdir()
-
-    @unittest.skipUnless(SYMLINKS, "needs a symlink")
-    def test_a_probe_directory_is_judged_where_the_system_finds_it(self) -> None:
-        from wfsetup import discovery
-
-        docs = self.clone / "docs"
-        docs.mkdir(exist_ok=True)
-        links = self.root / "links"
-        links.mkdir()
-        os.symlink(docs, links / "to-docs", target_is_directory=True)
-        before = snapshot_of(self.clone)
-        # The text says "links/probe"; the system reads "<clone>/probe".
-        # Windows takes ".." out of the text before it follows a link, so
-        # there the first form is "links/probe" to the system as well.
-        texts = [links / "to-docs" / "probe", links / "to-docs", self.clone / "new"]
-        if POSIX:
-            texts.insert(0, links / "to-docs" / ".." / "probe")
-        for text in texts:
-            with self.subTest(text=str(text)):
-                with self.assertRaises(SetupError) as caught:
-                    discovery.save_directory(str(text), self.clone)
-                self.assertIn("inside the clone", caught.exception.lines[0])
-        self.assertEqual(snapshot_of(self.clone), before)
-        # One that is not there yet, outside the clone, is fine, and is made.
-        fresh = self.root / "probes" / "new"
-        real = discovery.save_directory(str(fresh), self.clone)
-        self.assertEqual(Path(real), Path(os.path.realpath(fresh)))
-        self.assertFalse(fresh.exists())
-
-    def test_clone_was_adds_a_place_for_links_and_never_replaces_the_clone(self) -> None:
-        import dataclasses
-
-        was = self.root / "where-the-clone-was"
-        roots = dataclasses.replace(self.roots, clone_was=was)
-        self.assertEqual(roots.clone, self.clone)
-        self.assertIn(self.clone, roots.confinement(False)[1])
-        self.assertIn(self.clone, roots.confinement(True)[1])
-        self.assertEqual(roots.target_texts("clone:json-tools"), [str(self.clone / "json-tools"), str(was / "json-tools")])
-        self.assertEqual(roots.target_texts("home:x"), [str(self.home / "x")])
-        plan = fileops.Plan(roots, stamp=self.stamp())
-        plan.write_file(self.clone / "rules" / "new.md", "x\n")
-        with self.assertRaises(fileops.PlanError):
-            plan.apply()
-        self.assertFalse((self.clone / "rules").exists())
-
-    @unittest.skipUnless(SYMLINKS, "needs a symlink")
-    def test_a_link_into_where_the_clone_was_is_setups_to_remove(self) -> None:
-        import dataclasses
-
-        skill = self.put(self.clone / "json-tools" / "SKILL.md", "s\n").parent
-        plan = self.plan()
-        plan.create_link(self.home / ".claude" / "skills" / "json-tools", skill)
-        plan.apply()
-        link = self.home / ".claude" / "skills" / "json-tools"
-        was = self.root / "old-clone"
-        (was / "json-tools").mkdir(parents=True)
-        os.unlink(link)
-        os.symlink(was / "json-tools", link, target_is_directory=True)   # as if the clone had been there
-        self.assertEqual([key for key, _ in self.reversal().describe().kept], ["home:.claude/skills/json-tools"])
-        roots = dataclasses.replace(self.roots, clone_was=was)
-        result = fileops.plan_reversal(roots, stamp=self.stamp()).apply()
-        self.assertEqual(result.kept, [])
-        self.assertFalse(os.path.lexists(link))
-        self.assertTrue((was / "json-tools").is_dir())
 
 
 if __name__ == "__main__":

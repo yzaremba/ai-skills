@@ -5,8 +5,8 @@ Run from the repository root:
 
 Every home, project and clone is a scratch directory; no test touches a real
 home. The clone is the fixture clone of ``test_entry`` (roles, dictionaries,
-entry points) with the v1 names of ``test_migrate`` in it, and the known v1
-hashes are that module's table.
+entry points) and the files an earlier setup took the place of (see
+``earlier_setup``).
 
 The round trip: a home, a project and a clone are built and photographed
 (``picture``: every path, its kind, a link's own text and form, a file's
@@ -36,8 +36,9 @@ from unittest import mock
 import support
 from fileops_support import POSIX, SYMLINKS
 from test_entry import DEFAULT_ON, OVERRIDE, USER_JSON, USER_TOML, EntryCase
-from test_migrate import CLAUDE_MD, EDITED, IMPORTS, OTHER_BLOCK, MigrateCase, v1
-from wfsetup import fileops, fsio, homes, migrate, uninstall
+from test_render import LINKS
+from test_validate import SKILL
+from wfsetup import fileops, fsio, homes, uninstall
 from wfsetup.locations import Locations
 from wfsetup.manifest import Manifest
 
@@ -48,6 +49,27 @@ CONFIG_PLAIN = (
 CONFIG_SANDBOX = b'sandbox_mode = "workspace-write"\n' + CONFIG_PLAIN
 CONFIG_AGENTS = CONFIG_PLAIN + b'\n[agents]\njob_max_runtime_seconds = 600\n'
 PROJECT_SETTINGS = "# This project's own settings.\n" + DEFAULT_ON + OVERRIDE
+# The files of the user's that an earlier setup took the place of: the committed
+# versions of a few files of the first version of the repository, by path.
+V1 = {
+    "prd-implementation.md": ("# Sprints, first version\n\nGates.\n", "# Sprints, last version\n\nGates.\n"),
+    "epic-implementation.md": ("# Epics\n\nRoadmap.\n",),
+    "agents/sprint-coder.md": ("---\nname: sprint-coder\n---\n\nShip the step.\n",),
+    "self-reflection/SKILL.md": ("---\nname: self-reflection\n---\n\nFirst.\n", "---\nname: self-reflection\n---\n\nLast.\n"),
+    "usage-cost/SKILL.md": ("---\nname: usage-cost\n---\n\nCost.\n",),
+    "usage-cost/scripts/usage_cost.py": ("print('cost')\n",),
+}
+V1_AGENT_SOURCE = "agents/sprint-coder.md"
+IMPORT_LINES = ("@rules/prd-implementation.md", "@rules/epic-implementation.md")
+IMPORTS = "".join(line + "\n" for line in IMPORT_LINES)
+CLAUDE_MD = "# My instructions\n\nBe direct.\n\n" + IMPORTS + "\n## Tone\n\n- Short answers.\n"
+OTHER_BLOCK = "<!-- multiagent-collab:start -->\nUse the baton.\n<!-- multiagent-collab:end -->\n"
+POINTER = (
+    "Sprint and epic work follows two skills: `prd-implementation` (one sprint, from the backlog to\n"
+    "completion) and `epic-implementation` (an effort of several sprints). Both are installed as\n"
+    "skills and are invoked by their names; load the one that applies before starting, planning or\n"
+    "implementing a sprint or an epic.\n"
+)
 USER_SETTINGS = '# Mine, with a comment.\nschema_version = 1\n\n[process]\ndocs_dir = "notes"   # where I keep them\n'
 
 
@@ -79,17 +101,29 @@ class Crash(BaseException):
     """The process is gone."""
 
 
-class UninstallCase(MigrateCase, EntryCase):
+def v1(path: str, version: int = -1) -> bytes:
+    return V1[path][version].encode("utf-8")
+
+
+class UninstallCase(EntryCase):
     """Both providers in a scratch home, a project, and the fixture clone
-    with roles, entry points and the v1 names."""
+    with roles, entry points and the names of the first skills."""
 
     def setUp(self) -> None:
         super().setUp()
+        for name in ("self-reflection", "json-tools", "csv-tools", "prd-implementation", "epic-implementation"):
+            self.put(f"{name}/SKILL.md", SKILL.format(name=name))
+        self.put("usage-cost/SKILL.md", SKILL.format(name="usage-cost").replace(
+            "claude-code, codex", "claude-code (reads its own session logs)"))
+        self.put("tools/setup/workflow_setup.py", "# the tool\n")   # what makes a directory look like a clone
+        self.agents = self.claude / "agents"
+        self.old_skills = self.codex / "skills"
+        self.claude_md = self.claude / "CLAUDE.md"
+        self.agents_md = self.codex / "AGENTS.md"
         self.elsewhere = self.root / "elsewhere"
         self.state = self.home / ".agents" / "workflow-setup"
         self.project_state = self.project / ".agents" / "workflow-setup"
         self.project_record = self.project_state / "manifest.json"
-        self.edited_copies: list[Path] = []
 
     # --- Running -------------------------------------------------------------
 
@@ -179,13 +213,55 @@ class UninstallCase(MigrateCase, EntryCase):
 
     # --- Building ------------------------------------------------------------
 
+    def data(self, path: Path, data: bytes | str) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data.encode("utf-8") if isinstance(data, str) else data)
+        return path
+
+    def copy(self, directory: Path, skill: str, version: int = -1) -> Path:
+        """A copy of a first skill, every file a committed version."""
+        for path in V1:
+            if path.startswith(skill + "/"):
+                self.data(directory / path[len(skill) + 1:], v1(path, version if path.endswith("SKILL.md") else -1))
+        return directory
+
+    def earlier_setup(self) -> None:
+        """What an earlier setup did to the files of the user's that the
+        fixture holds, as the record keeps it: the two rule copies, the
+        agent and the import lines removed, a pointer block added, the copy
+        of a skill and the link to another home's copy replaced by setup's
+        link, and a link of the user's removed. The record is what
+        ``uninstall`` reads, and no command of this version writes it."""
+        plan = fileops.Plan(self.roots())
+        for name in ("prd-implementation.md", "epic-implementation.md"):
+            plan.remove_file(self.rules / name)
+        plan.remove_file(self.agents / "sprint-coder.md")
+        plan.remove_lines(self.claude_md, IMPORT_LINES)
+        plan.edit_block(self.claude_md, POINTER, name="process", place=fileops.END)
+        plan.edit_block(self.agents_md, POINTER, name="process", place=fileops.END)
+        for name in ("self-reflection", "usage-cost"):
+            root = self.claude_skills / name
+            files = sorted(path for path in root.rglob("*") if path.is_file())
+            directories = sorted({path.parent for path in files} | {root}, key=lambda path: -len(path.parts))
+            for path in files:
+                plan.remove_file(path)
+            for directory in directories:
+                plan.remove_directory(directory, users=True)
+            plan.create_link(root, self.clone / name)
+        link = self.claude_skills / "csv-tools"
+        plan.remove_link(link)
+        plan.create_link(link, self.clone / "csv-tools")
+        if os.path.lexists(self.old_skills / "csv-tools"):
+            plan.remove_link(self.old_skills / "csv-tools")
+        plan.apply()
+
     def chmod(self, path: Path, mode: int) -> None:
         if POSIX:
             os.chmod(path, mode)
 
-    def claude_home(self, crlf: bool = False, v1_copies: bool = True) -> None:
+    def claude_home(self, crlf: bool = False, earlier: bool = True) -> None:
         claude = self.claude
-        text = CLAUDE_MD if v1_copies else CLAUDE_MD.replace(IMPORTS, "")
+        text = CLAUDE_MD if earlier else CLAUDE_MD.replace(IMPORTS, "")
         self.data(claude / "CLAUDE.md", text.replace("\n", "\r\n") if crlf else text)
         self.chmod(claude / "CLAUDE.md", 0o640)
         self.data(claude / "settings.json", USER_JSON)
@@ -195,27 +271,23 @@ class UninstallCase(MigrateCase, EntryCase):
         self.data(self.claude_skills / "mine" / "SKILL.md", "---\nname: mine\n---\n\nA skill of the user's.\n")
         # The collaboration skill's link, made by its own setup.
         fsio.make_link(str(self.clone / "multiagent-collab"), self.claude_skills / "multiagent-collab", True)
-        if not v1_copies:
+        if not earlier:
             return
-        self.rule_copies(self.rules)
-        agent = v1(migrate.V1_AGENT_SOURCE)
+        self.data(self.rules / "prd-implementation.md", v1("prd-implementation.md", 0))   # an older version
+        self.data(self.rules / "epic-implementation.md", v1("epic-implementation.md"))
+        agent = v1(V1_AGENT_SOURCE)
         self.data(self.agents / "sprint-coder.md", agent.replace(b"\n", b"\r\n") if crlf else agent)
-        # A v1 copy, every file a committed version: removed, and linked.
+        # A copy, every file a committed version: removed, and linked.
         copy = self.copy(self.claude_skills / "self-reflection", "self-reflection", 0)
         self.chmod(copy, 0o750)
         self.chmod(copy / "SKILL.md", 0o600)
         self.copy(self.claude_skills / "usage-cost", "usage-cost")
         self.chmod(self.claude_skills / "usage-cost" / "scripts", 0o700)
-        # A copy edited by hand: kept, until --remove-stale names it.
-        edited = self.copy(self.claude_skills / "json-tools", "json-tools")
-        self.data(edited / "SKILL.md", EDITED)
-        self.data(edited / "notes" / "mine.md", "What I changed.\n")
-        self.edited_copies.append(edited)
-        # A link to another home's copy of a v1 skill.
+        # A link to another home's copy of a skill.
         theirs = self.copy(self.elsewhere / ".claude" / "skills" / "csv-tools", "csv-tools")
         fsio.make_link(str(theirs), self.claude_skills / "csv-tools", True)
 
-    def codex_home(self, config: bytes | None = CONFIG_PLAIN, v1_copies: bool = True) -> None:
+    def codex_home(self, config: bytes | None = CONFIG_PLAIN) -> None:
         codex = self.codex
         self.data(self.agents_md, "# Mine\n\nBe brief.\n\n" + OTHER_BLOCK)
         if config is not None:
@@ -224,12 +296,6 @@ class UninstallCase(MigrateCase, EntryCase):
         self.data(self.old_skills / ".system" / "note", "Codex's own.\n")
         self.codex_skills.mkdir(parents=True)
         fsio.make_link(str(self.clone / "multiagent-collab"), self.codex_skills / "multiagent-collab", True)
-        if not v1_copies:
-            return
-        edited = self.old_skills / "self-reflection"
-        self.data(edited / "SKILL.md", EDITED)
-        self.data(edited / "agents" / "openai.yaml", "policy: {}\n")
-        self.edited_copies.append(edited)
 
     def a_project(self) -> None:
         project = self.project
@@ -243,21 +309,21 @@ class UninstallCase(MigrateCase, EntryCase):
         """The whole starting state, and its photograph."""
         config = how.pop("config", CONFIG_PLAIN)
         self.claude_home(**how)
-        self.codex_home(config=config, v1_copies=how.get("v1_copies", True))
+        self.codex_home(config=config)
         self.a_project()
         return self.pictures()
 
-    def stale(self) -> list[str]:
-        return [part for path in self.edited_copies for part in ("--remove-stale", str(path))]
-
-    def install(self, *render: str, migrate_v1: bool = True, project: bool = True, codex: tuple[str, ...] = ()) -> None:
-        """Every command that writes, as the user would run them. ``render``
-        goes to every run of it, ``codex`` with --apply-codex-settings."""
+    def install(self, *render: str, earlier: bool = True, project: bool = True, codex: tuple[str, ...] = ()) -> None:
+        """Every command that writes, as the user would run them, after what
+        an earlier setup did (``earlier_setup``, when the fixture has the
+        files). ``render`` goes to every run of it, ``codex`` with
+        --apply-codex-settings."""
         self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home)
         if project:
             self.done("init", "--yes", "--rewrite-settings", *self.at_home, *self.in_project)
-        first = ["--migrate-v1", *self.stale()] if migrate_v1 else []
-        self.done("render", *first, "--apply-codex-settings", *codex, *render, *self.at_home)
+        if earlier:
+            self.earlier_setup()
+        self.done("render", "--apply-codex-settings", *codex, *render, *self.at_home)
         if project:
             self.done("render", *render, *self.at_home, *self.in_project)
             # A second run writes nothing.
@@ -324,9 +390,9 @@ class RoundTripCase(UninstallCase):
         self.take_back()
         self.assertAsAtTheStart(before)
 
-    def test_without_migration(self) -> None:
-        before = self.start(v1_copies=False)
-        self.install(migrate_v1=False)
+    def test_without_what_an_earlier_setup_took_the_place_of(self) -> None:
+        before = self.start(earlier=False)
+        self.install(earlier=False)
         self.take_back()
         self.assertAsAtTheStart(before)
 
@@ -392,33 +458,11 @@ class RoundTripCase(UninstallCase):
         code, out, _ = self.cli("render", "--json", *self.at_home)
         self.assertEqual((code, json.loads(out)["plan"]), (0, []))
 
-    def test_a_v1_copy_that_the_migration_kept_is_not_in_the_record_and_is_never_touched(self) -> None:
-        before = self.start()
-        kept = self.edited_copies.pop()   # the edited copy in Codex's old skills directory is not named
-        self.assertEqual(kept, self.old_skills / "self-reflection")
-        self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home)
-        self.done("render", "--migrate-v1", *self.stale(), *self.at_home, code=3)
-        self.assertEqual((kept / "SKILL.md").read_text(encoding="utf-8"), EDITED)
-        self.assertNotIn(".codex/skills/self-reflection", (self.state / "manifest.json").read_text(encoding="utf-8"))
-        self.assertNotIn("multiagent-collab", (self.state / "manifest.json").read_text(encoding="utf-8"))
-        report = self.uninstall()
-        self.assertEqual((report["kept"], report["left"]), ([], []))
-        self.assertAsAtTheStart(before)
-
-    def test_a_render_that_is_refused_leaves_only_init_to_take_back(self) -> None:
-        before = self.start()
-        self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home)
-        code, _, err = self.cli("render", *self.at_home)   # v1 copies are in the way, and no migration is asked
-        self.assertEqual(code, 2)
-        self.assertIn("--migrate-v1", err)
-        self.take_back(project=False)
-        self.assertAsAtTheStart(before)
-
     @unittest.skipUnless(POSIX and SYMLINKS, "a link text with a trailing separator and a ..")
     def test_a_link_of_the_users_comes_back_with_its_own_text_letter_for_letter(self) -> None:
         self.start()
-        # A v1 link into the clone, in Codex's old skills directory, where
-        # setup links nothing: the migration removes it. An anchor of the
+        # A link into the clone, in Codex's old skills directory, where
+        # setup links nothing: an earlier setup removed it. An anchor of the
         # record could name its target, and would give the path back
         # without the detour and without the last separator.
         link = self.old_skills / "csv-tools"
@@ -537,7 +581,7 @@ class OrderCase(UninstallCase):
         self.project_record = self.project_state / "manifest.json"
         self.project_arg = ("--project", str(self.project))
         wsl = homes.Host(homes.WSL, {"PATH": ""}, (str(drive),))
-        before = self.start(v1_copies=False)
+        before = self.start(earlier=False)
         self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home, host=wsl)
         self.done("render", *self.at_home, *self.in_project, host=wsl)
         self.assertTrue(self.project_record.is_file())
@@ -661,7 +705,7 @@ class OrderCase(UninstallCase):
         self.assertAsAtTheStart(before)
 
     def test_through_the_script_as_a_process_of_its_own(self) -> None:
-        before = self.start(v1_copies=False)
+        before = self.start(earlier=False)
         script = self.install_tool()
         clone = picture(self.clone)
         empty = self.root / "no-programs"
@@ -700,8 +744,9 @@ class OrderCase(UninstallCase):
         flat = " ".join(out.split())
         self.assertEqual(code, 0)
         for option in ("--project", "--home", "--dry-run", "--json", "--follow-config-symlinks", "--keep-settings",
-                       "--clone-was", "--discard-backups", "--yes"):
+                       "--discard-backups", "--yes"):
             self.assertIn(option, flat)
+        self.assertNotIn("--clone-was", flat)
         self.assertNotIn("--discard-project-backups", flat)
         self.assertIn("With --project DIR: what setup did in that project, and nothing else", flat)
         self.assertIn("in ~/.agents/workflow-setup for the user level, and in DIR/.agents/workflow-setup for a project", flat)
@@ -790,7 +835,7 @@ class KeptCase(UninstallCase):
         self.assertIn(b"All work", self.claude_md.read_bytes())
         self.assertNotIn(b"@rules/", self.claude_md.read_bytes())   # nothing of it was undone
         self.claude_md.write_bytes(wrote[:start])
-        # The lines the migration removed are put back where they were.
+        # The lines an earlier setup removed are put back where they were.
         self.finished()
 
     def test_a_file_of_the_users_that_was_changed_elsewhere_keeps_the_change(self) -> None:
@@ -903,7 +948,7 @@ class KeptCase(UninstallCase):
         self.uninstall()
         self.data(self.user_file, USER_SETTINGS)
         start = self.pictures()
-        self.install(project=False, migrate_v1=True)
+        self.install(project=False)
         self.user_file.unlink()
         report = self.unfinished(self.user_file, "removed since setup wrote it", "copy the backup back")
         backup = Path(self.kept(report, self.user_file)["backup"])
@@ -921,7 +966,7 @@ class ProjectInstallCase(UninstallCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.before = self.start(v1_copies=False)
+        self.before = self.start(earlier=False)
         self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home)
         self.data(self.user_file, USER_SETTINGS + self.NO_HOME)
         self.done("init", "--yes", "--rewrite-settings", *self.at_home, *self.in_project)
@@ -1128,36 +1173,6 @@ class ProjectKeptCase(UninstallCase):
 # --- A clone that moved, links in the way, the other side ---------------------------
 
 class PlacesCase(UninstallCase):
-    def test_after_the_clone_moved_the_links_are_kept_until_the_old_place_is_named(self) -> None:
-        from wfsetup import locations
-        before = self.start()
-        self.install(project=False)
-        moved = self.root / "moved" / "the-clone"
-        moved.parent.mkdir()
-        os.rename(self.clone, moved)
-        with mock.patch.object(locations, "CLONE", moved):
-            got, out, err = self.cli("uninstall", "--json", *self.at_home)
-            self.assertEqual((got, err), (3, ""), out)
-            report = json.loads(out)
-            link = self.kept(report, self.claude_skills / "alpha")
-            self.assertIn("no longer the link setup made", link["why"])
-            self.assertIn(f"--clone-was {self.clone}", link["finish"])
-            self.assertTrue(fsio.look(self.claude_skills / "alpha").kind == fsio.LINK)
-            # What is not a link into the clone is undone all the same.
-            self.assertNothingAt(self.claude_agents / "lead.md")
-            self.assertIn("@rules/prd-implementation.md", self.claude_md.read_text(encoding="utf-8"))
-            got, out, err = self.cli("uninstall", "--json", "--clone-was", str(self.clone), *self.at_home)
-            self.assertEqual((got, err), (0, ""), out)
-            self.assertEqual(json.loads(out)["kept"], [])
-        os.rename(moved, self.clone)
-        self.assertAsAtTheStart(before)
-
-    def test_clone_was_must_be_an_absolute_path(self) -> None:
-        for value, word in (("", "an empty value"), ("some/where", "not an absolute path")):
-            code, _, err = self.cli("uninstall", "--clone-was", value, *self.at_home)
-            self.assertEqual(code, 2)
-            self.assertIn(word, err)
-
     def linked_agents(self, target: Path) -> Path:
         """The agents directory of the Claude Code home, moved away and
         linked from where it was, as a user would share it."""
@@ -1202,7 +1217,7 @@ class PlacesCase(UninstallCase):
         self.assertEqual(report["kept"], [])
         self.assertNoState()
         self.assertEqual(sorted(os.listdir(self.claude_agents)), ["mine.md", "sprint-coder.md"])
-        self.assertEqual((self.claude_agents / "sprint-coder.md").read_bytes(), v1(migrate.V1_AGENT_SOURCE))
+        self.assertEqual((self.claude_agents / "sprint-coder.md").read_bytes(), v1(V1_AGENT_SOURCE))
 
     def test_a_path_under_a_link_that_stays_in_the_home_is_undone_with_the_option(self) -> None:
         self.start()
@@ -1220,7 +1235,7 @@ class PlacesCase(UninstallCase):
         # The link is still the user's link, and what setup wrote where it leads is gone.
         self.assertLinked(self.claude_agents, shared)
         self.assertEqual(sorted(os.listdir(shared)), ["mine.md", "sprint-coder.md"])
-        self.assertEqual((shared / "sprint-coder.md").read_bytes(), v1(migrate.V1_AGENT_SOURCE))
+        self.assertEqual((shared / "sprint-coder.md").read_bytes(), v1(V1_AGENT_SOURCE))
         self.assertEqual((shared / "mine.md").read_bytes(), held["mine.md"][1])
 
     def test_a_state_directory_under_a_link_stops_the_run_before_anything_changes(self) -> None:
@@ -1253,18 +1268,37 @@ class PlacesCase(UninstallCase):
         self.assertNothingAt(self.claude_skills / "alpha")
 
     @unittest.skipUnless(POSIX and SYMLINKS, "the path form of a Windows drive in WSL")
+    def test_a_link_to_a_copy_on_the_other_sides_drive_is_put_back(self) -> None:
+        self.start()
+        drive = self.root / "drive"
+        link = self.claude_skills / "csv-tools"
+        fsio.remove_link(link)
+        theirs = self.copy(drive / "Users" / "someone" / ".claude" / "skills" / "csv-tools", "csv-tools")
+        fsio.make_link(str(theirs), link, True)
+        before = self.pictures()
+        wsl = homes.Host(homes.WSL, {"PATH": ""}, (str(drive),))
+        self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home, host=wsl)
+        self.earlier_setup()
+        self.done("render", *self.at_home, host=wsl)
+        entry = fileops.read_record(self.roots()).entries["home:.claude/skills/csv-tools"]
+        self.assertEqual(entry["replaced"]["target"], f"raw:{theirs}")
+        self.assertEqual(self.uninstall(host=wsl)["kept"], [])
+        self.assertEqual(os.readlink(link), str(theirs))
+        self.assertAsAtTheStart(before)
+
+    @unittest.skipUnless(POSIX and SYMLINKS, "the path form of a Windows drive in WSL")
     def test_what_the_other_side_owns_was_never_written_and_is_as_it_was(self) -> None:
         drive = self.root / "drive"
         theirs = drive / "Users" / "someone" / ".claude"
         self.data(theirs / "CLAUDE.md", CLAUDE_MD)
-        self.rule_copies(theirs / "rules")
+        self.data(theirs / "rules" / "prd-implementation.md", v1("prd-implementation.md", 0))
         os.symlink(str(theirs / "CLAUDE.md"), self.claude / "CLAUDE.md")
         os.symlink(str(theirs / "rules"), self.claude / "rules")
         self.codex_home()
         wsl = homes.Host(homes.WSL, {"PATH": ""}, (str(drive),))
         before, drive_before = self.pictures(), picture(drive)
         self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home, host=wsl)
-        self.done("render", "--migrate-v1", *self.stale(), *self.at_home, host=wsl)
+        self.done("render", *self.at_home, host=wsl)
         self.assertEqual(picture(drive), drive_before)
         report = self.uninstall(host=wsl)
         self.assertEqual(report["kept"], [])
@@ -1308,7 +1342,8 @@ class UnlistedBackupsCase(UninstallCase):
         # A dry run says the same, and no other command removes the file either.
         self.assertEqual(self.uninstall("--dry-run", code=3)["state"]["unlisted_backups"], [str(mine)])
         self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home)
-        self.done("render", "--migrate-v1", *self.stale(), *self.at_home)
+        self.earlier_setup()
+        self.done("render", *self.at_home)
         self.assertEqual(mine.read_bytes(), b"the only copy\n")
         self.assertEqual(self.uninstall(code=3)["state"]["unlisted_backups"], [str(mine)])
         self.assertEqual(mine.read_bytes(), b"the only copy\n")
@@ -1429,7 +1464,7 @@ class UnlistedBackupsCase(UninstallCase):
         self.install(project=False)
         self.unlisted(self.state, "home")
         before = self.pictures()
-        for option in (("--json",), ("--keep-settings",), ("--clone-was", str(self.root / "was"))):
+        for option in (("--json",), ("--keep-settings",)):
             _, err = self.discard("--yes", *option, code=2)
             self.assertIn(f"--discard-backups: is a command of its own; give it without {option[0]}", err)
             self.assertEqual(self.pictures(), before)
@@ -1462,13 +1497,10 @@ class RandomCase(UninstallCase):
             ["init", "--yes", "--rewrite-settings", "--max-parallel-coders", "5", *home, *project],
             ["render", *home],
             ["render", "--no-roles", *home],
-            ["render", "--migrate-v1", *home],
-            ["render", "--migrate-v1", *self.stale(), *home],
-            ["render", "--migrate-v1", *self.stale(), "--apply-codex-settings", *home],
+            ["earlier"],
             ["render", "--apply-codex-settings", "--default-codex-permissions", *home],
             ["render", "--remove-codex-settings", *home],
             ["render", *home, *project],
-            ["render", "--migrate-v1", *self.stale(), *home, *project],
             ["render", "--no-roles", *home, *project],
         ]
         return [rng.choice(choices) for _ in range(rng.randint(2, 7))]
@@ -1483,18 +1515,23 @@ class RandomCase(UninstallCase):
                 self.project.mkdir()
                 self.claude.mkdir()
                 self.codex.mkdir()
-                self.edited_copies.clear()
                 before = self.start(
-                    crlf=rng.random() < 0.5, v1_copies=rng.random() < 0.7,
+                    crlf=rng.random() < 0.5, earlier=rng.random() < 0.7,
                     config=rng.choice([CONFIG_PLAIN, CONFIG_SANDBOX, CONFIG_AGENTS, None]),
                 )
                 if rng.random() < 0.3:
                     self.data(self.user_file, USER_SETTINGS)
                     before = self.pictures()
                 ran = []
+                took = False
                 for argv in self.commands(rng):
+                    if argv == ["earlier"]:   # once, and only where the fixture has the files
+                        if not took and (self.rules / "prd-implementation.md").exists():
+                            self.earlier_setup()
+                            took = True
+                        continue
                     code, out, err = self.cli(*argv)
-                    # A run that is refused (a v1 copy in the way) writes nothing.
+                    # A run that is refused (a copy in the way) writes nothing.
                     self.assertIn(code, (0, 2, 3), f"{argv}\n{out}\n{err}")
                     ran.append((code, argv[:2] + [word for word in argv[2:] if word.startswith("--")]))
                 first = self.uninstall("--dry-run", project=True)

@@ -24,6 +24,9 @@ from wfsetup.errors import SetupError
 from wfsetup.manifest import Manifest, Roots
 
 
+LINKS = SYMLINKS or os.name == "nt"
+
+
 class Crash(BaseException):
     """Stands in for the process being killed: nothing catches it."""
 
@@ -1584,6 +1587,135 @@ class RoundTripTests(FullPlanCase):
         fileops.plan_reversal(roots, stamp=self.stamp()).apply()
         self.assertTrue(fileops.remove_state(roots))
         self.assertEqual(os.listdir(home), [])
+
+
+# --- fileops: setup's link where something of the user's was --------------------------
+
+@unittest.skipUnless(LINKS, "needs links to directories")
+class ReplacedCase(OpsCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.target = self.clone / "skill"
+        self.put(self.target / "SKILL.md", "the clone's\n")
+        self.path = self.home / ".claude" / "skills" / "skill"
+        self.key = "home:.claude/skills/skill"
+
+    def users_link(self) -> Path:
+        theirs = self.root / "theirs" / "skill"
+        self.put(theirs / "SKILL.md", "theirs\n")
+        self.path.parent.mkdir(parents=True)
+        fsio.make_link(str(theirs), self.path, True)
+        return theirs
+
+    def users_directory(self) -> None:
+        self.put(self.path / "SKILL.md", "a copy\n")
+        self.put(self.path / "scripts" / "deep" / "tool.py", "print()\n", 0o750 if POSIX else None)
+
+    def remove_copy(self, plan: fileops.Plan) -> None:
+        plan.remove_file(self.path / "SKILL.md")
+        plan.remove_file(self.path / "scripts" / "deep" / "tool.py")
+        for directory in (self.path / "scripts" / "deep", self.path / "scripts", self.path):
+            plan.remove_directory(directory, users=True)
+
+    def test_a_users_link_then_setups_link_in_one_plan_and_back(self) -> None:
+        theirs = self.users_link()
+        before = self.snap()
+        plan = self.plan()
+        plan.remove_link(self.path)
+        plan.create_link(self.path, self.target)
+        result = plan.apply()
+        self.assertEqual(result.lines[-1], f"replace link {self.key} -> clone:skill")
+        self.assertTrue(fsio.same_target(fsio.look(self.path).target, str(self.target)))
+        entry = self.record().entries[self.key]
+        self.assertEqual((entry["kind"], entry["target"]), ("link", "clone:skill"))
+        self.assertEqual((entry["replaced"]["kind"], entry["replaced"]["target"]), ("removed-link", f"raw:{theirs}"))
+        self.assertEqual((theirs / "SKILL.md").read_text(encoding="utf-8"), "theirs\n")
+        # Asked again, the link is up to date and still carries what it took the place of.
+        again = self.plan()
+        again.create_link(self.path, self.target)
+        self.assertFalse(again.apply().changed)
+        self.assertEqual(self.record().entries[self.key], entry)
+        back = self.reversal().apply()
+        self.assertEqual(back.lines[0], f"restore link {self.key} -> raw:{theirs}")
+        self.assertEqual(back.kept, [])
+        self.assertTrue(fileops.remove_state(self.roots))
+        self.assertEqual(self.snap(), before)
+
+    def test_without_the_removal_the_users_link_is_still_a_conflict(self) -> None:
+        self.users_link()
+        plan = self.plan()
+        plan.create_link(self.path, self.target)
+        self.assertEqual(self.refused(plan).codes(), {fileops.CONFLICT})
+
+    def test_a_users_directory_then_setups_link_in_one_plan_and_back(self) -> None:
+        self.users_directory()
+        before = self.snap()
+        plan = self.plan()
+        self.remove_copy(plan)
+        plan.create_link(self.path, self.target)
+        result = plan.apply()
+        self.assertEqual(result.lines[-1], f"create link {self.key} -> clone:skill, in place of the directory there")
+        self.assertEqual((self.path / "SKILL.md").read_text(encoding="utf-8"), "the clone's\n")
+        entries = self.record().entries
+        self.assertEqual(entries[self.key]["replaced"], {"kind": "removed-directory"})
+        self.assertEqual(entries[self.key + "/scripts"], {"kind": "removed-directory"})
+        self.assertEqual(entries[self.key + "/SKILL.md"]["kind"], "removed-file")
+        back = self.reversal().apply()
+        self.assertEqual(back.kept, [])
+        self.assertIn(f"restore directory {self.key}, in place of the link there", back.lines)
+        self.assertTrue(fileops.remove_state(self.roots))
+        self.assertEqual(self.snap(), before)
+        self.assertEqual((self.target / "SKILL.md").read_text(encoding="utf-8"), "the clone's\n")   # never followed
+
+    def test_setups_link_removed_later_leaves_the_users_entry_for_the_way_back(self) -> None:
+        self.users_directory()
+        before = self.snap()
+        plan = self.plan()
+        self.remove_copy(plan)
+        plan.create_link(self.path, self.target)
+        plan.apply()
+        later = self.plan()   # the skill left the clone: the stale sweep
+        later.remove_link(self.path, expect_target=self.target)
+        later.apply()
+        self.assertEqual(self.record().entries[self.key], {"kind": "removed-directory"})
+        self.assertEqual(fsio.look(self.path).kind, fsio.ABSENT)
+        # And it can be linked again, by a later run.
+        again = self.plan()
+        again.create_link(self.path, self.target)
+        again.apply()
+        self.assertEqual(self.record().entries[self.key]["replaced"], {"kind": "removed-directory"})
+        self.reversal().apply()
+        self.assertTrue(fileops.remove_state(self.roots))
+        self.assertEqual(self.snap(), before)
+
+    def test_a_directory_that_still_holds_something_is_not_removed(self) -> None:
+        self.users_directory()
+        plan = self.plan()
+        plan.remove_file(self.path / "SKILL.md")
+        plan.remove_directory(self.path, users=True)
+        error = self.refused(plan)
+        self.assertEqual(error.codes(), {fileops.CONFLICT})
+        self.assertIn("still holds something the plan does not remove", error.lines[0])
+
+    def test_a_link_changed_since_is_kept_and_nothing_is_put_back_through_it(self) -> None:
+        self.users_directory()
+        plan = self.plan()
+        self.remove_copy(plan)
+        plan.create_link(self.path, self.target)
+        plan.apply()
+        elsewhere = self.root / "elsewhere"
+        self.put(elsewhere / "keep.md", "the user's\n")
+        fsio.remove_link(self.path)
+        fsio.make_link(str(elsewhere), self.path, True)
+        before = self.snap()
+        back = self.reversal().apply()
+        kept = dict(back.kept)
+        self.assertIn(self.key, kept)
+        self.assertIn(self.key + "/SKILL.md", kept)
+        self.assertEqual(sorted(os.listdir(elsewhere)), ["keep.md"])   # nothing was written through the link
+        self.assertFalse(fileops.remove_state(self.roots))
+        self.assertEqual({name: what for name, what in self.snap().items() if "workflow-setup" not in name},
+                         {name: what for name, what in before.items() if "workflow-setup" not in name})
 
 
 if __name__ == "__main__":

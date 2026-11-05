@@ -3,19 +3,17 @@ with --project, in a project, and the providers themselves.
 
     doctor [--json] [--home DIR] [--project DIR] [--allow-unshared-clone]
            [--only NAME]... [--skip NAME]...
-           [--no-model-list] [--no-versions] [--no-collab]
+           [--no-versions] [--no-collab]
            [--codex-probe]
-           [--prove-discovery] [--save-probe DIR]
 
 Setup itself writes nothing, anywhere: no file of a home, a project or the
 clone, no install record, no state directory. A credentials file is never
-opened. (--save-probe DIR, which you ask for, writes into DIR and nowhere
-else; DIR is made if it is not there, and may not be inside the clone.)
+opened.
 
 Four checks start a program of a provider, and such a program may write
 state of its own into its own home when it starts (Codex: its databases, an
 installation id, its bundled skills). They are models, versions, discovery
-and collaboration-skill, left out with --no-model-list, --no-versions,
+and collaboration-skill, left out with --skip models, --no-versions,
 --skip discovery and --no-collab; with all four the run starts no program.
 With --home DIR every program is pointed at DIR and its provider homes, and
 never reads or writes the real ones. The first line of the output says
@@ -111,7 +109,7 @@ The checks, in the order they run:
                          has, a warning; a list that cannot be read, a
                          warning with the reason. Claude Code has no list:
                          info. This starts the provider's list command
-                         (`codex debug models`); --no-model-list leaves the
+                         (`codex debug models`); --skip models leaves the
                          check out.
     versions             `<program> --version` of each installed provider: a
                          version newer than the one its dictionary was
@@ -163,10 +161,6 @@ The checks, in the order they run:
                          there (a role id no definition has, a provider with
                          no dictionary): warnings. A profile that does not
                          resolve: an error.
-    v1                   what a v1 install left in a home: an import line of
-                         a v1 rule, a v1 rule or skill copy, a v1 link.
-                         Each is an error until `render --migrate-v1`
-                         removes it; a place the other side owns is info.
     interrupted-run      an earlier run of setup that was stopped half way:
                          a warning with the changes found made and those
                          dropped; the temporary files its record lists, its
@@ -227,31 +221,18 @@ The checks, in the order they run:
                          (no output that was read could list it) or missing
                          (an output that should list it was read and does
                          not: an error); one line gives the count of each.
-                         Unproven items are info on a plain run, all in one
-                         line with the reason for each and what would prove
-                         it; with --prove-discovery each one the probes
-                         did not prove is a warning.
+                         Unproven items are info, all in one line with the
+                         reason for each.
                          A file the provider could not load (a definition
                          that does not parse or lacks a required key, a
-                         skill with no SKILL.md) is an error. Without a
-                         session: Codex's skills, loaded roles and starting
-                         role, by `codex debug prompt-input`, the same with
-                         `--profile <role>`, and the `skills/list` request
-                         of `codex app-server` (experimental in Codex).
+                         skill with no SKILL.md) is an error. No session
+                         with a model is started: Codex's skills, loaded
+                         roles and starting role, by `codex debug
+                         prompt-input`, the same with `--profile <role>`,
+                         and the `skills/list` request of `codex
+                         app-server` (experimental in Codex).
                          Codex's role definitions and everything on Claude
-                         Code are unproven without a session.
-                         --prove-discovery also starts ONE SESSION WITH A
-                         MODEL PER PROVIDER, WHICH SPENDS QUOTA: `claude -p`
-                         with a one-line prompt, read up to its first event
-                         and then ended, and one `codex exec` with the same
-                         prompt, whose event stream is searched for the
-                         agent names in the spawn tool's text. Neither
-                         reads what the model answered.
-                         --save-probe DIR writes what each probe gave,
-                         reduced to names (keys, event types, the lists of
-                         skills, agents, commands and tools; no description,
-                         prompt, model output, path or id), one JSON file a
-                         probe, into DIR: the one thing doctor writes.
+                         Code are unproven.
     collaboration-skill  the state of multiagent-collab, by starting that
                          skill's own doctor with this interpreter, found
                          through the link in a provider's skills directory.
@@ -268,7 +249,7 @@ is reported as an error finding of its name, and the others still run.
 Programs started: the list command of a provider, `<program> --version`, the
 collaboration skill's doctor, and the offline commands of the check
 `discovery`. Each has a fixed argument list, no shell and a time limit. None
-starts a session with a model; only --prove-discovery does.
+starts a session with a model.
 
 A place whose real path is on the other side of the machine (a link from the
 WSL home into the Windows home, or the reverse) is read where it can be read
@@ -290,7 +271,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from .. import discovery, doctor, homes, locations
+from .. import doctor, homes, locations
 
 SUMMARY = "check the sources, what setup installed and the providers; setup writes nothing, exit code 1 on an error"
 
@@ -314,9 +295,6 @@ def configure(parser: argparse.ArgumentParser) -> None:
 def run(args: argparse.Namespace) -> int:
     chosen, left_out = doctor.select(args, only=args.only, skip=args.skip)
     where = locations.from_args(args, writes=False)
-    if args.save_probe is not None:
-        # Refused before any check runs, as every faulty argument is.
-        discovery.save_directory(args.save_probe, where.clone)
     context = doctor.Context(where, args)
     found = doctor.report(context, doctor.run(context, chosen), left_out)
     if args.json:

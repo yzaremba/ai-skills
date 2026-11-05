@@ -544,14 +544,10 @@ class Roots:
     project: Path | None = None
     clone: Path | None = None
     extra: tuple[tuple[str, Path], ...] = ()
-    # Where the clone was when setup made its links, if it was moved since
-    # (``uninstall --clone-was``). It is one more place a link of setup's
-    # may lead to, and nothing else: the clone stays the clone.
-    clone_was: Path | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "home", _absolute(self.home))
-        for name in ("project", "clone", "clone_was"):
+        for name in ("project", "clone"):
             if getattr(self, name) is not None:
                 object.__setattr__(self, name, _absolute(getattr(self, name)))
         extra = tuple((name, _absolute(path)) for name, path in dict(self.extra).items())
@@ -628,16 +624,6 @@ class Roots:
         """The text of a link whose target the record holds as ``key``."""
         anchor, _, rest = key.partition(":")
         return rest if anchor == RAW else str(self.path(key))
-
-    def target_texts(self, key: str) -> list[str]:
-        """Every text a link of setup's to ``key`` may have: the one above
-        and, for a target in the clone, the same place below ``clone_was``."""
-        texts = [self.target_text(key)]
-        anchor, _, relative = key.partition(":")
-        if anchor == CLONE and self.clone_was is not None:
-            was = self.clone_was if relative == "." else self.clone_was.joinpath(*relative.split("/"))
-            texts.append(str(was))
-        return texts
 
     def state_dir_of(self, project: bool) -> Path:
         """The state directory of the user level, or of the project."""

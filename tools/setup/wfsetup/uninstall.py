@@ -99,7 +99,6 @@ from . import fileops, fsio, homes, lock, paths
 from .errors import EXIT_ERROR, SetupError
 from .locations import SETTINGS_DIR, SETTINGS_FILE
 from .manifest import BACKUPS_NAME, MANIFEST_NAME, Manifest, Roots
-import dataclasses
 
 REPORT_SCHEMA_VERSION = 1
 EXIT_KEPT = 3
@@ -111,7 +110,6 @@ PROJECT = "project"
 FOLLOW_OPTION = "--follow-config-symlinks"
 KEEP_SETTINGS_OPTION = "--keep-settings"
 DISCARD_OPTION = "--discard-backups"
-CLONE_WAS_OPTION = "--clone-was"
 
 _WHAT = {
     "link": "a link setup made",
@@ -231,26 +229,6 @@ def _backup_of(roots: Roots, entry: dict[str, Any] | None) -> str | None:
     return None if path is None else str(path)
 
 
-def _clone_hint(roots: Roots, path: Path | None, entry: dict[str, Any] | None) -> str | None:
-    """Where the clone was, if the link at ``path`` still names the place
-    the record holds, below another directory."""
-    target = (entry or {}).get("target")
-    if path is None or not isinstance(target, str) or not target.startswith("clone:"):
-        return None
-    try:
-        seen = fsio.look(path)
-    except SetupError:
-        return None
-    if seen.kind != fsio.LINK or not seen.target:
-        return None
-    relative = target.partition(":")[2].replace("/", os.sep)
-    text = os.path.normpath(paths.long_form(fsio.clean_target(seen.target)))
-    tail = os.sep + relative
-    if relative in ("", ".") or not paths.fold(text).endswith(paths.fold(tail)):
-        return None
-    return text[:len(text) - len(tail)] or None
-
-
 def _finish(roots: Roots, key: str, path: Path | None, entry: dict[str, Any] | None, why: str,
             settings_file: Path | None) -> str:
     """What the user does about one kept entry, in one line."""
@@ -263,17 +241,9 @@ def _finish(roots: Roots, key: str, path: Path | None, entry: dict[str, Any] | N
         return "take away the link that leads there, or undo this entry by hand; setup writes there under no option"
     if "is a link now, which was kept" in why:
         return "deal with the link above it first"
-    if kind == "removed-link" and CLONE_WAS_OPTION in why:
-        return f"run uninstall again with {CLONE_WAS_OPTION} DIR, DIR being the directory the clone was in when setup removed the link"
     if "missing or damaged" in why:
         return "what was there cannot be put back; remove the file, or the record by hand (see --help)"
     if kind == "link":
-        was = _clone_hint(roots, path, entry)
-        if was is not None:
-            return (
-                f"it leads into {was}: if that is where the clone was when setup made the link, run uninstall "
-                f"with {CLONE_WAS_OPTION} {was}; else remove the link"
-            )
         return "remove what is there, or point the link back where setup pointed it"
     if kind == "file":
         if "removed since" in why:
@@ -352,19 +322,11 @@ def _heads(lines: list[str]) -> int:
     return sum(1 for line in lines if not line.startswith(" "))
 
 
-def roots_of(found: homes.Homes, clone_was: Path | None = None) -> Roots:
-    """The roots of an uninstall. ``clone_was`` is where the clone was when
-    setup made its links: one more place a link of setup's may lead to.
-    The clone itself stays the one setup runs from, and stays barred."""
-    roots = found.roots()
-    return roots if clone_was is None else dataclasses.replace(roots, clone_was=clone_was)
-
-
 def execute(found: homes.Homes, *, project: bool = False, dry_run: bool = False, follow: bool = False,
-            keep_settings: bool = False, clone_was: Path | None = None,
+            keep_settings: bool = False,
             stamp: str | None = None) -> Outcome:
     """Undo one record of ``found`` and remove its state; see the module."""
-    roots = roots_of(found, clone_was)
+    roots = found.roots()
     if project and found.project is None:
         raise SetupError("no project was named, so there is no project record to undo")
     recovered: fileops.Result | None = None
