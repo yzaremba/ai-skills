@@ -378,9 +378,10 @@ class CarryCase(DoctorCase):
 
     # --- Taking it out -------------------------------------------------------
 
-    def test_no_roles_leaves_what_was_added_and_a_later_render_takes_it_up(self) -> None:
+    def test_roles_left_out_leave_what_was_added_and_a_later_render_takes_it_up(self) -> None:
         self.add(TRUST_MANY + NOTICE)
-        code, report, err = self.report("--no-roles")
+        self.roles_off()
+        code, report, err = self.report()
         self.assertEqual((code, err), (0, ""))
         stale = [item for item in report["stale"] if item["key"] == KEY]
         self.assertEqual([item["status"] for item in stale], [render.RELEASE])
@@ -389,6 +390,7 @@ class CarryCase(DoctorCase):
         self.assertIn("1 left as yours with setup's part taken out", report["summary"])
         self.assertEqual(self.file.read_bytes(), (TRUST_MANY + NOTICE).lstrip(b"\n"))
         self.assertNotIn(KEY, self.entries())
+        self.roles_on()
         code, report, _ = self.report()
         self.assertEqual(code, 0)
         item = self.profile_item(report)

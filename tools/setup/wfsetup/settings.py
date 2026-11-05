@@ -12,18 +12,19 @@ A layer whose file does not exist is simply absent. A file that is there
 and cannot be read is an error, and so is a link in its place whose target
 is missing, and a ``.agents`` that is not a directory.
 
-A group of ``schema.USER_ONLY`` (``[setup]``) is read from the user's file
-alone: in a project's file it is a fault, reported whenever that group is
-asked for with the project's layers. A group of ``schema.PROJECT_ONLY``
-(``[project]``) is read from a project's two files alone: in the user's file
-or the shipped one it is a fault. ``project.disabled`` is allowed in the
-local file alone: in the shared project file it is a fault.
+A key of ``schema.OLD_KEYS`` is no part
+of the schema: ``resolve`` skips it, and ``old_keys`` names it.
 
 ``resolve`` is asked for groups and touches nothing else: of each file it
 checks the version and the top-level key names, then validates and merges
 only the groups asked for. A fault inside ``[providers.x]`` therefore cannot
 break a reader of ``[process]``. What no reader can be shielded from is a
 file that does not parse at all.
+
+``install``, the top-level list of what a place installs, is no group:
+``install`` reads it, each layer's value apart, and a fault in it breaks no
+reader of a group. ``old_keys`` names each key it replaces that a user's or
+a project's file holds.
 """
 from __future__ import annotations
 
@@ -36,10 +37,8 @@ from .errors import SetupError
 from .locations import Locations
 
 LAYERS = ("shipped", "user", "project", "local")
-# The layers of a project's files. A group of ``schema.USER_ONLY`` found in
-# one of them is a fault: it would silently do nothing there.
+# The layers of a project's files.
 PROJECT_LAYERS = ("project", "local")
-USER_FILE = ".agents/workflow.toml"
 
 
 @dataclass(frozen=True)
@@ -133,25 +132,8 @@ def resolve(
             if group not in document.data:
                 continue
             content = document.data[group]
-            if group in schema.USER_ONLY and document.layer in PROJECT_LAYERS:
-                problems.append(
-                    f"{document.file}: {group}: read from the user's settings file alone "
-                    f"(~/{USER_FILE}): it holds facts of this machine, not of a project. Move it there"
-                )
-                continue
-            if group in schema.PROJECT_ONLY and document.layer not in PROJECT_LAYERS:
-                problems.append(
-                    f"{document.file}: {group}: read from a project's files alone "
-                    f"(.agents/workflow.toml and .agents/workflow.local.toml): it names what "
-                    f"the project uses, not a fact of this machine. Move it there"
-                )
-                continue
-            if group == "project" and document.layer == "project" and "disabled" in content:
-                problems.append(
-                    f"{document.file}: project.disabled: allowed in .agents/workflow.local.toml only"
-                )
-                continue
             before = len(problems)
+            content = schema.strip_old_keys(group, content)
             schema.validate(group, content, document.file, problems)
             if len(problems) > before:
                 continue
@@ -160,3 +142,41 @@ def resolve(
     if problems:
         raise SetupError(*problems)
     return {key: merged[key] for key in sorted(merged, key=schema.order)}
+
+
+def install(where: Locations) -> list[Entry]:
+    """``install`` of each layer that gives it, in the order the layers
+    apply, so a reader takes the user's over the shipped one and the local
+    over the project's (each replaces the one below it whole). A home's
+    ``where`` has no project, so its layers are shipped and user. Every
+    fault of ``install`` is reported at once, and one inside a table among
+    them; nothing else of a group is looked at."""
+    problems: list[str] = []
+    found: list[Entry] = []
+    for document in documents(where, ()):
+        if not schema.check_document(document.data, document.file, problems):
+            continue
+        before = len(problems)
+        schema.check_install(document.data, document.file, problems)
+        if len(problems) == before and schema.INSTALL_KEY in document.data:
+            found.append(Entry(document.data[schema.INSTALL_KEY], document.layer, document.file))
+    if problems:
+        raise SetupError(*problems)
+    return found
+
+
+def old_keys(where: Locations) -> list[tuple[Path, str, str]]:
+    """Each key of ``schema.OLD_KEYS`` that a user's or a project's file
+    holds, as (file, dotted key, what replaces it), in the order the layers
+    apply. The shipped defaults are not the user's to change and are not
+    named."""
+    found: list[tuple[Path, str, str]] = []
+    for document in documents(where, ()):
+        if document.layer == "shipped":
+            continue
+        for key, replacement in schema.OLD_KEYS.items():
+            group, name = key.split(".")
+            table = document.data.get(group)
+            if isinstance(table, dict) and name in table:
+                found.append((document.file, key, replacement))
+    return found

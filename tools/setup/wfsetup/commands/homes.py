@@ -10,9 +10,9 @@ What is printed:
 
     side      linux, wsl or windows, and the other side of the machine
     clone     the repository the tool runs from, and whether both sides can
-              read it. A command that installs refuses a clone they cannot
-              both read unless --allow-unshared-clone is given; this
-              command only says so
+              read it. A clone the Windows side cannot read is a warning
+              in a command that installs (the exit code does not change);
+              this command only says so
     for each provider (claude-code, codex)
               whether it counts as installed (its program is on PATH, or
               its home exists), its home and where that came from

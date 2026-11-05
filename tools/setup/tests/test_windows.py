@@ -213,7 +213,7 @@ class LinkCaseCase(RenderCase):
         before = tree(self.root)
         retyped = other_case(self.home)
         with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
-            code, out, err = support.run("render", "--json", "--no-roles", "--home", retyped)
+            code, out, err = support.run("render", "--json", "--home", retyped)
         if not WINDOWS:
             self.assertEqual((code, out), (2, ""))
             self.assertIn("--home: ", err)
@@ -285,7 +285,7 @@ class CloneCheckCase(HomesCase):
             self.assertIs(found.shared, True, real)
             self.assertIn("on a local drive", found.why)
 
-    def test_a_network_name_is_refused(self) -> None:
+    def test_a_clone_on_a_network_or_wsl_path_is_not_shared(self) -> None:
         # ``realpath`` turns a mapped network drive into its UNC name.
         for real, why in (
             ("\\\\server\\share\\clone", "not on a local drive"),
@@ -303,31 +303,27 @@ class CloneCheckCase(HomesCase):
         self.assertIs(self.at(other_case(self.clone)).shared, True)
 
     @unittest.skipUnless(WINDOWS, "a Windows path is made absolute by Windows rules")
-    def test_on_windows_a_clone_inside_wsl_is_refused_and_the_flag_allows_it(self) -> None:
+    def test_on_windows_a_clone_inside_wsl_is_a_warning(self) -> None:
         found = homes.resolve(
             Locations(home=self.home, clone=Path(WSL_SHARE, "clone"), real_home=True), homes.Host.current())
-        self.assertIs(homes.clone_standing(found).shared, False)
-        with self.assertRaises(SetupError) as caught:
-            homes.require_shared_clone(found)
-        text = str(caught.exception)
-        self.assertIn("inside WSL, reached over the network name; a junction cannot lead there", text)
-        self.assertIn("--allow-unshared-clone", text)
-        self.assertIs(homes.require_shared_clone(found, allow_unshared=True).shared, False)
+        standing = homes.clone_standing(found)
+        self.assertIs(standing.shared, False)
+        self.assertIn("inside WSL, reached over the network name; a junction cannot lead there", standing.why)
+        self.assertEqual(homes.clone_warning(found), homes.CLONE_WARNING)
 
     def test_doctor_gives_the_same_verdict(self) -> None:
-        def verdict(real: str, allow: bool = False) -> doctor.Finding:
+        def verdict(real: str) -> doctor.Finding:
             where = Locations(home=self.home, clone=self.clone, real_home=True)
             host = homes.Host(homes.WINDOWS, {"PATH": ""}, ())
-            context = doctor.Context(where, argparse.Namespace(allow_unshared_clone=allow), host)
+            context = doctor.Context(where, argparse.Namespace(), host)
             with mock.patch.object(os.path, "realpath", return_value=real):
                 (found,) = doctor.check_clone(context)
             return found
 
         self.assertEqual(verdict("q:\\work\\clone").severity, doctor.OK)
         found = verdict(WSL_SHARE + "\\clone")
-        self.assertEqual(found.severity, doctor.ERROR)
-        self.assertIn("inside WSL", found.detail)
-        self.assertEqual(verdict("\\\\server\\share\\clone", allow=True).severity, doctor.WARNING)
+        self.assertEqual((found.severity, found.detail), (doctor.WARNING, homes.CLONE_WARNING))
+        self.assertEqual(verdict("\\\\server\\share\\clone").severity, doctor.WARNING)
 
 
 # --- The other side, seen from Windows ----------------------------------------
@@ -523,7 +519,7 @@ class ShortNameCase(RenderCase):
     def test_a_home_given_short_and_then_long_is_one_home(self) -> None:
         start = tree(self.long_home)
         with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
-            code, out, err = support.run("render", "--json", "--no-roles", "--home", self.short_home)
+            code, out, err = support.run("render", "--json", "--home", self.short_home)
         self.assertEqual((code, err), (0, ""))
         report = json.loads(out)
         self.assertEqual(report["counts"]["create"], 6)
@@ -533,7 +529,7 @@ class ShortNameCase(RenderCase):
         before = tree(self.root)
         for home in (self.long_home, self.short_home, other_case(self.short_home)):
             with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
-                code, out, err = support.run("render", "--json", "--no-roles", "--home", str(home))
+                code, out, err = support.run("render", "--json", "--home", str(home))
             self.assertEqual((code, err, json.loads(out)["plan"]), (0, "", []), home)
             self.assertEqual(tree(self.root), before)
         code, report, err = uninstall(self, home=self.long_home)
@@ -739,7 +735,7 @@ class LongPathCase(RenderCase):
     def test_just_below_the_limit_everything_works(self) -> None:
         home = self.deep_home(259 - self.LONGEST_TAIL - 2)
         start = tree(home)
-        code, out, err = self.run_at("render", home, "--no-roles")
+        code, out, err = self.run_at("render", home)
         self.assertEqual((code, err), (0, ""), out)
         link = home / ".claude" / "skills" / "alpha"
         self.assertGreater(len(str(link)), 230)
@@ -755,7 +751,7 @@ class LongPathCase(RenderCase):
             if length != 250:
                 os.makedirs("\\\\?\\" + str(home) + "\\.claude")
             before = tree(Path("\\\\?\\" + str(self.root / "deep")))
-            for command, argv in (("render", ("--no-roles",)), ("doctor", ("--only", "links")), ("uninstall", ())):
+            for command, argv in (("render", ()), ("doctor", ("--only", "links")), ("uninstall", ())):
                 code, out, err = self.run_at(command, home, *argv)
                 self.assertNotIn("Traceback", out + err)
                 if code == 0 and not err:
@@ -947,7 +943,7 @@ class LineEndingCase(UninstallCase):
         script = self.tool()
         home = self.root / "hôme Zoë 日本語"
         (home / ".claude").mkdir(parents=True)
-        for argv in (("homes",), ("render", "--no-roles", "--dry-run"), ("homes", "--json")):
+        for argv in (("homes",), ("render", "--dry-run"), ("homes", "--json")):
             done = self.child(script, *argv, home=home)
             self.assertEqual((done.returncode, done.stderr), (0, b""), done.stdout.decode("utf-8", "replace")[-400:])
             self.assertIn("hôme Zoë 日本語", done.stdout.decode("utf-8"))

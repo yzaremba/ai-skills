@@ -258,7 +258,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import blocks, carried, entry, fileops, fsio, homes, locations, paths, profiles, tomlio
+from . import blocks, carried, definitions, entry, fileops, fsio, homes, locations, paths, profiles, tomlio
 from .errors import SetupError
 
 # The two blocks of setup's in the user's Codex ``config.toml``.
@@ -1216,7 +1216,7 @@ def fill(run: Any) -> None:
     from . import render
 
     try:
-        model, effort = manager_pin(render._locations(run, None), render.roles(run).home)
+        model, effort = manager_pin(render._locations(run, None), render.roles_on(run))
     except SetupError as exc:
         run.fail(*exc.lines)
         return
@@ -1393,8 +1393,7 @@ def check(context: Any) -> list[Any]:
     from . import render
 
     try:
-        on = render.home_roles_setting(context.where)
-        model, effort = manager_pin(context.user_level, on is None or on.value is not False)
+        model, effort = manager_pin(context.user_level, definitions.roles_installed(context.where))
     except SetupError:
         model, effort = held.model, held.effort  # the checks `sources` and `profiles` say why
     found = decide(facts, Want(held.root, held.default, held.profile, model, effort))

@@ -58,9 +58,9 @@ Severities, where the step left the choice
               clone gained it since the last ``render``, as after a pull.
               On a home with no record at all it is one ``info`` line
               (nothing was rendered yet), and so are the generated files
-              on a home whose record holds none (rendered with
-              ``--no-roles``). The roles turned off by the setting
-              ``roles.enabled`` are one ``info`` line: the probe, like
+              on a home whose record holds none (its ``install``
+              lacks ``roles``). Roles left out of the home's
+              ``install`` are one ``info`` line: the probe, like
               ``render``, then asks for none of them. Something in the
               way that setup did not make is an error: ``render`` stops
               on it.
@@ -560,7 +560,7 @@ def check_hand_edits(context: Context) -> list[Finding]:
 def roles_are_on(home_roles: dict[str, Any] | None) -> bool:
     """Whether the home's roles are on, so that render would add the skills
     only they need."""
-    return home_roles is not None and bool(home_roles["enabled"])
+    return home_roles is not None and bool(home_roles["on"])
 
 
 def check_missing(context: Context) -> list[Finding]:
@@ -589,31 +589,27 @@ def check_missing(context: Context) -> list[Finding]:
     # The roles turned off by the setting: said, since nothing of them is
     # then missing. Off by the option is no fact of the install (the probe
     # is given no option).
-    home_roles, project_roles = render.roles_report(probe._roles)
-    for line in (render.roles_line(home_roles), render.project_roles_line(project_roles)):
-        if line is not None:
-            findings.append(info(
-                f"{line}; render removes what an earlier run generated, unless it was edited by hand"
-            ))
-    if home_roles is not None and not home_roles["enabled"]:
-        # What a project got is not in this home's record, and no check of
-        # a home sees it: said once, for every project rendered with roles.
-        findings.append(info(render.PROJECTS_LEFT[0].upper() + render.PROJECTS_LEFT[1:]))
+    home_roles = render.roles_report(probe)
+    line = render.process_alone_line(home_roles)
+    if line is not None:
+        findings.append(info(
+            f"{line}; render removes what an earlier run generated, unless it was edited by hand"
+        ))
     home_rendered = bool(record.home.on_disk)
     project_rendered = record.project is not None and bool(record.project.on_disk)
     home_generated = any(
         _generated(found) and key.partition(":")[0] != fileops.PROJECT for key, found in record.entries.items()
     )
     waiting: dict[str, list[str]] = {"home": [], "roles": [], "project": []}
-    # A home rendered with --no-roles also lacks the skills only the roles
+    # A home whose install lacks roles also lacks the skills only the roles
     # need (render leaves them out): those are the "roles" wait, not missing.
     roles_only: set[str] = set()
     if home_rendered and not home_generated and roles_are_on(home_roles):
         try:
-            roles_only = definitions.bound_skills(context.where) - definitions.home_selection(
-                context.user_level, context.sources.skills, False).units
+            chosen = definitions.home_selection(context.user_level, context.sources.skills)
+            roles_only = {name for name, by in chosen.needed.items() if set(by) == {definitions.ROLES_NEED}}
         except SetupError:
-            roles_only = set()  # a fault in setup.enabled/disabled: no filter; the check goes on
+            roles_only = set()  # a fault in install: no filter; the check goes on
     skipped: dict[tuple[str | None, str | None], tuple[str, list[str]]] = {}
     for item in probe.items:
         subject = _item_subject(item)
@@ -667,8 +663,8 @@ def check_missing(context: Context) -> list[Finding]:
         ))
     if waiting["roles"]:
         findings.append(info(
-            f"no role definition or entry point is installed: the record holds no generated file (the home was "
-            f"rendered with {render.NO_ROLES_OPTION}); render would write {len(waiting['roles'])} files"
+            f"no role definition or entry point is installed: the record holds no generated file (the home's "
+            f"install lacks roles); render would write {len(waiting['roles'])} files"
         ))
     if waiting["project"]:
         findings.append(info(
@@ -756,14 +752,13 @@ def check_duplicate_skills(context: Context) -> list[Finding]:
     roles_on = True
     try:
         # A loaded role is a skill setup installs only while the home's
-        # roles are on (``roles.enabled``).
-        enabled = render.home_roles_setting(context.where)
-        roles_on = enabled is None or enabled.value is not False
+        # roles are on (``roles`` in its ``install``).
+        roles_on = definitions.roles_installed(context.where)
         loaded = entry.loaded_roles(context.user_level) if roles_on else []
     except SetupError:
         loaded = []  # the check `sources` or `profiles` says why
     try:
-        installed = definitions.home_selection(context.user_level, context.sources.skills, roles_on).units
+        installed = definitions.home_selection(context.user_level, context.sources.skills).units
     except SetupError:
         installed = frozenset(context.sources.skills)  # the check `missing` says why: render cannot plan the install
     project = context.homes.project
@@ -897,39 +892,14 @@ def check_other_clones(context: Context) -> list[Finding]:
 
 
 def check_clone(context: Context) -> list[Finding]:
-    """Whether both sides of the machine can read the clone (R6.9). Allowed
-    by the setting ``setup.allow_unshared_clone``, a clone only this side
-    reads is info: decided once, it is no longer a thing to look at on every
-    run. Allowed by the option alone, it is a warning, as before. A setting
-    that allows it where it is not needed is said as info."""
+    """Whether both sides of the machine can read the clone (R6.9). A clone
+    the Windows side cannot read is a warning with one line (R8.6)."""
     found = homes.clone_standing(context.homes)
-    allowance = homes.clone_allowance(context.where, bool(context.option("allow_unshared_clone", False)))
-    unneeded = []
-    if allowance.by == homes.BY_SETTING and allowance.setting is not None:
-        said = "not used here, where the question is not asked" if found.shared is None else \
-            "not needed for this clone"
-        unneeded = [info(
-            f"{homes.UNSHARED_KEY} = true in {allowance.setting.file} ({allowance.setting.layer} layer): {said}; it "
-            "allows a clone only this side reads, on every run of render and doctor"
-        )]
     if found.shared is None:
-        return [info(f"{found.real}: {found.why}"), *unneeded]
+        return [info(f"{found.real}: {found.why}")]
     if found.shared:
-        return [fine(f"{found.real}: {found.why}"), *unneeded]
-    line = (
-        f"{found.real}: the clone setup runs from is {found.why}. Every home, on Windows and in WSL, links to one "
-        "clone that both can read"
-    )
-    if allowance.by == homes.BY_SETTING:
-        return [info(f"{line}; {allowance.describe()}: this side installs from its own clone", found.real)]
-    if allowance.by == homes.BY_OPTION:
-        return [warning(f"{line}; {allowance.describe()}", found.real)]
-    return [error(
-        f"{line}: clone the repository to a directory on a Windows drive and run setup from there, or give "
-        f"{homes.UNSHARED_OPTION} to accept this clone for this side alone for one run, or set "
-        f"{homes.UNSHARED_KEY} = true in ~/.agents/workflow.toml (`init {homes.UNSHARED_OPTION}`) for every run",
-        found.real,
-    )]
+        return [fine(f"{found.real}: {found.why}")]
+    return [warning(homes.CLONE_WARNING, found.real)]
 
 
 def mapping_in_effect(context: Context, provider: str) -> dict[str, str]:
@@ -1348,11 +1318,11 @@ def check_loaded_skill_size(context: Context) -> list[Finding]:
     dictionary has one; on a provider with none, the sizes as info."""
     if not context.sources.ok:
         return [info(NOT_PLANNED)]
-    enabled = render.home_roles_setting(context.where)
-    if enabled is not None and enabled.value is False:
+    if not definitions.roles_installed(context.where):
+        found = definitions.home_install(context.where)
         return [info(
-            f"{render.ROLES_KEY} = false in {enabled.file} ({enabled.layer} layer): no role is installed as a skill; "
-            "nothing to measure"
+            f"roles: not in `install` in {'any settings file' if found is None else found.file}: no role is "
+            "installed as a skill; nothing to measure"
         )]
     names = [provider.name for provider in context.installed() if provider.name in definitions.PROVIDERS]
     made = [one for one in entry.skills(context.user_level, names, context.homes)
@@ -1361,7 +1331,7 @@ def check_loaded_skill_size(context: Context) -> list[Finding]:
         return [info("no role is loaded as a skill")]
     if context.rendered():
         # A home that was rendered is judged by what is installed in it: a
-        # role whose skill is not there (``render --no-roles``) is cut by
+        # role whose skill is not there (the home's ``install`` lacks ``roles``) is cut by
         # nothing.
         places = {
             provider.name: provider.place(homes.SKILLS).path
@@ -1370,7 +1340,7 @@ def check_loaded_skill_size(context: Context) -> list[Finding]:
         }
         made = [one for one in made if one.provider in places and fsio.is_file(places[one.provider] / one.name)]
         if not made:
-            return [info("no role is installed as a skill in this home (rendered with --no-roles); nothing to measure")]
+            return [info("no role is installed as a skill in this home (the home's install lacks roles); nothing to measure")]
     findings: list[Finding] = []
     # One finding per provider: warnings for each skill over its provider's
     # limit, or one line that none is; and where the provider documents no

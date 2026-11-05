@@ -2,10 +2,8 @@
 
 How a command uses it
 
-    homes.add_arguments(parser)                     # --allow-unshared-clone
     found = homes.resolve(locations.from_args(args))
-    allowed = homes.clone_allowance(where, args.allow_unshared_clone)   # option or setting
-    homes.require_shared_clone(found, allowed.allowed)   # before a write
+    line = homes.clone_warning(found)               # None, or one line to print
     roots = found.roots()                           # with a home's own anchor
     sorter = homes.Classifier(found)
     for provider in found.installed():
@@ -129,11 +127,10 @@ The clone (R6.9)
     machine with two sides it must be readable by both: from WSL its real
     path is on a Windows drive; on Windows its real path is on a drive
     letter and not under a UNC name (``os.path.realpath`` turns a mapped
-    network drive into its UNC name). ``require_shared_clone`` refuses
-    anything else unless it is allowed: by ``--allow-unshared-clone`` for
-    one run, or by the setting ``setup.allow_unshared_clone`` in the user's
-    file for every run (``clone_allowance``). A scratch home, and a Linux
-    with no Windows side, are not checked.
+    network drive into its UNC name). Anything else is a warning
+    (``clone_warning``), never a refusal: one line, and the exit code does
+    not change. A scratch home, and a Linux with no Windows side, are not
+    checked.
 
 Links
     ``fileops.Plan.create_link`` makes them, ``fsio`` knows how: a symlink
@@ -151,7 +148,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from . import fileops, fsio, paths, settings
+from . import fileops, fsio, paths
 from .errors import SetupError
 from .locations import Locations
 from .manifest import Roots
@@ -422,19 +419,6 @@ def child_environment(homes: Homes) -> dict[str, str]:
         environ["CODEX_HOME"] = str(homes.provider(CODEX).home)
         environ["CLAUDE_CONFIG_DIR"] = str(homes.provider(CLAUDE_CODE).home)
     return environ
-
-
-def add_arguments(parser: Any) -> None:
-    """Add ``--allow-unshared-clone``, which means the same in every
-    command that installs: ``clone_allowance(where, args.allow_unshared_clone)``."""
-    parser.add_argument(
-        UNSHARED_OPTION,
-        action="store_true",
-        help="install from a clone that only this side can read, for this run. Without it, on a machine with "
-        "a Windows side and a WSL side, a clone that both cannot read is refused: every home "
-        f"links to one shared clone. The setting {UNSHARED_KEY} = true in ~/.agents/workflow.toml "
-        f"(`init {UNSHARED_OPTION}`) allows it on every run. Not asked with --home",
-    )
 
 
 def _home_from_variable(host: Host, variable: str) -> Path | None:
@@ -708,30 +692,9 @@ def clone_standing(homes: Homes) -> CloneStanding:
     return CloneStanding(path, real, False, "not on a local drive; a junction cannot lead there")
 
 
-UNSHARED_OPTION = "--allow-unshared-clone"
-UNSHARED_KEY = "setup.allow_unshared_clone"
-# What allows a clone only this side reads, in ``CloneAllowance.by``.
-BY_SETTING = "setting"
-BY_OPTION = "option"
-
-
-@dataclass(frozen=True)
-class CloneAllowance:
-    """Whether a clone only this side reads is allowed, and by what:
-    ``BY_SETTING``, ``BY_OPTION`` or None. ``setting`` is the effective
-    ``setup.allow_unshared_clone`` where a layer gives it."""
-
-    allowed: bool
-    by: str | None
-    setting: settings.Entry | None
-
-    def describe(self) -> str:
-        """What allowed it, for a line of output; empty when nothing did."""
-        if self.by == BY_SETTING and self.setting is not None:
-            return f"allowed by the setting {UNSHARED_KEY} = true in {self.setting.file} ({self.setting.layer} layer)"
-        if self.by == BY_OPTION:
-            return f"allowed for this run by {UNSHARED_OPTION}"
-        return ""
+CLONE_WARNING = (
+    "Windows can't read this clone; install Windows from its own clone or from one on a Windows drive."
+)
 
 
 def rule_directories(clone: Path) -> list[Path]:
@@ -743,51 +706,10 @@ def rule_directories(clone: Path) -> list[Path]:
     ]
 
 
-def clone_allowance(where: Locations, option: bool = False) -> CloneAllowance:
-    """Whether a clone only this side reads is allowed: by the setting
-    ``setup.allow_unshared_clone``, read from the user's file (a project's
-    file that holds ``[setup]`` is refused, by ``settings``), or for one run
-    by the option. The setting is named first where both allow it: it is
-    the lasting decision, and the option adds nothing to it."""
-    entry = settings.resolve(where, ("setup",)).get(UNSHARED_KEY)
-    if entry is not None and entry.value is True:
-        return CloneAllowance(True, BY_SETTING, entry)
-    if option:
-        return CloneAllowance(True, BY_OPTION, entry)
-    return CloneAllowance(False, None, entry)
-
-
-def other_side(homes: Homes) -> str:
-    """The other side of the machine, in words."""
-    return {WSL: "Windows side", WINDOWS: "WSL side"}.get(homes.host.side, "other side")
-
-
-def unshared_cases(homes: Homes) -> str:
-    """When a clone only this side reads is right: the other side does not
-    install from it. Said in this side's words: WSL alone is a case on WSL
-    only."""
-    if homes.host.side == WSL:
-        return "WSL used alone, or a clone for each side"
-    return "a clone for each side"
-
-
-def require_shared_clone(homes: Homes, allow_unshared: bool = False) -> CloneStanding:
-    """Refuse a clone that both sides cannot read (R6.9), unless
-    ``allow_unshared`` (see ``clone_allowance``). To be called before a
-    command writes."""
-    found = clone_standing(homes)
-    if found.shared is False and not allow_unshared:
-        raise SetupError(
-            f"{found.real}: the clone setup runs from is {found.why}. Every home, on Windows and in "
-            "WSL, links to one clone that both can read",
-            "clone the repository to a directory on a Windows drive (seen from WSL under "
-            "/mnt/<drive>/) and run setup from that clone, on each side",
-            f"or give {UNSHARED_OPTION} to install from this clone for this side alone, for this run; "
-            f"or set {UNSHARED_KEY} = true in ~/.agents/workflow.toml (`init {UNSHARED_OPTION}`) to allow "
-            f"it on every run: only where the {other_side(homes)} does not install from this clone "
-            f"({unshared_cases(homes)})",
-        )
-    return found
+def clone_warning(homes: Homes) -> str | None:
+    """The one line for a clone the other side cannot read (R8.6), or None.
+    A warning only: nothing is refused and no exit code changes."""
+    return CLONE_WARNING if clone_standing(homes).shared is False else None
 
 
 # --- The report ---------------------------------------------------------------

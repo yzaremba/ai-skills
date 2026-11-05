@@ -52,6 +52,14 @@ FIXTURES = TESTS / "fixtures"
 
 # --- The fake clone ----------------------------------------------------------
 
+# The fixture clone ships the real defaults' rule: the roles are on.
+FIXTURE_INSTALL = 'install = ["roles"]\n'
+# The units of the clean fixture clone of ``test_validate.TreeCase``: what its shipped
+# ``install`` names, with ``roles`` or without.
+TREE_UNITS = '"alpha", "beta", "solo", "sample"'
+TREE_INSTALL = f'install = [{TREE_UNITS}, "roles"]\n'
+NO_ROLES_INSTALL = f'install = [{TREE_UNITS}]\n'
+
 FIXTURE_DEFAULTS = '''schema_version = 1
 
 [process]
@@ -61,16 +69,12 @@ recommend = true
 density = "brief"
 
 [roles]
-enabled = true
 manager_default = false
 high_stakes = false
 max_parallel_coders = 3
 
 [memory]
 dir = "docs/memory"
-
-[setup]
-allow_unshared_clone = false
 '''
 
 FIXTURE_DICTIONARIES = {
@@ -338,7 +342,7 @@ class ScratchCase(unittest.TestCase):
 
         # Not "clone": a test of another file builds a clone of its own there.
         self.clone = self.root / "fake-clone"
-        self.defaults_file = self.write(self.clone / "tools" / "setup" / "defaults.toml", FIXTURE_DEFAULTS)
+        self.defaults_file = self.write(self.clone / "tools" / "setup" / "defaults.toml", FIXTURE_INSTALL + FIXTURE_DEFAULTS)
         self.roles_dir = self.clone / "roles"
         self.claude_code_dictionary = self.dictionary_file("claude-code")
         self.codex_dictionary = self.dictionary_file("codex")

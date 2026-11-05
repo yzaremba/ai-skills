@@ -174,7 +174,7 @@ def digest(data: bytes) -> str:
 
 
 class DefinitionsCase(RenderCase):
-    ROLES = ()
+    ROLES_ON = True
     # How many of ``render.PARTS`` a run has; None for all of them.
     PARTS: int | None = 3
 
@@ -588,7 +588,7 @@ class FilesCase(DefinitionsCase):
         code, out, _ = support.run("render", "--help")
         flat = " ".join(out.split())
         self.assertEqual(code, 0)
-        for text in ("--no-roles", "--overwrite-edited", "installs the process alone", "<role>-hard",
+        for text in ("--overwrite-edited", "the process alone is installed", "<role>-hard",
                      "Edit, Write, NotebookEdit; Bash, PowerShell, Monitor; Agent", "read-only sandbox",
                      "one generated file, key or block was kept that --overwrite-edited would replace"):
             self.assertIn(text, flat)
@@ -1068,8 +1068,9 @@ def support_validate(case: DefinitionsCase) -> tuple[int, str, str]:
 
 
 class NoRolesCase(DefinitionsCase):
-    def test_no_roles_generates_nothing(self) -> None:
-        code, out, err = self.render("--no-roles")
+    def test_roles_left_out_generate_nothing(self) -> None:
+        self.roles_off()
+        code, out, err = self.render()
         self.assertEqual((code, err), (0, ""))
         self.assertNothingAt(self.claude_agents)
         self.assertNothingAt(self.codex_agents)
@@ -1077,9 +1078,10 @@ class NoRolesCase(DefinitionsCase):
         self.assertIn("done: 6 links created, 0 removed", out.splitlines()[-1])
         self.assertNotIn("files", out.splitlines()[-1])
 
-    def test_no_roles_removes_the_definitions_of_an_earlier_run(self) -> None:
+    def test_roles_left_out_remove_the_definitions_of_an_earlier_run(self) -> None:
         self.assertEqual(self.render()[0], 0)
-        code, report, err = self.report("--no-roles")
+        self.roles_off()
+        code, report, err = self.report()
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(self.generated(), {})
         self.assertLinked(self.claude_skills / "alpha", self.clone / "alpha")
@@ -1091,19 +1093,21 @@ class NoRolesCase(DefinitionsCase):
         self.assertIn("0 files written, 11 removed", report["summary"])
         self.assertEqual([key for key, entry in self.entries().items() if entry["kind"] == "file"], [])
         before = tree(self.root)
-        code, report, _ = self.report("--no-roles")
+        code, report, _ = self.report()
         self.assertEqual((code, report["plan"], report["stale"]), (0, [], []))
         self.assertEqual(tree(self.root), before)
-        # Without the option they are generated again.
+        # With `roles` in the install again they are generated again.
+        self.roles_on()
         self.assertEqual(self.render()[0], 0)
         self.assertEqual(set(self.generated()), ALL_FILES)
 
-    def test_no_roles_keeps_a_definition_that_was_edited(self) -> None:
+    def test_roles_left_out_keep_a_definition_that_was_edited(self) -> None:
         self.assertEqual(self.render()[0], 0)
         mine = self.claude_agents / "lead.md"
         mine.write_bytes(mine.read_bytes() + b"\nMy own line.\n")
         edited = mine.read_bytes()
-        code, report, err = self.report("--no-roles")
+        self.roles_off()
+        code, report, err = self.report()
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(self.generated(), {".claude/agents/lead.md": edited})
         kept = [item for item in report["stale"] if item["status"] == render.KEPT]
@@ -1114,11 +1118,11 @@ class NoRolesCase(DefinitionsCase):
     def test_a_settings_file_init_wrote_is_not_a_stale_generated_file(self) -> None:
         self.assertEqual(self.render()[0], 0)
         plan = fileops.Plan(self.roots())
-        plan.write_file(self.user_file, '[roles.worker]\ntier = "deep"\n', replace=fileops.ANY)
+        plan.write_file(self.user_file, 'install = []\n\n[roles.worker]\ntier = "deep"\n', replace=fileops.ANY)
         plan.apply()
-        code, report, _ = self.report("--no-roles")
+        code, report, _ = self.report()
         self.assertEqual(code, 0)
-        self.assertEqual(self.user_file.read_text(encoding="utf-8"), '[roles.worker]\ntier = "deep"\n')
+        self.assertEqual(self.user_file.read_text(encoding="utf-8"), 'install = []\n\n[roles.worker]\ntier = "deep"\n')
         self.assertNotIn("home:.agents/workflow.toml", [item["key"] for item in report["stale"]])
 
 
@@ -1221,9 +1225,11 @@ class EditedCase(DefinitionsCase):
         self.assertEqual(self.report()[1]["plan"], [])
 
     def test_a_users_own_file_in_the_way_is_a_conflict(self) -> None:
-        self.assertEqual(self.render("--no-roles")[0], 0)  # the edited one is kept; the others go
+        self.roles_off()
+        self.assertEqual(self.render()[0], 0)  # the edited one is kept; the others go
         self.mine.unlink()
-        self.assertEqual(self.render("--no-roles")[0], 0)
+        self.assertEqual(self.render()[0], 0)
+        self.roles_on()
         self.keep(self.claude_agents / "lead.md")
         before = tree(self.root)
         code, out, err = self.render()
@@ -1261,7 +1267,8 @@ class GateCase(DefinitionsCase):
         self.assertEqual(len(err.splitlines()), 1, err)
         self.assertNothingAt(self.claude_agents)
         # With the process alone there is nothing to resolve.
-        self.assertEqual(self.render("--no-roles")[0], 0)
+        self.roles_off()
+        self.assertEqual(self.render()[0], 0)
 
     def test_a_provider_that_is_not_installed_needs_no_dictionary(self) -> None:
         shutil.rmtree(self.clone / "providers" / "codex")
@@ -1344,121 +1351,123 @@ class SelectionCase(DefinitionsCase):
 
     NEEDS = 'schema_version = 1\n\n[needs]\nalpha = ["beta"]\nbeta = ["solo"]\n'
 
-    def selection(self, roles_on: bool = True) -> definitions.Selection:
-        return definitions.home_selection(self.where(), self.skills(), roles_on)
+    def selection(self) -> definitions.Selection:
+        return definitions.home_selection(self.where(), self.skills())
 
     def skills(self) -> list[str]:
         return ["alpha", "beta", "solo", "multiagent-collab"]
 
-    def user(self, enabled: str, disabled: str) -> None:
-        self.write(self.user_file, f"[setup]\nenabled = [{enabled}]\ndisabled = [{disabled}]\n")
+    def user(self, *names: str) -> None:
+        self.write(self.user_file, "install = [" + ", ".join(f'"{name}"' for name in names) + "]\n")
 
     def project_sel(self) -> definitions.Selection | None:
         return definitions.project_selection(self.where(True), self.skills())
 
     def test_a_skill_brings_what_it_needs_to_the_end(self) -> None:
         self.put("roles/dependencies.toml", self.NEEDS)
-        self.user('"alpha", "sample"', '"beta", "solo"')
-        found = self.selection(roles_on=False)
+        self.user("alpha", "sample")
+        found = self.selection()
         self.assertEqual(found.units, {"alpha", "beta", "solo", "sample"})
         self.assertEqual(found.needed, {"beta": ("alpha",), "solo": ("beta",)})
-        self.assertEqual(found.overrides, {"beta": ("setup.disabled", self.user_file),
-                                           "solo": ("setup.disabled", self.user_file)})
-        self.assertEqual(found.notes()[1], f"solo: installed as a dependency of beta; it overrides "
-                                           f"setup.disabled in {self.user_file}, which names it")
+        self.assertEqual(found.notes()[1], "solo: installed as a dependency of beta")
 
     def test_a_missing_dependency_file_is_no_dependency(self) -> None:
-        self.user('"beta"', '"alpha", "solo", "sample"')
-        found = self.selection(roles_on=False)
+        self.user("beta")
+        found = self.selection()
         self.assertEqual((found.units, found.needed), ({"beta"}, {}))
 
-    def test_roles_on_bring_the_bound_skills_over_setup_disabled_and_roles_off_do_not(self) -> None:
-        self.user('"beta", "solo", "sample"', '"alpha"')
-        on = self.selection(roles_on=True)
+    def test_the_home_takes_the_users_install_over_the_shipped_one(self) -> None:
+        self.assertEqual(self.selection().units, {"alpha", "beta", "solo", "sample"})
+        self.user("sample")
+        self.assertEqual(self.selection().units, {"sample"})
+
+    def test_roles_bring_the_bound_skills_and_no_roles_do_not(self) -> None:
+        self.user("beta", "solo", "sample", "roles")
+        on = self.selection()
         self.assertIn("alpha", on.units)
         self.assertEqual(on.needed, {"alpha": ("the roles",)})
-        self.assertEqual(on.overrides, {"alpha": ("setup.disabled", self.user_file)})
-        self.assertNotIn("alpha", self.selection(roles_on=False).units)
+        self.user("beta", "solo", "sample")
+        self.assertNotIn("alpha", self.selection().units)
 
-    def test_a_bound_skill_the_lists_install_is_not_a_dependency(self) -> None:
-        found = self.selection(roles_on=True)
-        self.assertEqual((found.needed, found.overrides), ({}, {}))
+    def test_a_bound_skill_the_install_names_is_not_a_dependency(self) -> None:
+        self.user("alpha", "roles")
+        self.assertEqual(self.selection().needed, {})
 
     def test_a_unit_needed_twice_names_both(self) -> None:
         self.put("roles/dependencies.toml", 'schema_version = 1\n\n[needs]\nalpha = ["solo"]\nbeta = ["solo"]\n')
-        self.user('"alpha", "beta", "sample"', '"solo"')
-        self.assertEqual(self.selection(roles_on=False).needed, {"solo": ("alpha", "beta")})
+        self.user("alpha", "beta", "sample")
+        self.assertEqual(self.selection().needed, {"solo": ("alpha", "beta")})
 
     def write_project(self, shared: str | None = None, local: str | None = None) -> None:
         for file, text in ((self.project_file, shared), (self.local_file, local)):
             if text is not None:
                 self.write(file, text)
 
-    def test_a_project_without_the_group_has_no_selection(self) -> None:
+    def test_a_project_without_an_install_has_no_selection(self) -> None:
         self.assertIsNone(self.project_sel())
         self.write_project('[process]\ndocs_dir = "d"\n', '[roles]\nenabled = true\n')
         self.assertIsNone(self.project_sel())
 
-    def test_the_project_set_is_the_union_less_the_local_take_out(self) -> None:
-        self.write_project('[project]\nenabled = ["alpha", "beta"]\n',
-                           '[project]\nenabled = ["solo", "beta"]\ndisabled = ["alpha"]\n')
+    def test_the_local_install_replaces_the_projects(self) -> None:
+        self.write_project('install = ["alpha", "beta"]\n', 'install = ["solo", "beta"]\n')
         found = self.project_sel()
         self.assertEqual(found.units, {"beta", "solo"})
         self.assertEqual(found.needed, {})
 
-    def test_the_local_file_alone_gives_a_set(self) -> None:
-        self.write_project(None, '[project]\nenabled = ["solo"]\n')
+    def test_the_project_file_alone_gives_a_set_and_the_local_file_alone_too(self) -> None:
+        self.write_project('install = ["beta"]\n')
+        self.assertEqual(self.project_sel().units, {"beta"})
+        self.project_file.unlink()
+        self.write_project(None, 'install = ["solo"]\n')
         self.assertEqual(self.project_sel().units, {"solo"})
 
-    def test_a_dependency_wins_over_project_disabled(self) -> None:
+    def test_a_projects_install_brings_what_it_needs(self) -> None:
         self.put("roles/dependencies.toml", self.NEEDS)
-        self.write_project('[project]\nenabled = ["beta"]\n', '[project]\ndisabled = ["solo"]\n')
+        self.write_project('install = ["beta"]\n')
         found = self.project_sel()
         self.assertEqual(found.units, {"beta", "solo"})
         self.assertEqual(found.needed, {"solo": ("beta",)})
-        self.assertEqual(found.overrides, {"solo": ("project.disabled", self.local_file)})
 
-    def test_the_faults_of_a_project_set_name_the_file(self) -> None:
-        self.write_project('[project]\nenabled = ["gamma"]\n')
+    def test_roles_in_a_projects_install_bring_nothing(self) -> None:
+        self.write_project('install = ["roles", "solo"]\n')
+        self.assertEqual(self.project_sel(), definitions.Selection(frozenset({"solo"})))
+
+    def test_an_unknown_name_names_its_file(self) -> None:
+        self.write_project('install = ["gamma"]\n')
         with self.assertRaises(SetupError) as raised:
             self.project_sel()
         self.assertEqual(raised.exception.lines,
-                         [f"{self.project_file}: project.enabled: gamma is no skill or rule of this clone"])
-        self.write_project('[project]\nenabled = ["beta"]\n', '[project]\nenabled = ["solo"]\ndisabled = ["solo"]\n')
+                         [f"{self.project_file}: install: gamma is no skill or rule of this clone, nor roles"])
+        self.write_project('install = ["beta"]\n', 'install = ["multiagent-collab"]\n')
         with self.assertRaises(SetupError) as raised:
             self.project_sel()
         self.assertEqual(raised.exception.lines, [
-            f"{self.local_file}: project: solo is in both project.enabled and project.disabled; keep it in one"])
+            f"{self.local_file}: install: multiagent-collab has a setup of its own, which installs it; "
+            "it is no item of install"])
+        self.user("gamma")
+        with self.assertRaises(SetupError) as raised:
+            self.selection()
+        self.assertEqual(raised.exception.lines,
+                         [f"{self.user_file}: install: gamma is no skill or rule of this clone, nor roles"])
 
-    def test_a_process_skill_in_setup_disabled_is_no_fault(self) -> None:
-        self.user('"beta", "solo", "sample"', '"alpha"')
-        self.assertEqual(definitions.list_problems(
-            *[settings_entry for settings_entry in self.entries_of()], definitions.units(self.where(), self.skills())), [])
-
-    def entries_of(self):
-        from wfsetup import settings
-        found = settings.resolve(self.where(), ("setup",))
-        return found.get("setup.enabled"), found.get("setup.disabled")
-
-    def test_render_installs_a_process_skill_in_setup_disabled_and_says_why(self) -> None:
-        self.user('"beta", "solo", "sample"', '"alpha"')
+    def test_render_installs_a_process_skill_through_roles_and_says_why(self) -> None:
+        self.user("beta", "solo", "sample", "roles")
         code, out, err = self.render()
         self.assertEqual((code, err), (0, ""), out)
         self.assertLinked(self.claude_skills / "alpha", self.clone / "alpha")
         self.assertLinked(self.codex_skills / "alpha", self.clone / "alpha")
-        self.assertIn(f"note: alpha: installed as a dependency of the roles; it overrides setup.disabled in "
-                      f"{self.user_file}, which names it", out.splitlines())
+        self.assertIn("note: alpha: installed as a dependency of the roles", out.splitlines())
 
-    def test_render_with_no_roles_leaves_it_out(self) -> None:
-        self.user('"beta", "solo", "sample"', '"alpha"')
-        code, out, err = self.render("--no-roles")
+    def test_render_without_roles_in_the_install_leaves_it_out(self) -> None:
+        self.user("beta", "solo", "sample")
+        code, out, err = self.render()
         self.assertEqual((code, err), (0, ""), out)
         self.assertNothingAt(self.claude_skills / "alpha")
         self.assertNotIn("installed as a dependency", out)
 
     def test_render_installs_what_a_skill_needs(self) -> None:
         self.put("roles/dependencies.toml", self.NEEDS)
-        self.user('"alpha", "beta", "sample"', '"solo"')
+        self.user("alpha", "beta", "sample")
         code, out, err = self.render()
         self.assertEqual((code, err), (0, ""), out)
         self.assertLinked(self.claude_skills / "solo", self.clone / "solo")
@@ -1468,7 +1477,7 @@ class RepositoryCase(RenderCase):
     """The repository's own roles, whatever they say: subsets only, so a
     role added later breaks nothing here."""
 
-    ROLES = ()
+    ROLES_ON = True
 
     def test_the_repositorys_roles_render_for_both_providers(self) -> None:
         # The roles part alone: where the repository is a clone the other

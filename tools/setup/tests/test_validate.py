@@ -161,6 +161,7 @@ class TreeCase(support.CloneCase):
         self.put("roles/bindings.toml", BINDINGS)
         self.put("providers/acme/actions.md", "## How actions are done\n\n- Call `spawn_agent`.\n")
         self.put("providers/acme/dictionary.toml", support.VALID_DICTIONARY)
+        self.write(self.defaults_file, support.TREE_INSTALL + support.FIXTURE_DEFAULTS)
 
     def put(self, name: str, text: str | bytes) -> Path:
         file = self.clone / name
@@ -1049,6 +1050,7 @@ class HostileInputTests(TreeCase):
 
         for name in ("roles", "providers", "rules"):
             shutil.rmtree(self.clone / name)
+        self.put("tools/setup/defaults.toml", 'install = ["alpha", "beta", "solo"]\n' + support.FIXTURE_DEFAULTS)
         self.assertEqual(self.found(), [])
 
 
@@ -1785,20 +1787,22 @@ class SettingsTests(TreeCase):
         self.put("tools/setup/defaults.toml", support.FIXTURE_DEFAULTS)
         self.assertEqual(self.found(), [])
 
-    def test_the_shipped_lists_hold_each_skill_and_rule_once(self) -> None:
-        def lists(enabled: str, disabled: str = "") -> list[str]:
-            self.put("tools/setup/defaults.toml",
-                     support.FIXTURE_DEFAULTS + f"enabled = [{enabled}]\ndisabled = [{disabled}]\n")
-            return [p.message for p in self.check().problems]
+    def test_the_shipped_install_names_skills_rules_and_roles(self) -> None:
+        def install(names: str) -> list[tuple[str, str | None, str, str]]:
+            self.put("tools/setup/defaults.toml", f"install = [{names}]\n" + support.FIXTURE_DEFAULTS)
+            return [(p.file, p.key, p.rule, p.message) for p in self.check().problems]
 
-        self.assertEqual(lists('"alpha", "beta", "solo", "sample"'), [])
-        self.assertEqual(lists('"alpha", "beta", "sample"', '"solo"'), [])
-        self.assertEqual(lists('"alpha", "beta", "sample"'),
-                         ["setup: solo is in neither setup.enabled nor setup.disabled; put it in one"])
-        self.assertEqual(lists('"alpha", "beta", "solo", "sample", "multiagent-collab"', '"alpha"'), [
-            "setup.enabled: multiagent-collab has a setup of its own, which installs it; it is in neither list",
-            "setup: alpha is in both setup.enabled and setup.disabled; keep it in one",
+        self.assertEqual(install('"roles", "alpha", "solo"'), [])
+        file = "tools/setup/defaults.toml"
+        self.assertEqual(install('"roles", "gamma", "multiagent-collab"'), [
+            (file, "install", "defaults", "gamma is no skill or rule of this clone, nor roles"),
+            (file, "install", "defaults", "multiagent-collab has a setup of its own, which installs it; it is no item of install"),
         ])
+        self.assertEqual(install('"alpha", "alpha"'), [(file, "install", "defaults", '"alpha" is given twice')])
+        self.put("tools/setup/defaults.toml", support.FIXTURE_DEFAULTS.replace('dir = "docs/memory"', 'dir = "docs/memory"\ninstall = ["roles"]'))
+        (problem,) = self.check().problems
+        self.assertEqual((problem.key, problem.rule), ("memory.install", "defaults"))
+        self.assertIn("belongs at the top of the file", problem.message)
 
 
 class LauncherTests(TreeCase):

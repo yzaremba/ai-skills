@@ -98,7 +98,8 @@ RULES: dict[str, str] = {
     "stage-unbound": "a stage file of a process skill has no row in roles/bindings.toml",
     "provider-actions": "a provider directory has no readable actions.md",
     "dictionary": "a provider's dictionary.toml fails its schema",
-    "defaults": "tools/setup/defaults.toml fails the settings schema",
+    "defaults": "tools/setup/defaults.toml fails the settings schema, or its install names what is no skill or rule "
+                "of the clone, nor roles",
     "launcher-identical": "the scripts/settings.py launchers of the skills differ",
     "launcher-defaults": "a script's built-in defaults differ from tools/setup/defaults.toml",
 }
@@ -1641,31 +1642,32 @@ def _check_defaults(run: _Run) -> None:
         return
     lines: list[str] = []
     if schema.check_document(data, file, lines):
+        if schema.INSTALL_KEY in data:   # one inside a table is a group's fault, below
+            schema.check(schema.INSTALL, data[schema.INSTALL_KEY], (schema.INSTALL_KEY,), file, lines)
         for group in schema.GROUPS:
             if group in data:
                 schema.validate(group, data[group], file, lines)
-        if data.get("project"):
-            lines.append(
-                f"{file}: project: a project's own lists, read from a project's files alone; "
-                f"the shipped defaults hold no [project] values. Remove the group"
-            )
+        for old, replacement in schema.OLD_KEYS.items():
+            group, _, name = old.partition(".")
+            if isinstance(data.get(group), dict) and name in data[group]:
+                lines.append(f"{file}: {old}: an old key, not read; use {replacement}. Remove it")
     run.loader(file, "defaults", lines)
     if not lines:
         run.defaults = data
-        _check_lists(run, file, data.get("setup", {}))
+        _check_install(run, file, data.get(schema.INSTALL_KEY, []))
 
 
-def _check_lists(run: _Run, file: Path, setup: dict[str, Any]) -> None:
-    """The shipped ``setup.enabled`` and ``setup.disabled`` hold each skill
-    and rule of the clone once, as ``render`` requires of them: a skill or
-    rule added to the clone is added to a list in the same change."""
-    given = {key: settings.Entry(setup[key], "shipped", file) for key in ("enabled", "disabled") if key in setup}
-    if not given:
-        return
-    for _, message in definitions.list_problems(
-        given.get("enabled"), given.get("disabled"), definitions.units(run.where, run.skills),
-    ):
-        run.add(file, "defaults", message)
+def _check_install(run: _Run, file: Path, names: list[str]) -> None:
+    """The shipped ``install`` names a skill or rule of the clone, or
+    ``roles``; never the skill with a setup of its own."""
+    units = definitions.units(run.where, run.skills)
+    for name in names:
+        if name in homes.OWN_SETUP_SKILLS:
+            run.add(file, "defaults", f"{name} has a setup of its own, which installs it; it is no item of install",
+                    key=schema.INSTALL_KEY)
+        elif name != schema.ROLES_ITEM and name not in units:
+            run.add(file, "defaults", f"{name} is no skill or rule of this clone, nor {schema.ROLES_ITEM}",
+                    key=schema.INSTALL_KEY)
 
 
 # --- The launchers ---------------------------------------------------------------

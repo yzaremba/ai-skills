@@ -1,6 +1,5 @@
 # Shipped defaults: the first settings layer. Later layers win, key by key,
-# except [project]: its two lists combine across the project's two files
-# (see the [project] comment below):
+# and so does `install`: a later file's list replaces the one below it whole:
 #   ~/.agents/workflow.toml
 #   <project>/.agents/workflow.toml
 #   <project>/.agents/workflow.local.toml   (git-ignored)
@@ -11,10 +10,20 @@
 #
 # Each group is read only by what it names: the process skills read [process],
 # the roles read [roles] and [providers.<name>], the memory skill reads [memory],
-# the setup tool reads [setup] and [project]. The shipped [providers.<name>]
+# the setup tool reads install. The shipped [providers.<name>]
 # sections are not here: they come from providers/<name>/dictionary.toml.
 
 schema_version = 1
+
+# What a home installs, by name: the skills of the clone, its rules (under
+# rules/) and "roles", the role definitions and a session's entry points.
+# The collaboration skill, multiagent-collab, has a setup of its own and is
+# no item here. Each item brings what it needs: "roles" the skills
+# roles/bindings.toml binds the roles to, a skill what roles/dependencies.toml
+# names for it. The key goes at the top of a file, above every table: below
+# [memory] it would be read as memory.install. A later file's list replaces
+# this one whole.
+install = ["roles", "prd-implementation", "epic-implementation", "project-memory", "self-reflection"]
 
 [process]
 # Where the sprint and epic docs live: relative to the project unless
@@ -31,12 +40,6 @@ recommend = true
 density = "brief"
 
 [roles]
-# Whether `render` generates the role definitions and the entry points of a
-# session. false installs the process alone, as `render --no-roles` does for
-# one run: what an earlier run generated is removed, and true brings it back.
-# For a home it is read from ~/.agents/workflow.toml; a project may turn it
-# off for itself, and gets roles only where the home has them.
-enabled = true
 # Whether a session in the project starts as the Manager.
 manager_default = false
 # Marks the work as high-stakes: a role with a high-stakes tier uses it,
@@ -56,39 +59,3 @@ max_parallel_coders = 3
 # it. Setup takes the value as given; the memory skill stops on an absolute
 # path or one that leads outside the project.
 dir = "docs/memory"
-
-[setup]
-# Read from ~/.agents/workflow.toml alone: a project's file may not hold this
-# group. It is a fact of this machine.
-#
-# On a machine with a Windows side and a WSL side, `render` and `doctor`
-# refuse a clone that only one side can read: every home links to one shared
-# clone. true allows such a clone on every run, as --allow-unshared-clone does
-# for one: only where the other side does not install from this clone (one
-# side used alone, or a clone for each side).
-allow_unshared_clone = false
-
-# The skills and rules of the clone, each in one of the two lists: `render`
-# installs those in enabled, none of those in disabled, and removes the link
-# an earlier run made to one that is disabled. One in neither list or in both
-# stops `render` with an error. To change them, write both lists in
-# ~/.agents/workflow.toml: a key there replaces the shipped one whole. A
-# process skill (one roles/bindings.toml names) in disabled is installed all
-# the same while the roles are on, and so is any unit an enabled skill needs
-# (roles/dependencies.toml); `render` says so. The collaboration skill, which
-# has a setup of its own, is in neither. The roles are roles.enabled, above.
-enabled = ["prd-implementation", "epic-implementation", "project-memory", "self-reflection"]
-disabled = ["csv-tools", "json-tools", "usage-cost", "avoid-bash-injection-heuristics"]
-
-# [project]
-# Read from a project's two files alone, <project>/.agents/workflow.toml and
-# <project>/.agents/workflow.local.toml; in ~/.agents/workflow.toml it is a
-# fault. Nothing is shipped here, so the shipped layer gives nothing.
-# [project] is the exception to "later layers win, key by key": the local
-# file's project.enabled does not replace the shared file's, the two lists
-# combine; the local file's project.disabled then takes names out.
-#
-# The skills and rules (names as in `setup.enabled`) the project uses:
-#   enabled  = ["prd-implementation"]   # in either file
-#   disabled = ["csv-tools"]            # in the local file alone: takes a
-#                                       # name out for this machine

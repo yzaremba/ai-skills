@@ -105,6 +105,13 @@ def v1(path: str, version: int = -1) -> bytes:
     return V1[path][version].encode("utf-8")
 
 
+# Every unit this file's clone holds, in the shipped ``install``, with ``roles`` or without.
+ALL_UNITS = ('"alpha", "beta", "solo", "sample", "self-reflection", "json-tools", "csv-tools", '
+             '"prd-implementation", "epic-implementation", "usage-cost"')
+ALL_INSTALL = f'install = [{ALL_UNITS}, "roles"]\n'
+ALL_NO_ROLES = f'install = [{ALL_UNITS}]\n'
+
+
 class UninstallCase(EntryCase):
     """Both providers in a scratch home, a project, and the fixture clone
     with roles, entry points and the names of the first skills."""
@@ -116,6 +123,7 @@ class UninstallCase(EntryCase):
         self.put("usage-cost/SKILL.md", SKILL.format(name="usage-cost").replace(
             "claude-code, codex", "claude-code (reads its own session logs)"))
         self.put("tools/setup/workflow_setup.py", "# the tool\n")   # what makes a directory look like a clone
+        self.write(self.defaults_file, ALL_INSTALL + support.FIXTURE_DEFAULTS)
         self.agents = self.claude / "agents"
         self.old_skills = self.codex / "skills"
         self.claude_md = self.claude / "CLAUDE.md"
@@ -396,10 +404,12 @@ class RoundTripCase(UninstallCase):
         self.take_back()
         self.assertAsAtTheStart(before)
 
-    def test_with_no_roles(self) -> None:
+    def test_without_roles(self) -> None:
         before = self.start()
-        self.install("--no-roles")
+        self.write(self.defaults_file, ALL_NO_ROLES + support.FIXTURE_DEFAULTS)
+        self.install()
         self.assertNothingAt(self.claude_agents / "lead.md")
+        self.write(self.defaults_file, ALL_INSTALL + support.FIXTURE_DEFAULTS)
         self.take_back()
         self.assertAsAtTheStart(before)
 
@@ -961,16 +971,16 @@ class KeptCase(UninstallCase):
 class ProjectInstallCase(UninstallCase):
     """A project's skill links and rule copy, and the way back (P4.2: R3.6, R3.4)."""
 
-    LIST = '[project]\nenabled = ["beta", "solo", "sample"]\n'
-    NO_HOME = '[setup]\ndisabled = ["alpha", "beta", "solo", "sample"]\n'
+    LIST = 'install = ["beta", "solo", "sample"]\n\n'
+    NO_HOME = 'install = []\n\n'
 
     def setUp(self) -> None:
         super().setUp()
         self.before = self.start(earlier=False)
         self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home)
-        self.data(self.user_file, USER_SETTINGS + self.NO_HOME)
+        self.data(self.user_file, self.NO_HOME + USER_SETTINGS)
         self.done("init", "--yes", "--rewrite-settings", *self.at_home, *self.in_project)
-        self.data(self.project / ".agents" / "workflow.toml", PROJECT_SETTINGS + self.LIST)
+        self.data(self.project / ".agents" / "workflow.toml", self.LIST + PROJECT_SETTINGS)
         self.skills = self.project / ".claude" / "skills"
         self.copy = self.project / ".claude" / "rules" / "sample" / "sample.md"
 
@@ -981,7 +991,7 @@ class ProjectInstallCase(UninstallCase):
         """The project as at the start, but for the list this test wrote in
         the project's own settings file, which is the user's."""
         after = picture(self.project)
-        self.assertEqual(after.pop(".agents/workflow.toml")[1], (PROJECT_SETTINGS + self.LIST).encode("utf-8"))
+        self.assertEqual(after.pop(".agents/workflow.toml")[1], (self.LIST + PROJECT_SETTINGS).encode("utf-8"))
         start = dict(self.before["project"])
         start.pop(".agents/workflow.toml")
         self.assertEqual(after, start)
@@ -1496,12 +1506,12 @@ class RandomCase(UninstallCase):
             ["init", "--yes", "--rewrite-settings", *home, *project],
             ["init", "--yes", "--rewrite-settings", "--max-parallel-coders", "5", *home, *project],
             ["render", *home],
-            ["render", "--no-roles", *home],
+            ["roles-off"],
+            ["roles-on"],
             ["earlier"],
             ["render", "--apply-codex-settings", "--default-codex-permissions", *home],
             ["render", "--remove-codex-settings", *home],
             ["render", *home, *project],
-            ["render", "--no-roles", *home, *project],
         ]
         return [rng.choice(choices) for _ in range(rng.randint(2, 7))]
 
@@ -1530,10 +1540,15 @@ class RandomCase(UninstallCase):
                             self.earlier_setup()
                             took = True
                         continue
+                    if argv in (["roles-off"], ["roles-on"]):   # the shipped install, in the scratch clone
+                        self.write(self.defaults_file, (ALL_NO_ROLES if argv == ["roles-off"] else ALL_INSTALL)
+                                   + support.FIXTURE_DEFAULTS)
+                        continue
                     code, out, err = self.cli(*argv)
                     # A run that is refused (a copy in the way) writes nothing.
                     self.assertIn(code, (0, 2, 3), f"{argv}\n{out}\n{err}")
                     ran.append((code, argv[:2] + [word for word in argv[2:] if word.startswith("--")]))
+                self.write(self.defaults_file, ALL_INSTALL + support.FIXTURE_DEFAULTS)
                 first = self.uninstall("--dry-run", project=True)
                 self.assertEqual(first["kept"], [], ran)
                 self.assertEqual(self.uninstall(project=True)["kept"], [], ran)

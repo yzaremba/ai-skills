@@ -462,8 +462,7 @@ def expected(context: Any, provider: homes.Provider) -> list[Item]:
     name = provider.name
     skills = provider.place(homes.SKILLS).path
     agents = provider.place(homes.AGENTS).path
-    setting = settings.resolve(where, ("roles",)).get("roles.enabled")
-    installed = definitions.home_selection(where, context.sources.skills, setting is None or setting.value is not False).units
+    installed = definitions.home_selection(where, context.sources.skills).units
     items = [
         Item(name, SKILL, skill.name, skills / skill.name, invoke_only=skill.invoke_only)
         for skill in context.sources.skills.values()

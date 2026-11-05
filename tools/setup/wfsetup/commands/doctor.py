@@ -1,7 +1,7 @@
 """Check an install: the clone's sources, what setup wrote in the homes and,
 with --project, in a project, and the providers themselves.
 
-    doctor [--json] [--home DIR] [--project DIR] [--allow-unshared-clone]
+    doctor [--json] [--home DIR] [--project DIR]
            [--only NAME]... [--skip NAME]...
            [--no-versions] [--no-collab]
            [--codex-probe]
@@ -48,20 +48,16 @@ The checks, in the order they run:
                          disk: an error. What render would create now and
                          the record does not list: a warning, and info on a
                          home (or a project) that was never rendered, and
-                         for the generated files of a home rendered with
-                         --no-roles. The roles turned off by the setting
-                         roles.enabled = false, for the home or for the
-                         project, are an info line that names the file:
+                         for the generated files of a home whose `install`
+                         lacks `roles`. Roles left out of the home's
+                         `install` are an info line that names the file:
                          nothing of them is then missing, and what an
                          earlier run generated is reported by drift as
-                         render would no longer make it. With the home's
-                         roles off, an info line also says that each
-                         project rendered with roles keeps its starting
-                         role until `render --project DIR` takes it out.
+                         render would no longer make it.
                          Something at a path where render would
                          install, which setup did not make: an error, since
                          render stops on it. With --project: a unit of the
-                         project's list (project.enabled, and the units it
+                         project's list (install, and the units it
                          needs) that is in neither the project nor the home:
                          a warning, as for any other thing render would
                          create now; and the faults of the project's lists,
@@ -91,16 +87,9 @@ The checks, in the order they run:
                          (tools/setup/workflow_setup.py and roles/); git is
                          not run.
     clone                whether both sides of the machine can read the clone
-                         this runs from: an error where they cannot, a
-                         warning with --allow-unshared-clone, info where the
-                         setting setup.allow_unshared_clone = true in
-                         ~/.agents/workflow.toml allows it (decided once,
-                         for every run; the line names the file); not asked
-                         with --home or on a Linux with no Windows side. A
-                         setting that allows it where it is not needed is
-                         info as well. A project's file that holds [setup]
-                         is an error: the group is read from the user's
-                         file alone.
+                         this runs from: a warning, with one line, where the
+                         Windows side cannot read it; not asked with --home
+                         or on a Linux with no Windows side.
     models               each installed provider's own model list beside its
                          mapping: an effort a definition resolves to that
                          the list does not give its model is an error; a
@@ -279,7 +268,6 @@ SUMMARY = "check the sources, what setup installed and the providers; setup writ
 def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="print one JSON object")
     locations.add_arguments(parser)
-    homes.add_arguments(parser)
     parser.add_argument(
         "--only", action="append", default=[], metavar="NAME",
         help="run this check and no other; may be given more than once. The checks: " + ", ".join(doctor.names()),

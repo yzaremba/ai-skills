@@ -71,17 +71,45 @@ class RenderCase(TreeCase):
         self.rules = self.claude / "rules"
         self.manifest_file = self.home / ".agents" / "workflow-setup" / "manifest.json"
         self.host = homes.Host(SIDE, {"PATH": ""}, ())
+        if not self.ROLES_ON:
+            self.write(self.defaults_file, support.NO_ROLES_INSTALL + support.FIXTURE_DEFAULTS)
 
     # These tests are about the links. The fixture clone has roles and no
-    # dictionary for either provider, so every run here asks for no role
-    # definition; ``test_definitions`` covers those.
-    ROLES = ("--no-roles",)
+    # dictionary for either provider, so the shipped ``install`` here lacks
+    # ``roles`` and every run asks for no role definition; ``test_definitions``
+    # covers those.
+    ROLES_ON = False
+
+    ROLES_LEFT_OUT = support.NO_ROLES_INSTALL
+
+    def leave_clone(self, *names: str) -> None:
+        """A skill or rule gone from the clone, and from the shipped ``install``, as one change."""
+        for name in names:
+            shutil.rmtree(self.clone / ("rules" if name == "sample" else "") / name)
+        kept = [unit for unit in support.TREE_UNITS.replace('"', "").split(", ") if unit not in names]
+        listed = ", ".join(f'"{unit}"' for unit in kept)
+        self.write(self.defaults_file, f"install = [{listed}]\n" + support.FIXTURE_DEFAULTS)
+
+    def roles_off(self) -> None:
+        """The home's ``install`` without ``roles``, above what its settings file already holds."""
+        self.roles_on()
+        text = self.user_file.read_text(encoding="utf-8") if self.user_file.exists() else ""
+        self.write(self.user_file, self.ROLES_LEFT_OUT + text)
+
+    def roles_on(self) -> None:
+        """Back to the shipped ``install``, which holds ``roles``."""
+        if self.user_file.exists():
+            text = self.user_file.read_text(encoding="utf-8").removeprefix(self.ROLES_LEFT_OUT)
+            if text:
+                self.write(self.user_file, text)
+            else:
+                self.user_file.unlink()
 
     def render(self, *argv: str, host: homes.Host | None = None, home: bool = True) -> tuple[int, str, str]:
         host = host or self.host
         places = ["--home", str(self.home)] if home else []
         with mock.patch.object(homes.Host, "current", classmethod(lambda cls: host)):
-            return support.run("render", *argv, *self.ROLES, *places)
+            return support.run("render", *argv, *places)
 
     def report(self, *argv: str, **how) -> tuple[int, dict, str]:
         code, out, err = self.render("--json", *argv, **how)
@@ -136,6 +164,7 @@ class LinksCase(RenderCase):
     def test_the_rule_directory_is_linked_for_claude_code_only(self) -> None:
         self.put("rules/second/second.md", "Another rule.\n")
         self.put("rules/loose.md", "Not a rule: a rule is a directory.\n")
+        self.write(self.defaults_file, 'install = ["alpha", "beta", "solo", "sample", "second"]\n' + support.FIXTURE_DEFAULTS)
         code, report, _ = self.report()
         self.assertEqual(code, 0)
         self.assertLinked(self.rules / "sample", self.clone / "rules" / "sample")
@@ -207,7 +236,7 @@ class LinksCase(RenderCase):
         code, out, _ = support.run("render", "--help")
         flat = " ".join(out.split())
         self.assertEqual(code, 0)
-        for option in ("--dry-run", "--follow-config-symlinks", "--allow-unshared-clone", "--home", "--project", "--json"):
+        for option in ("--dry-run", "--follow-config-symlinks", "--home", "--project", "--json"):
             self.assertIn(option, flat)
         self.assertIn("A Cowork session on the desktop does not load a linked user-level rule", flat)
         self.assertIn("3 when the rest was done", flat)
@@ -493,7 +522,7 @@ class StaleCase(RenderCase):
         self.assertEqual(self.render()[0], 0)
 
     def test_a_skill_that_left_the_clone_is_unlinked(self) -> None:
-        shutil.rmtree(self.clone / "solo")
+        self.leave_clone("solo")
         code, out, err = self.render()
         self.assertEqual((code, err), (0, ""))
         self.assertNothingAt(self.claude_skills / "solo")
@@ -518,7 +547,7 @@ class StaleCase(RenderCase):
         self.assertEqual((self.clone / "alpha" / "SKILL.md").exists(), True)  # only the link went
 
     def test_a_rule_that_left_the_clone_is_unlinked(self) -> None:
-        shutil.rmtree(self.clone / "rules" / "sample")
+        self.leave_clone("sample")
         self.assertEqual(self.render()[0], 0)
         self.assertNothingAt(self.rules / "sample")
 
@@ -527,7 +556,7 @@ class StaleCase(RenderCase):
         self.keep(elsewhere / "SKILL.md")
         fsio.remove_link(self.claude_skills / "solo")
         fsio.make_link(str(elsewhere), self.claude_skills / "solo", True)
-        shutil.rmtree(self.clone / "solo")
+        self.leave_clone("solo")
         before = tree(self.root)
         code, report, err = self.report()
         self.assertEqual((code, err), (0, ""))
@@ -544,7 +573,7 @@ class StaleCase(RenderCase):
     def test_a_stale_link_replaced_by_a_directory_is_kept(self) -> None:
         fsio.remove_link(self.claude_skills / "solo")
         mine = self.keep(self.claude_skills / "solo" / "SKILL.md")
-        shutil.rmtree(self.clone / "solo")
+        self.leave_clone("solo")
         code, report, _ = self.report()
         self.assertEqual(code, 0)
         self.assertEqual(report["stale"][0]["status"], render.KEPT)
@@ -552,7 +581,7 @@ class StaleCase(RenderCase):
 
     def test_a_stale_link_that_is_gone_is_taken_out_of_the_record(self) -> None:
         fsio.remove_link(self.claude_skills / "solo")
-        shutil.rmtree(self.clone / "solo")
+        self.leave_clone("solo")
         code, report, _ = self.report()
         self.assertEqual(code, 0)
         self.assertEqual(report["stale"][0]["status"], render.FORGET)
@@ -568,8 +597,9 @@ class StaleCase(RenderCase):
         self.assertIn("codex: not installed", out)
 
     def test_a_stale_removal_and_a_conflict_together_write_nothing(self) -> None:
-        shutil.rmtree(self.clone / "solo")
+        self.leave_clone("solo")
         self.put("gamma/SKILL.md", (self.clone / "beta" / "SKILL.md").read_text(encoding="utf-8").replace("beta", "gamma"))
+        self.write(self.defaults_file, 'install = ["alpha", "beta", "gamma"]\n' + support.FIXTURE_DEFAULTS)
         self.keep(self.codex_skills / "gamma" / "SKILL.md")
         before = tree(self.root)
         code, _, err = self.render()
@@ -580,17 +610,17 @@ class StaleCase(RenderCase):
 
 
 class ListsCase(RenderCase):
-    """``setup.enabled`` and ``setup.disabled``: each skill and rule of the
-    clone in one of them. In the fixture clone alpha is a process skill (the
-    binding table names it), beta and solo are optional, and the rule is
-    sample; multiagent-collab has a setup of its own and is in neither."""
+    """``install``: the skills and rules a home gets are the ones it names. In
+    the fixture clone alpha is a process skill (the binding table names it),
+    beta and solo are optional, and the rule is sample; multiagent-collab has a
+    setup of its own and is no item."""
 
     ALL = ("alpha", "beta", "solo", "sample")
 
     def lists(self, *disabled: str, enabled: tuple[str, ...] | None = None) -> None:
         enabled = tuple(name for name in self.ALL if name not in disabled) if enabled is None else enabled
         quoted = lambda names: ", ".join(f'"{name}"' for name in names)
-        self.write(self.user_file, f"[setup]\nenabled = [{quoted(enabled)}]\ndisabled = [{quoted(disabled)}]\n")
+        self.write(self.user_file, f"install = [{quoted(enabled)}]\n")
 
     def test_a_disabled_skill_and_rule_are_not_linked(self) -> None:
         self.lists("beta", "sample")
@@ -624,31 +654,27 @@ class ListsCase(RenderCase):
         self.assertNothingAt(self.rules / "sample")
         self.assertNotIn("rules/sample", self.manifest_file.read_text(encoding="utf-8"))
 
-    def test_a_fault_of_the_lists_stops_the_run_before_anything_is_written(self) -> None:
+    def test_a_fault_of_install_stops_the_run_before_anything_is_written(self) -> None:
         self.assertEqual(self.render()[0], 0)
-        for disabled, enabled, line in (
-            ((), (*self.ALL, "multiagent-collab"), "setup.enabled: multiagent-collab has a setup of its own"),
-            (("gamma",), None, "setup.disabled: gamma is no skill or rule of this clone"),
-            (("beta",), self.ALL, "setup: beta is in both setup.enabled and setup.disabled; keep it in one"),
-            ((), ("alpha", "solo", "sample"), "setup: beta is in neither setup.enabled nor setup.disabled; put it in one"),
+        for enabled, line in (
+            ((*self.ALL, "multiagent-collab"), "install: multiagent-collab has a setup of its own"),
+            ((*self.ALL, "gamma"), "install: gamma is no skill or rule of this clone"),
         ):
             with self.subTest(line=line):
-                self.lists(*disabled, enabled=enabled)
+                self.lists(enabled=enabled)
                 before = tree(self.root)
                 code, out, err = self.render()
                 self.assertNotEqual(code, 0)
                 self.assertIn(f"{self.user_file}: {line}", out + err)
                 self.assertEqual(tree(self.root), before)
 
-    def test_disabled_alone_in_the_users_file_meets_the_shipped_enabled(self) -> None:
-        # The shipped file of the real clone lists every unit as enabled: a
-        # key of the user's replaces it whole, so both lists go in one file.
-        self.write(self.defaults_file, support.FIXTURE_DEFAULTS + 'enabled = ["alpha", "beta", "solo", "sample"]\n')
-        self.write(self.user_file, '[setup]\ndisabled = ["sample"]\n')
+    def test_a_skill_brings_what_it_needs(self) -> None:
+        self.put("roles/dependencies.toml", 'schema_version = 1\n\n[needs]\nbeta = ["solo"]\n')
+        self.lists(enabled=("beta",))
         code, out, err = self.render()
-        self.assertNotEqual(code, 0)
-        self.assertIn(f"{self.user_file}: setup.disabled: sample is also in setup.enabled, which {self.defaults_file} "
-                      "gives (shipped layer); write both lists in one file, each skill and rule in one of them", out + err)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(sorted(os.listdir(self.claude_skills)), ["beta", "solo"])
+        self.assertIn("solo: installed as a dependency of beta", out)
 
 
 class GateCase(RenderCase):
@@ -666,23 +692,18 @@ class GateCase(RenderCase):
         self.skill("alpha", name="name: other")
         wsl = homes.Host(homes.WSL, {"PATH": ""}, ())
         with mock.patch.object(locations, "_own_home", lambda: self.home):
-            code, _, err = self.render(host=wsl, home=False)
+            code, out, err = self.render(host=wsl, home=False)
         self.assertEqual(code, 2)
         self.assertIn("[skill-name]", err)
-        self.assertNotIn("--allow-unshared-clone", err)
+        self.assertNotIn("Windows can't read this clone", out + err)
 
-    def test_an_unshared_clone_is_refused_for_the_real_home(self) -> None:
+    def test_a_clone_inside_wsl_is_a_warning_for_the_real_home(self) -> None:
         wsl = homes.Host(homes.WSL, {"PATH": ""}, ())
-        before = tree(self.root)
         with mock.patch.object(locations, "_own_home", lambda: self.home):
             code, out, err = self.render(host=wsl, home=False)
-            self.assertEqual((code, out), (2, ""))
-            self.assertIn("--allow-unshared-clone", err)
-            self.assertIn("the clone setup runs from is", err)
-            self.assertEqual(tree(self.root), before)
-            self.assertEqual(self.render("--dry-run", host=wsl, home=False)[0], 2)
-
-            code, _, err = self.render("--allow-unshared-clone", host=wsl, home=False)
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn(f"  warning: {homes.CLONE_WARNING}", out.splitlines())
+            code, out, err = self.render("--dry-run", host=wsl, home=False)
             self.assertEqual((code, err), (0, ""))
         self.assertLinked(self.claude_skills / "alpha", self.clone / "alpha")
 
@@ -774,7 +795,7 @@ class PartsCase(RenderCase):
         extra.add_arguments(parser)
         render.PARTS[0].add_arguments(parser)  # a part without options adds none
         render.PARTS[2].add_arguments(parser)
-        options = parser.parse_args(["--with-notes", *self.ROLES])
+        options = parser.parse_args(["--with-notes"])
         outcome = render.execute(self.found(), self.sources(), options, parts=(*render.PARTS, extra))
         self.assertEqual((outcome.code, outcome.errors), (0, []))
         self.assertIn("create file home:.claude/agents/note.md", outcome.report["plan"])
@@ -803,10 +824,9 @@ class PartsCase(RenderCase):
 UNSHARED_WHY = "inside WSL, where the Windows side's links cannot lead"
 
 
-class UnsharedCloneSettingCase(RenderCase):
-    """``setup.allow_unshared_clone``: decided once in the user's file, it
-    allows what ``--allow-unshared-clone`` allows for one run. A scratch
-    home is never asked, so the clone's standing is given by hand."""
+class UnsharedCloneWarningCase(RenderCase):
+    """A clone the Windows side cannot read is one warning line, never a
+    refusal. A scratch home is never asked, so the standing is given by hand."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -815,72 +835,41 @@ class UnsharedCloneSettingCase(RenderCase):
         patch.start()
         self.addCleanup(patch.stop)
 
-    def test_without_the_option_or_the_setting_the_clone_is_refused(self) -> None:
-        before = tree(self.root)
+    def test_it_warns_and_installs(self) -> None:
         code, out, err = self.render("--dry-run")
-        self.assertEqual((code, out), (2, ""))
-        self.assertIn(f"{self.clone}: the clone setup runs from is {UNSHARED_WHY}", err)
-        self.assertIn("or give --allow-unshared-clone to install from this clone for this side alone, for this run",
-                      err)
-        self.assertIn("or set setup.allow_unshared_clone = true in ~/.agents/workflow.toml "
-                      "(`init --allow-unshared-clone`) to allow it on every run", err)
-        self.assertEqual(tree(self.root), before)
-        self.write(self.user_file, "[setup]\nallow_unshared_clone = false\n")
-        self.assertEqual(self.render()[0], 2)
-        self.assertNothingAt(self.claude_skills)
-
-    def test_the_option_allows_it_for_the_run_and_says_so(self) -> None:
-        code, out, err = self.render("--dry-run", "--allow-unshared-clone")
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(out.splitlines()[1:3], [
-            f"clone: {self.clone}",
-            f"  only this side reads it ({UNSHARED_WHY}); allowed for this run by --allow-unshared-clone",
-        ])
-
-    def test_the_setting_allows_it_on_every_run_and_says_so(self) -> None:
-        self.write(self.user_file, "[setup]\nallow_unshared_clone = true\n")
-        for _ in range(2):
-            code, out, err = self.render()
-            self.assertIn(code, (0, 3), err)
-            self.assertEqual(err, "")
-            self.assertIn(
-                f"  only this side reads it ({UNSHARED_WHY}); allowed by the setting setup.allow_unshared_clone = "
-                f"true in {self.user_file} (user layer)",
-                out.splitlines(),
-            )
+        self.assertEqual(out.splitlines()[1:3], [f"clone: {self.clone}", f"  warning: {homes.CLONE_WARNING}"])
+        code, out, err = self.render()
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"  warning: {homes.CLONE_WARNING}", out.splitlines())
         self.assertLinked(self.claude_skills / "alpha", self.clone / "alpha")
-        code, report, _ = self.report("--dry-run", "--allow-unshared-clone")
-        self.assertEqual(report["unshared_clone"], {
-            "why": UNSHARED_WHY, "allowed_by": "setting",
-            "said": f"allowed by the setting setup.allow_unshared_clone = true in {self.user_file} (user layer)",
-            "setting": {"value": True, "layer": "user", "file": str(self.user_file)},
-        })
+        code, report, _ = self.report("--dry-run")
+        self.assertEqual(report["clone_warning"], homes.CLONE_WARNING)
+        self.assertNotIn("unshared_clone", report)
+
+    def test_the_flag_is_gone(self) -> None:
+        code, _, err = self.render("--allow-unshared-clone")
+        self.assertEqual(code, 2)
+        self.assertIn("--allow-unshared-clone", err)
 
     def test_a_clone_both_sides_read_says_nothing_of_it(self) -> None:
         self.standing = homes.CloneStanding(self.clone, self.clone, True, "on a Windows drive, which both sides read")
-        self.write(self.user_file, "[setup]\nallow_unshared_clone = true\n")
         code, report, _ = self.report("--dry-run")
         self.assertEqual(code, 0)
-        self.assertIsNone(report["unshared_clone"])
-        self.assertFalse([line for line in render.report_lines(report) if "only this side" in line])
+        self.assertIsNone(report["clone_warning"])
+        self.assertFalse([line for line in render.report_lines(report) if "warning" in line])
 
-    def test_a_projects_file_may_not_allow_it(self) -> None:
+    def test_the_old_setting_is_no_fault_in_any_file(self) -> None:
+        self.write(self.user_file, "[setup]\nallow_unshared_clone = true\n")
         self.write(self.project_file, "[setup]\nallow_unshared_clone = true\n")
-        before = tree(self.root)
         code, out, err = self.render("--dry-run", "--project", str(self.project))
-        self.assertEqual((code, out), (2, ""))
-        self.assertIn(f"{self.project_file}: setup: read from the user's settings file alone", err)
-        # Without the project its files are not read.
-        self.assertEqual(self.render("--dry-run", "--allow-unshared-clone")[0], 0)
-        self.assertEqual(tree(self.root), before)
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn(f"  warning: {homes.CLONE_WARNING}", out.splitlines())
 
     def test_the_help_of_each_command_names_the_settings(self) -> None:
         for command, words in (
-            ("render", ("roles.enabled = false", "setup.allow_unshared_clone = true", "`init --no-roles`",
-                        "There is no\noption that turns the roles on")),
-            ("doctor", ("setup.allow_unshared_clone = true",)),
-            ("init", ("--roles / --no-roles", "roles.enabled", "--allow-unshared-clone / --no-...",
-                      "setup.allow_unshared_clone")),
+            ("render", ("The roles are an item of `install`", "Put `roles` back in `install`")),
+            ("init", ("--manager-default",)),
         ):
             code, out, _ = support.run(command, "--help")
             self.assertEqual(code, 0)
@@ -888,7 +877,8 @@ class UnsharedCloneSettingCase(RenderCase):
             for word in words:
                 with self.subTest(command=command, word=word):
                     self.assertIn(" ".join(word.split()), flat)
-
+            self.assertNotIn("allow-unshared", flat)
+            self.assertNotIn("allow_unshared", flat)
 
 
 class ModelListCase(RenderCase):
@@ -977,8 +967,8 @@ class ProjectCase(RenderCase):
     """A project whose list names alpha and solo, beside a home that may
     leave them out."""
 
-    ONLY_BETA = '[setup]\nenabled = ["beta"]\ndisabled = ["alpha", "sample", "solo"]\n'
-    LIST = '[project]\nenabled = ["alpha", "solo"]\n'
+    ONLY_BETA = 'install = ["beta"]\n'
+    LIST = 'install = ["alpha", "solo"]\n'
 
     def setUp(self) -> None:
         super().setUp()
@@ -1040,15 +1030,14 @@ class ProjectLinksCase(ProjectCase):
 
     def test_a_skill_that_is_needed_comes_with_it_and_is_said(self) -> None:
         self.put("roles/dependencies.toml", 'schema_version = 1\n\n[needs]\nalpha = ["beta"]\n')
-        self.write(self.user_file, '[setup]\nenabled = ["solo"]\ndisabled = ["alpha", "beta", "sample"]\n')
-        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
-        self.write(self.local_file, '[project]\ndisabled = ["beta"]\n')
+        self.write(self.user_file, 'install = ["solo"]\n')
+        self.write(self.project_file, 'install = ["alpha"]\n')
+        self.write(self.local_file, 'install = ["alpha"]\n')    # replaces the project's, whole
         code, out, err = self.render(*self.arg)
         self.assertEqual((code, err), (0, ""))
         self.assertLinked(self.project_claude / "beta", self.clone / "beta")
         self.assertLinked(self.project_agents / "beta", self.clone / "beta")
-        self.assertIn(f"note: project: beta: installed as a dependency of alpha; it overrides project.disabled in "
-                      f"{self.local_file}, which names it", out)
+        self.assertIn("note: project: beta: installed as a dependency of alpha", out)
 
     def test_the_block_that_lists_the_links_is_taken_over_without_a_record(self) -> None:
         self.write(self.user_file, self.ONLY_BETA)
@@ -1072,7 +1061,7 @@ class ProjectLinksCase(ProjectCase):
         self.assertEqual([item for item in report["project"]["items"] if item["kind"] == "link"], [])
 
     def test_a_fault_of_the_list_stops_the_run(self) -> None:
-        self.write(self.project_file, '[project]\nenabled = ["nothing"]\n')
+        self.write(self.project_file, 'install = ["nothing"]\n')
         before = tree(self.project)
         code, out, err = self.render(*self.arg)
         self.assertEqual(code, 2)
@@ -1083,7 +1072,7 @@ class ProjectLinksCase(ProjectCase):
         self.write(self.user_file, self.ONLY_BETA)
         self.write(self.project_file, self.LIST)
         self.assertEqual(self.render(*self.arg)[0], 0)
-        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
+        self.write(self.project_file, 'install = ["alpha"]\n')
         self.assertEqual(self.render(*self.arg)[0], 0)
         self.assertNothingAt(self.project_claude / "solo")
         self.assertEqual(self.ignored(), [".agents/skills/alpha", ".claude/skills/alpha"])
@@ -1203,7 +1192,7 @@ class ProjectLinkThereCase(ProjectCase):
         code, report, _ = self.report(*self.arg)
         self.assertEqual((code, report["changed"]), (0, False))
         # Off the list: removed and forgotten.
-        self.write(self.project_file, '[project]\nenabled = ["solo"]\n')
+        self.write(self.project_file, 'install = ["solo"]\n')
         code, report, err = self.report(*self.arg)
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(self.stale_paths(report)[str(link)], render.REMOVE)
@@ -1223,7 +1212,7 @@ class ProjectLinkThereCase(ProjectCase):
         link.unlink()
         os.symlink(str(alias / "alpha"), link)    # the other side reaches the clone through a link
         self.assertNotIn("adopted", self.record()["entries"]["project:.claude/skills/alpha"])
-        self.write(self.project_file, '[project]\nenabled = ["solo"]\n')
+        self.write(self.project_file, 'install = ["solo"]\n')
         code, report, err = self.report(*self.arg)
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(self.stale_paths(report)[str(link)], render.REMOVE)
@@ -1240,7 +1229,7 @@ class ProjectLinkThereCase(ProjectCase):
         code, report, err = self.report(*self.arg)
         self.assertEqual((code, err), (0, ""))
         self.assertTrue(self.record()["entries"]["project:.claude/skills/alpha"]["adopted"])
-        self.write(self.project_file, '[project]\nenabled = ["solo"]\n')
+        self.write(self.project_file, 'install = ["solo"]\n')
         code, report, err = self.report(*self.arg)
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(self.stale_paths(report)[str(link)], render.REMOVE)
@@ -1275,7 +1264,7 @@ class ProjectLinkThereCase(ProjectCase):
         self.write(self.user_file, self.ONLY_BETA)
         self.write(self.project_file, self.LIST)
         self.assertEqual(self.render(*self.arg)[0], 0)
-        self.write(self.user_file, '[setup]\nenabled = ["alpha", "beta"]\ndisabled = ["sample", "solo"]\n')
+        self.write(self.user_file, 'install = ["alpha", "beta"]\n')
         code, report, err = self.report(*self.arg)
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(self.link_items(report)[".claude/skills/alpha"]["says"], "the home has it")
@@ -1290,7 +1279,7 @@ class ProjectLinkThereCase(ProjectCase):
         self.write(self.user_file, self.ONLY_BETA)
         self.write(self.project_file, self.LIST)
         self.assertEqual(self.render(*self.arg, host=self.wsl(self.root))[0], 0)
-        self.write(self.user_file, '[setup]\nenabled = ["alpha", "beta"]\ndisabled = ["sample", "solo"]\n')
+        self.write(self.user_file, 'install = ["alpha", "beta"]\n')
         before = tree(self.project)
         code, report, err = self.report(*self.arg, host=self.wsl(self.root))
         self.assertEqual((code, err), (0, ""))
@@ -1305,7 +1294,7 @@ class ProjectLinkThereCase(ProjectCase):
         self.assertEqual(self.render(*self.arg, host=self.wsl(self.root))[0], 0)
         link = self.project_claude / "alpha"
         self.assertFalse(os.path.isabs(fsio.look(link).target))
-        self.write(self.project_file, '[project]\nenabled = ["solo"]\n')
+        self.write(self.project_file, 'install = ["solo"]\n')
         code, report, err = self.report(*self.arg, host=self.wsl(self.root))
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(self.stale_paths(report)[str(link)], render.REMOVE)
@@ -1336,8 +1325,8 @@ class ProjectLinkThereCase(ProjectCase):
 class ProjectRuleCopyCase(ProjectCase):
     """A project's rules are copied, not linked (P3.5)."""
 
-    RULE_LIST = '[project]\nenabled = ["sample"]\n'
-    NO_SAMPLE = '[setup]\ndisabled = ["sample"]\n'
+    RULE_LIST = 'install = ["sample"]\n'
+    NO_SAMPLE = 'install = ["alpha", "beta", "solo"]\n'
 
     def setUp(self) -> None:
         super().setUp()
@@ -1388,7 +1377,7 @@ class ProjectRuleCopyCase(ProjectCase):
 
     def test_a_rule_leaving_the_list_removes_the_copy(self) -> None:
         self.assertEqual(self.render(*self.arg)[0], 0)
-        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
+        self.write(self.project_file, 'install = ["alpha"]\n')
         self.assertEqual(self.render(*self.arg)[0], 0)
         self.assertNothingAt(self.copy)
         self.assertNothingAt(self.copy.parent)

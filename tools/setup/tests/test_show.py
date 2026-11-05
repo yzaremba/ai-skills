@@ -33,14 +33,12 @@ PROCESS_TEXT = (
     'process.density = "brief"  (shipped)\n'
 )
 ROLES_TEXT = (
-    "roles.enabled = true  (shipped)\n"
     "roles.manager_default = false  (shipped)\n"
     "roles.high_stakes = false  (shipped)\n"
     "roles.max_parallel_coders = 3  (shipped)\n"
 )
 MEMORY_TEXT = 'memory.dir = "docs/memory"  (shipped)\n'
-SETUP_TEXT = "setup.allow_unshared_clone = false  (shipped)\n"
-SHIPPED_TEXT = PROCESS_TEXT + ROLES_TEXT + MEMORY_TEXT + support.SHIPPED_PROVIDERS_TEXT + SETUP_TEXT
+SHIPPED_TEXT = PROCESS_TEXT + ROLES_TEXT + MEMORY_TEXT + support.SHIPPED_PROVIDERS_TEXT
 
 
 class ShowTextTests(support.ScratchCase):
@@ -60,12 +58,11 @@ class ShowTextTests(support.ScratchCase):
             'process.questions = "all-together"  (shipped)\n'
             "process.recommend = true  (shipped)\n"
             'process.density = "brief"  (shipped)\n'
-            "roles.enabled = true  (shipped)\n"
-            "roles.manager_default = false  (shipped)\n"
+                    "roles.manager_default = false  (shipped)\n"
             "roles.high_stakes = false  (shipped)\n"
             "roles.max_parallel_coders = 2  (project)\n"
             'roles.coder.tier = "deep"  (user)\n'
-            'memory.dir = "notes/memory"  (local)\n' + support.SHIPPED_PROVIDERS_TEXT + SETUP_TEXT,
+            'memory.dir = "notes/memory"  (local)\n' + support.SHIPPED_PROVIDERS_TEXT,
         )
 
     def test_a_group(self) -> None:
@@ -134,12 +131,12 @@ class ShowTextTests(support.ScratchCase):
 
     def test_a_key_the_schema_does_not_have(self) -> None:
         cases = {
-            "proces": "error: proces: no such setting; known groups: process, roles, memory, providers, setup, project\n",
+            "proces": "error: proces: no such setting; known groups: process, roles, memory, providers\n",
             "process.nope": "error: process.nope: no such setting; known under process: docs_dir, questions, recommend, density\n",
             "process.docs_dir.more": "error: process.docs_dir.more: no such setting; process.docs_dir is a single value\n",
             "process.": "error: process.: no such setting; known under process: docs_dir, questions, recommend, density\n",
             "roles.Bad_Name": "error: roles.Bad_Name: no such setting; known under roles: "
-            "enabled, manager_default, high_stakes, max_parallel_coders, <role id>\n",
+            "manager_default, high_stakes, max_parallel_coders, <role id>\n",
         }
         for key, expected in cases.items():
             with self.subTest(key=key):
@@ -205,7 +202,7 @@ class SeveralKeysTests(support.ScratchCase):
         self.assertEqual((code, out), (2, ""))
         self.assertEqual(
             err,
-            "error: proces: no such setting; known groups: process, roles, memory, providers, setup, project\n"
+            "error: proces: no such setting; known groups: process, roles, memory, providers\n"
             "error: memory.nope: no such setting; known under memory: dir\n",
         )
 
@@ -214,69 +211,6 @@ class SeveralKeysTests(support.ScratchCase):
         self.assertTrue(out.startswith(PROCESS_TEXT + ROLES_TEXT + "\nresolved profiles"), out)
         self.assertIn("profiles", json.loads(self.show("roles", "memory", "--json")[1]))
         self.assertNotIn("profiles", json.loads(self.show("roles.coder", "memory", "--json")[1]))
-
-
-class ShowProjectTests(support.ScratchCase):
-    """``show project``: each file's lists with their layer, then the set."""
-
-    def clone_skills(self) -> None:
-        for name in ("alpha", "beta", "solo"):
-            self.write(self.clone / name / "SKILL.md",
-                       f"---\nname: {name}\ndescription: Does {name}.\ncompatibility: claude-code, codex\n---\n\n# {name}\n")
-        self.write(self.clone / "roles" / "dependencies.toml",
-                   'schema_version = 1\n\n[needs]\nalpha = ["beta"]\n')
-
-    def lists(self) -> None:
-        self.clone_skills()
-        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
-        self.write(self.local_file, '[project]\nenabled = ["solo"]\ndisabled = ["beta"]\n')
-
-    def test_both_files_lists_and_the_set(self) -> None:
-        self.lists()
-        code, out, err = self.show("project")
-        self.assertEqual((code, err), (0, ""))
-        self.assertEqual(
-            out,
-            'project.enabled = ["alpha"]  (project)\n'
-            'project.enabled = ["solo"]  (local)\n'
-            'project.disabled = ["beta"]  (local)\n'
-            'project set = ["alpha", "beta", "solo"]\n'
-            f"  beta: installed as a dependency of alpha; it overrides project.disabled in {self.local_file}, which names it\n",
-        )
-
-    def test_a_bare_show_ends_with_it_and_has_no_merged_project_lines(self) -> None:
-        self.lists()
-        out = self.show()[1]
-        self.assertTrue(out.startswith(SHIPPED_TEXT + 'project.enabled = ["alpha"]  (project)\n'), out)
-        self.assertEqual(out.count("project.enabled"), 2)
-
-    def test_json(self) -> None:
-        self.lists()
-        report = json.loads(self.show("project", "--json")[1])
-        self.assertEqual(report["settings"], {})
-        self.assertEqual(report["project"], {
-            "files": [
-                {"layer": "project", "file": str(self.project_file), "enabled": ["alpha"], "disabled": None},
-                {"layer": "local", "file": str(self.local_file), "enabled": ["solo"], "disabled": ["beta"]},
-            ],
-            "set": ["alpha", "beta", "solo"],
-            "needed": {"beta": ["alpha"]},
-            "overrides": {"beta": {"key": "project.disabled", "file": str(self.local_file)}},
-        })
-
-    def test_a_project_without_the_group_prints_nothing(self) -> None:
-        self.clone_skills()
-        self.write(self.project_file, '[process]\ndocs_dir = "d"\n')
-        self.assertEqual(self.show("project"), (0, "", ""))
-        self.assertNotIn("project", json.loads(self.show("project", "--json")[1]))
-        self.assertEqual(self.show("project", project=False), (0, "", ""))
-
-    def test_a_name_that_is_no_unit_is_an_error_with_its_file(self) -> None:
-        self.clone_skills()
-        self.write(self.project_file, '[project]\nenabled = ["nope"]\n')
-        code, _, err = self.show("project")
-        self.assertEqual(code, 2)
-        self.assertIn(f"{self.project_file}: project.enabled: nope is no skill or rule of this clone", err)
 
 
 class ShowJsonTests(support.ScratchCase):
@@ -298,7 +232,6 @@ class ShowJsonTests(support.ScratchCase):
                     "process.questions": {"value": "all-together", "layer": "shipped", "file": shipped},
                     "process.recommend": {"value": False, "layer": "user", "file": str(self.user_file)},
                     "process.density": {"value": "brief", "layer": "shipped", "file": shipped},
-                    "roles.enabled": {"value": True, "layer": "shipped", "file": shipped},
                     "roles.manager_default": {"value": False, "layer": "shipped", "file": shipped},
                     "roles.high_stakes": {"value": False, "layer": "shipped", "file": shipped},
                     "roles.max_parallel_coders": {"value": 1, "layer": "local", "file": str(self.local_file)},
@@ -733,36 +666,23 @@ class RepositoryTests(support.ScratchCase):
             "roles.high_stakes = false  (shipped)",
             "roles.max_parallel_coders = 3  (shipped)",
             'memory.dir = "docs/memory"  (shipped)',
-            "roles.enabled = true  (shipped)",
-            "setup.allow_unshared_clone = false  (shipped)",
         ):
             with self.subTest(line=line):
                 self.assertIn(line, lines)
         self.assertTrue(all(line.endswith("  (shipped)") for line in lines), out)
 
-    def test_the_two_remembered_choices_show_with_their_layer(self) -> None:
+    def test_an_old_setup_key_is_skipped_everywhere(self) -> None:
         self.write(self.user_file, "[roles]\nenabled = false\n[setup]\nallow_unshared_clone = true\n")
-        code, out, err = self.show_repository("roles.enabled", "setup")
-        self.assertEqual((code, err), (0, ""))
-        self.assertEqual(out.splitlines()[:2], ["roles.enabled = false  (user)", "setup.allow_unshared_clone = true  (user)"])
-        self.assertTrue(out.splitlines()[2].startswith('setup.enabled = ["prd-implementation", '), out)
-        self.assertEqual(out.splitlines()[3:], ['setup.disabled = ["csv-tools", "json-tools", "usage-cost", "avoid-bash-injection-heuristics"]  (shipped)'])
-        report = json.loads(self.show_repository("setup", "--json")[1])
-        self.assertEqual(report["settings"]["setup.allow_unshared_clone"],
-                         {"value": True, "layer": "user", "file": str(self.user_file)})
-        self.assertEqual(report["settings"]["setup.disabled"],
-                         {"value": ["csv-tools", "json-tools", "usage-cost", "avoid-bash-injection-heuristics"], "layer": "shipped",
-                          "file": str(support.DEFAULTS)})
-        # A project may turn its roles off; it may not hold [setup].
-        self.write(self.project_file, "[roles]\nenabled = true\n")
-        with mock.patch.object(locations, "CLONE", support.REPOSITORY):
-            code, out, err = self.show("roles.enabled")
-        self.assertEqual((code, out, err), (0, "roles.enabled = true  (project)\n", ""))
         self.write(self.project_file, "[setup]\nallow_unshared_clone = true\n")
         with mock.patch.object(locations, "CLONE", support.REPOSITORY):
             code, out, err = self.show()
+        self.assertEqual((code, err), (0, ""))
+        self.assertNotIn("setup.", out)
+        self.assertNotIn("enabled", out)
+        with mock.patch.object(locations, "CLONE", support.REPOSITORY):
+            code, out, err = self.show("setup")
         self.assertEqual((code, out), (2, ""))
-        self.assertIn(f"error: {self.project_file}: setup: read from the user's settings file alone", err)
+        self.assertIn("setup: no such setting", err)
 
     def test_every_group_shows_and_json_names_the_shipped_file(self) -> None:
         for group in schema.GROUPS:

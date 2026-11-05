@@ -111,8 +111,10 @@ MINE = ("--only", "codex-settings", "--only", "hand-edits", "--only", "drift", "
 
 class SettingsCase(DoctorCase):
     """Both providers installed by their scratch homes; ``config`` is the
-    user's Codex configuration. Every run asks for no role definition:
-    these tests are about one file."""
+    user's Codex configuration. The shipped ``install`` lacks ``roles``, so
+    every run asks for no role definition: these tests are about one file."""
+
+    ROLES_ON = False
 
     def setUp(self) -> None:
         super().setUp()
@@ -125,7 +127,7 @@ class SettingsCase(DoctorCase):
         return data
 
     def go(self, *argv: str, host: homes.Host | None = None) -> tuple[int, str, str]:
-        return self.render("--no-roles", *argv, host=host)
+        return self.render(*argv, host=host)
 
     def apply(self, *argv: str, code: int = 0) -> str:
         """``render --apply-codex-settings``, which must end with ``code``."""
@@ -1157,12 +1159,11 @@ class PinCase(SettingsCase):
     """A Manager loaded on both providers, deep tier and medium effort:
     on Codex gpt-6.1-sol at medium. These runs render the roles."""
 
+    ROLES_ON = True
+
     def setUp(self) -> None:
         super().setUp()
         self.source(self.clone, "manager", tier="deep", load="true")
-
-    def go(self, *argv: str, host: homes.Host | None = None) -> tuple[int, str, str]:
-        return self.render(*argv, host=host)
 
     def pin(self) -> tuple:
         loaded = self.loaded()
@@ -1298,7 +1299,7 @@ class PinCase(SettingsCase):
         original = self.user("[features]\nfast = true\n")
         self.apply()
         self.assertEqual(self.pin(), ("gpt-6.1-sol", "medium"))
-        self.write(self.user_file, "[roles]\nenabled = false\n")
+        self.write(self.user_file, "install = []\n")
         detail = self.assertFinding(self.settings(), doctor.WARNING, f"setup's block codex-settings-top pins {PINNED}",
                                     "the Manager is not installed for Codex as a loadable role now")
         self.assertIn("render --apply-codex-settings takes model and model_reasoning_effort out", detail)
@@ -1309,11 +1310,12 @@ class PinCase(SettingsCase):
         self.assertIn(f"the earlier block pinned the Manager's {PINNED}, and in this run the Manager is not "
                       "installed for Codex as a loadable role", out)
         self.assertQuiet(self.settings())
-        # A Manager whose entry.load is false is none to pin either, and --no-roles asks for none.
+        # A Manager whose entry.load is false is none to pin either, and an install without roles asks for none.
         self.user_file.unlink()
         self.apply()
         self.assertEqual(self.pin(), ("gpt-6.1-sol", "medium"))
-        self.assertIn("taken out", self.apply("--no-roles"))
+        self.write(self.user_file, "install = []\n")
+        self.assertIn("taken out", self.apply())
         self.assertEqual(self.pin(), (None, None))
         self.source(self.clone, "manager", tier="deep", load="false")
         self.apply()

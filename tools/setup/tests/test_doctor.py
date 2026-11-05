@@ -480,6 +480,7 @@ class MissingCase(DoctorCase):
         skill = self.clone / "gamma" / "SKILL.md"
         skill.write_bytes(skill.read_bytes().replace(b"beta", b"gamma"))
         self.source(self.clone, "extra")
+        self.write(self.defaults_file, support.TREE_INSTALL.replace('"sample"', '"sample", "gamma"') + support.FIXTURE_DEFAULTS)
         code, findings = self.only("missing")
         self.assertEqual(code, 0)
         self.assertEqual(sorted(found["subject"] for found in findings if found["severity"] == doctor.WARNING), [
@@ -489,64 +490,56 @@ class MissingCase(DoctorCase):
         self.assertFinding(findings, doctor.WARNING, "home:.claude/skills/gamma", "not installed", "run render")
 
     def test_a_home_rendered_without_roles_is_info(self) -> None:
-        self.ok("--no-roles")
+        self.roles_off()
+        self.ok()
+        self.roles_on()
         code, findings = self.only("missing")
         self.assertEqual(code, 0)
         self.assertQuiet(findings)
-        self.assertFinding(findings, doctor.INFO, "no role definition or entry point is installed", "--no-roles")
+        self.assertFinding(findings, doctor.INFO, "no role definition or entry point is installed", "install lacks roles")
 
-    def test_a_fault_in_the_selection_does_not_lose_the_missing_check_after_no_roles(self) -> None:
-        self.ok("--no-roles")
+    def test_a_fault_in_the_selection_does_not_lose_the_missing_check_after_roles_left_out(self) -> None:
+        self.roles_off()
+        self.ok()
         self.write(self.user_file, '[setup]\nenabled = ["nope"]\n')
         code, findings = self.only("missing")
         self.assertNotIn("could not be made", json.dumps(findings))
 
-    def test_a_process_skill_the_roles_need_is_not_missing_after_no_roles(self) -> None:
+    def test_a_process_skill_the_roles_need_is_not_missing_after_roles_left_out(self) -> None:
         self.write(self.user_file, '[setup]\nenabled = ["beta", "solo", "sample"]\ndisabled = ["alpha"]\n')
-        self.ok("--no-roles")
+        self.roles_off()
+        self.ok()
         code, findings = self.only("missing")
         self.assertEqual(code, 0)
         self.assertQuiet(findings)
+        self.roles_on()
         self.ok()
         code, findings = self.only("missing")
         self.assertEqual(code, 0)
         self.assertQuiet(findings)
 
-    def test_roles_off_by_the_setting_are_info_and_nothing_of_them_is_missing(self) -> None:
-        self.write(self.user_file, "[roles]\nenabled = false\n")
+    def test_roles_left_out_of_the_install_are_info_and_nothing_of_them_is_missing(self) -> None:
+        self.write(self.user_file, "install = []\n")
         self.ok()
         self.assertEqual(self.home_files(), {})
         code, findings = self.only("missing")
         self.assertEqual(code, 0)
         self.assertQuiet(findings)
-        self.assertFinding(findings, doctor.INFO, f"roles: off by the setting roles.enabled = false in {self.user_file} "
-                           "(user layer)")
+        self.assertFinding(findings, doctor.INFO, f"roles: not in `install` in {self.user_file}: the process alone")
         self.assertFalse([detail for detail in self.details(findings, doctor.INFO) if "would write" in detail])
-        # What earlier projects got is not in this home's record: said for every one of them.
-        self.assertFinding(findings, doctor.INFO, "A project rendered with roles keeps what render wrote there",
-                           "Run `render --project DIR` for each such project", "setup keeps no list")
         code, findings = self.only("loaded-skill-size")
         self.assertEqual(code, 0)
-        self.assertFinding(findings, doctor.INFO, f"roles.enabled = false in {self.user_file}", "nothing to measure")
-        # Rendered with roles, then turned off: drift says what render would remove.
+        self.assertFinding(findings, doctor.INFO, f"roles: not in `install` in {self.user_file}", "nothing to measure")
+        # Rendered with roles, then left out of the install: drift says what render would remove.
         self.user_file.unlink()
         self.ok()
-        self.write(self.user_file, "[roles]\nenabled = false\n")
+        self.write(self.user_file, "install = []\n")
         code, findings = self.only("drift")
         self.assertEqual(code, 0)
         self.assertFinding(findings, doctor.WARNING, "home:.claude/agents/lead.md", "run render")
         code, findings = self.only("missing")
         self.assertEqual(code, 0)
         self.assertQuiet(findings)
-
-    def test_a_project_that_turns_its_roles_off_is_info(self) -> None:
-        self.write(self.project_file, "[roles]\nmanager_default = true\nenabled = false\n")
-        self.with_project()
-        code, findings = self.only("missing", *self.project_arg)
-        self.assertEqual(code, 0)
-        self.assertQuiet(findings)
-        self.assertFinding(findings, doctor.INFO, "roles: off for the project by the setting roles.enabled = false",
-                           str(self.project_file))
 
     def test_a_project_never_rendered_is_info(self) -> None:
         self.rendered()
@@ -659,7 +652,7 @@ class DuplicateCase(DoctorCase):
                            str(self.project / ".agents" / "skills" / "beta"))
 
     def test_a_loaded_roles_name_is_no_skill_of_setups_while_the_roles_are_off(self) -> None:
-        self.write(self.user_file, "[roles]\nenabled = false\n")
+        self.write(self.user_file, "install = []\n")
         self.rendered()
         self.keep(self.project / ".claude" / "skills" / "lead" / "SKILL.md")  # a project's own skill "lead"
         self.keep(self.codex / "skills" / "quick" / "SKILL.md")
@@ -733,10 +726,10 @@ class CloneVerdictCase(DoctorCase):
         self.assertEqual(code, 0)
         self.assertFinding(findings, doctor.INFO, "not asked: a scratch home")
 
-    def verdict(self, mounts: tuple[str, ...], allow: bool = False) -> list[doctor.Finding]:
+    def verdict(self, mounts: tuple[str, ...]) -> list[doctor.Finding]:
         where = Locations(home=self.home, clone=self.clone, real_home=True)
         host = homes.Host(homes.WSL, {"PATH": ""}, mounts)
-        context = doctor.Context(where, argparse.Namespace(allow_unshared_clone=allow), host)
+        context = doctor.Context(where, argparse.Namespace(), host)
         return list(doctor.check_clone(context))
 
     @unittest.skipUnless(POSIX, "a WSL host is made by hand from POSIX paths")
@@ -746,49 +739,26 @@ class CloneVerdictCase(DoctorCase):
         self.assertIn("on a Windows drive, which both sides read", found.detail)
 
     @unittest.skipUnless(POSIX, "a WSL host is made by hand from POSIX paths")
-    def test_a_clone_one_side_reads_is_an_error_and_a_warning_when_allowed(self) -> None:
+    def test_a_clone_one_side_reads_is_a_warning(self) -> None:
         (found,) = self.verdict(("/mnt/c",))
-        self.assertEqual(found.severity, doctor.ERROR)
-        self.assertIn("inside WSL", found.detail)
-        self.assertIn("--allow-unshared-clone", found.detail)
-        (found,) = self.verdict(("/mnt/c",), allow=True)
         self.assertEqual(found.severity, doctor.WARNING)
-        self.assertIn("allowed for this run", found.detail)
+        self.assertEqual(found.detail, homes.CLONE_WARNING)
+        self.assertEqual(
+            homes.CLONE_WARNING,
+            "Windows can't read this clone; install Windows from its own clone or from one on a Windows drive.",
+        )
 
     @unittest.skipUnless(POSIX, "a WSL host is made by hand from POSIX paths")
-    def test_the_setting_makes_a_clone_one_side_reads_info(self) -> None:
+    def test_an_old_setting_changes_nothing(self) -> None:
         self.write(self.user_file, "[setup]\nallow_unshared_clone = true\n")
-        for allow in (False, True):  # with the option too, the setting is what is named
-            with self.subTest(allow=allow):
-                (found,) = self.verdict(("/mnt/c",), allow=allow)
-                self.assertEqual(found.severity, doctor.INFO)
-                self.assertIn("inside WSL", found.detail)
-                self.assertIn(f"allowed by the setting setup.allow_unshared_clone = true in {self.user_file} "
-                              "(user layer): this side installs from its own clone", found.detail)
-        self.write(self.user_file, "[setup]\nallow_unshared_clone = false\n")
         (found,) = self.verdict(("/mnt/c",))
-        self.assertEqual(found.severity, doctor.ERROR)
-        self.assertIn("or set setup.allow_unshared_clone = true in ~/.agents/workflow.toml", found.detail)
-
-    @unittest.skipUnless(POSIX, "a WSL host is made by hand from POSIX paths")
-    def test_a_setting_that_is_not_needed_is_said(self) -> None:
-        self.write(self.user_file, "[setup]\nallow_unshared_clone = true\n")
-        shared, unneeded = self.verdict((str(self.root),))
-        self.assertEqual((shared.severity, unneeded.severity), (doctor.OK, doctor.INFO))
-        self.assertIn(f"setup.allow_unshared_clone = true in {self.user_file} (user layer): not needed for this "
-                      "clone", unneeded.detail)
-        code, findings = self.only("clone")  # a scratch home: not asked, and the setting said
+        self.assertEqual(found.severity, doctor.WARNING)
+        code, findings = self.only("clone", *self.project_arg)
         self.assertEqual(code, 0)
         self.assertFinding(findings, doctor.INFO, "not asked: a scratch home")
-        self.assertFinding(findings, doctor.INFO, "setup.allow_unshared_clone = true",
-                           "not used here, where the question is not asked")
-
-    def test_a_projects_file_that_holds_the_setting_is_an_error(self) -> None:
         self.write(self.project_file, "[setup]\nallow_unshared_clone = true\n")
         code, findings = self.only("clone", *self.project_arg)
-        self.assertEqual(code, 1)
-        self.assertFinding(findings, doctor.ERROR, "the check clone could not be made", str(self.project_file),
-                           "setup: read from the user's settings file alone")
+        self.assertEqual(code, 0)
 
 
 class ModelsCase(DoctorCase):
@@ -1303,9 +1273,9 @@ class ProjectSetCase(DoctorCase):
     (R5.1): the home leaves the units out, so the project links or copies
     them."""
 
-    # Roles off: the roles bind alpha, which the home would then install.
-    HOME = '[roles]\nenabled = false\n[setup]\ndisabled = ["alpha", "sample", "solo"]\n'
-    LIST = '[project]\nenabled = ["alpha", "solo", "sample"]\n'
+    # No roles in the install: the roles bind alpha, which the home would then install.
+    HOME = 'install = ["beta"]\n'
+    LIST = 'install = ["alpha", "solo", "sample"]\n'
 
     def setUp(self) -> None:
         super().setUp()
@@ -1328,7 +1298,7 @@ class ProjectSetCase(DoctorCase):
         self.assertEqual((code, loud), (0, []))
 
     def test_a_unit_in_neither_the_project_nor_the_home(self) -> None:
-        self.write(self.project_file, '[project]\nenabled = ["solo"]\n')
+        self.write(self.project_file, 'install = ["solo"]\n')
         self.with_project()                       # the project is rendered, with solo only
         self.write(self.project_file, self.LIST)
         code, findings = self.only("missing", *self.project_arg)
@@ -1422,7 +1392,7 @@ class ProjectSetCase(DoctorCase):
 
     def test_an_entry_whose_unit_left_the_set(self) -> None:
         self.project_rendered()
-        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
+        self.write(self.project_file, 'install = ["alpha"]\n')
         code, findings = self.only("drift", *self.project_arg)
         self.assertFinding(findings, doctor.WARNING, "project:.claude/skills/solo", "run render")
         self.assertFinding(findings, doctor.WARNING, "project:.claude/rules/sample/sample.md", "run render")
@@ -1430,7 +1400,7 @@ class ProjectSetCase(DoctorCase):
                          ["project:.claude/rules/sample/sample.md", "project:.claude/skills/solo"])
 
     def test_the_faults_of_the_lists_with_their_file(self) -> None:
-        self.write(self.project_file, '[project]\nenabled = ["alpha", "nothing"]\n')
+        self.write(self.project_file, 'install = ["alpha", "nothing"]\n')
         code, findings = self.only("missing", *self.project_arg)
         self.assertEqual(code, 1)
         self.assertFinding(findings, doctor.ERROR, "render cannot plan the install", "nothing", str(self.project_file))
@@ -1523,9 +1493,9 @@ class RepositoryCase(DoctorCase):
         self.assertEqual(code, 0)
         for name in doctor.names():
             self.assertIn(name, out)
-        for option in ("--only", "--skip", "--no-versions", "--no-collab", "--json",
-                       "--allow-unshared-clone", "--project", "--home"):
+        for option in ("--only", "--skip", "--no-versions", "--no-collab", "--json", "--project", "--home"):
             self.assertIn(option, out)
+        self.assertNotIn("allow-unshared-clone", out)
 
     def test_every_check_has_a_name_of_its_own(self) -> None:
         self.assertEqual(len(set(doctor.names())), len(doctor.CHECKS))

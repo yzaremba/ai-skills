@@ -24,47 +24,14 @@ What is asked
         --docs-dir DIR                    process.docs_dir
         --questions HOW                   process.questions
         --recommend / --no-recommend      process.recommend
-        --roles / --no-roles              roles.enabled
         --manager-default / --no-...      roles.manager_default
         --high-stakes / --no-...          roles.high_stakes
         --max-parallel-coders N           roles.max_parallel_coders
         --memory-dir DIR                  memory.dir
-        --allow-unshared-clone / --no-... setup.allow_unshared_clone
-                                          (the user's file only)
-        --skills NAME...                  project.enabled (with --project; below)
         --unset KEY                       take KEY out of the file (below)
 
     The first three, and --unset, may be given several times. Each answer is checked by
     the settings schema, with the schema's own message.
-
-    roles.enabled = false is the process alone on every `render`, which
-    `render --no-roles` is for one run; a project's file may set it for that
-    project. setup.allow_unshared_clone = true lets `render` and `doctor`
-    accept, on every run, a clone that only this side of the machine can
-    read, which `--allow-unshared-clone` does for one run: only where the
-    other side does not install from this clone (one side used alone, or a
-    clone for each side). It is read from the user's file alone, so it is
-    never asked, and its flag is refused, with --project. Its question is
-    asked only where it applies: the machine has a Windows side and a WSL
-    side and this side's clone is one the other cannot read. Its proposal is
-    then the value in effect, false (a shared clone required) unless the
-    file already says otherwise. Elsewhere it is not asked, a value the file
-    holds stays, and the flag still sets it.
-
-    --skills NAME... (with --project only) sets project.enabled in the
-    project's file to exactly the names given: the whole list, so the one
-    flag adds and removes. A name is a skill or the rule of this clone (the
-    names `show project` and `render --project` use). It is a stated answer
-    and is never asked. project.disabled and the local file are written by
-    hand. Every `init --project` run, with --skills or without, first
-    reports the faults in the project's two files' [project] lists (a name
-    that is no unit, a name in both lists of one file), each with its file,
-    and writes nothing while there is one; a list that --skills or
-    --unset project.enabled replaces is not read for it.
-
-    A script that answers every question by flag, without --yes, now gives
-    --roles or --no-roles too, and, on a clone the other side cannot read,
-    --allow-unshared-clone or --no-allow-unshared-clone.
 
     What is proposed for a question is the value in effect now: the one in
     the file being written if it has one, else the one the layers below
@@ -121,12 +88,11 @@ What is written
 Taking a key out
     --unset KEY takes KEY out of the file being written, so that it follows
     the layer below again; the output shows it as "taken out; the value is
-    then ...". KEY is a key `init` writes: one of the settings above
-    (setup.allow_unshared_clone only without --project), or
+    then ...". KEY is a key `init` writes: one of the settings above, or
     providers.<p>.tiers.<t>, providers.<p>.efforts.<e> or
     providers.<p>.role_models.<role> of a provider this run sets up (a role
-    id that no role definition has only if the file holds it), or
-    project.enabled (with --project). Any other key is an error. An unset
+    id that no role definition has only if the file holds it). Any other key
+    is an error. An unset
     key is an answer: its question is not asked. A key the file does not
     hold changes nothing, and a line says so. --unset together with a flag
     that answers the same key is an error. --role-model PROVIDER:ROLE= with
@@ -193,8 +159,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .. import commands, dictionary, fileops, fsio, homes, locations, modellist, profiles, roles, schema, settings
-from .. import tomlio, validate
-from ..definitions import PROJECT_ENABLED_KEY, project_selection, units
+from .. import tomlio
 from ..dictionary import Dictionary
 from ..errors import SetupError
 from ..modellist import Comparison, Reading
@@ -212,12 +177,10 @@ _SETTINGS = (
     ("process.docs_dir", "--docs-dir", "docs_dir", "string"),
     ("process.questions", "--questions", "questions", "string"),
     ("process.recommend", "--recommend", "recommend", "boolean"),
-    ("roles.enabled", "--roles", "roles", "boolean"),
     ("roles.manager_default", "--manager-default", "manager_default", "boolean"),
     ("roles.high_stakes", "--high-stakes", "high_stakes", "boolean"),
     ("roles.max_parallel_coders", "--max-parallel-coders", "max_parallel_coders", "integer"),
     ("memory.dir", "--memory-dir", "memory_dir", "string"),
-    (homes.UNSHARED_KEY, homes.UNSHARED_OPTION, "allow_unshared_clone", "boolean"),
 )
 _TRUE = ("y", "yes", "true")
 _FALSE = ("n", "no", "false")
@@ -265,14 +228,9 @@ def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--unset", action="append", default=[], metavar="KEY",
         help="take KEY out of the file, so that it follows the layer below again; a setting above, or a "
-        "provider's tier, effort or role model (a tier or an effort is refused when writing the user's file), or "
-        "project.enabled (with --project). Not asked. "
+        "provider's tier, effort or role model (a tier or an effort is refused when writing the user's file). "
+        "Not asked. "
         "May be given several times",
-    )
-    parser.add_argument(
-        "--skills", nargs="+", metavar="NAME",
-        help="project.enabled: the skills and the rule the project uses, exactly these (the whole list; with "
-        "--project only). Not asked",
     )
     parser.add_argument(
         "--allow-unlisted", action="store_true",
@@ -285,11 +243,6 @@ def configure(parser: argparse.ArgumentParser) -> None:
     switch = argparse.BooleanOptionalAction
     parser.add_argument("--recommend", action=switch, help="process.recommend: a recommendation with each question")
     parser.add_argument(
-        "--roles", action=switch,
-        help="roles.enabled: render generates the role definitions and the entry points; --no-roles installs "
-        "the process alone on every render, as `render --no-roles` does for one run",
-    )
-    parser.add_argument(
         "--manager-default", action=switch, help="roles.manager_default: a session in the project starts as the Manager",
     )
     parser.add_argument("--high-stakes", action=switch, help="roles.high_stakes: roles use their high-stakes tier")
@@ -297,12 +250,6 @@ def configure(parser: argparse.ArgumentParser) -> None:
         "--max-parallel-coders", metavar="N", help="roles.max_parallel_coders: how many Coders work at the same time",
     )
     parser.add_argument("--memory-dir", metavar="DIR", help="memory.dir: where the project memory lives")
-    parser.add_argument(
-        homes.UNSHARED_OPTION, action=switch,
-        help=f"{homes.UNSHARED_KEY}: render and doctor accept, on every run, a clone that only this side of the "
-        "machine can read; only where the other side does not install from this clone (one side used alone, or a "
-        "clone for each side). The user's file only; asked only where the clone is such a clone",
-    )
 
 
 # --- Asking -------------------------------------------------------------------
@@ -607,11 +554,14 @@ def _header(scope: str) -> list[str]:
 
 
 def _flat(data: dict[str, Any]) -> dict[str, Any]:
-    return {
+    flat = {
         key: value
         for group in schema.GROUPS if group in data
         for key, value in schema.flatten(data[group], (group,))
     }
+    if schema.INSTALL_KEY in data:     # a key of the file itself, above every table: kept as it is
+        flat[schema.INSTALL_KEY] = data[schema.INSTALL_KEY]
+    return flat
 
 
 def _nest(flat: dict[str, Any]) -> dict[str, Any]:
@@ -664,8 +614,6 @@ def run(args: argparse.Namespace) -> int:
         raise SetupError("--user and --project: give one; they name two different files")
     where = locations.from_args(args)
     scope = PROJECT if where.project is not None else USER
-    if args.skills and scope != PROJECT:
-        raise SetupError("--skills: names the skills of a project; give it with --project DIR")
     target: Path = where.project_file if scope == PROJECT else where.user_file  # type: ignore[assignment]
     below_layers = ("shipped",) if scope == USER else ("shipped", USER)
     found = homes.resolve(where)
@@ -681,11 +629,6 @@ def run(args: argparse.Namespace) -> int:
     current = [document for document in settings.documents(where) if document.layer == scope]
     existing = _flat(current[0].data) if current else None
     flat: dict[str, Any] = dict(existing or {})
-
-    skills_given: list[str] = []
-    if scope == PROJECT:
-        replaced = bool(args.skills) or PROJECT_ENABLED_KEY in (".".join(schema.parse_key(text)) for text in args.unset)
-        skills_given = _project_skills(where, target, args.skills or [], replaced)
 
     def proposed(key: str) -> Any:
         return flat[key] if key in flat else below[key].value
@@ -742,12 +685,6 @@ def run(args: argparse.Namespace) -> int:
     answers: dict[str, Any] = {}
     for key, flag, attribute, kind in _SETTINGS:
         value = getattr(args, attribute)
-        if value is not None and scope == PROJECT and key.split(".")[0] in schema.USER_ONLY:
-            typed = flag if value is True else f"--no-{flag[2:]}"
-            raise SetupError(
-                f"{typed}: {key} is read from the user's file alone (~/.agents/workflow.toml): it is a fact of this "
-                "machine, not of a project. Give it to `init` without --project"
-            )
         if value is not None:
             if isinstance(value, str) and kind == "string" and locations.control_character(value):
                 raise SetupError(f"{flag}: the value holds a control character or a line break")
@@ -763,16 +700,12 @@ def run(args: argparse.Namespace) -> int:
         mapped = len(parts) == 4 and parts[0] == "providers" and parts[2] in (*_MAPS, "role_models")
         if mapped and parts[2] in _MAPS and parts[3] not in _MAPS[parts[2]][2]:
             mapped = False
-        if not (key in settings_keys or mapped or key == PROJECT_ENABLED_KEY):
+        if not (key in settings_keys or mapped):
             raise SetupError(
                 f"--unset {text}: not a key `init` writes; those are {', '.join(sorted(settings_keys))}, "
-                f"{PROJECT_ENABLED_KEY} (with --project), and providers.<provider>.tiers.<tier>, "
+                "and providers.<provider>.tiers.<tier>, "
                 ".efforts.<effort> and .role_models.<role>"
             )
-        if key == PROJECT_ENABLED_KEY and scope != PROJECT:
-            raise SetupError(f"--unset {text}: {key} is a key of a project's file; give it to `init` with --project")
-        if key == homes.UNSHARED_KEY and scope == PROJECT:
-            raise SetupError(f"--unset {text}: {key} is read from the user's file alone; give it to `init` without --project")
         if mapped and parts[1] not in names:
             raise SetupError(
                 f"--unset {text}: {parts[1]} is not a provider this run sets up; installed here, "
@@ -789,7 +722,7 @@ def run(args: argparse.Namespace) -> int:
                 f"--unset {text}: the user's file holds the {parts[2]} mapping in full, so a key of it is not taken "
                 "out; give --tier or --effort to change one"
             )
-        if key in answers or (key == PROJECT_ENABLED_KEY and skills_given) or (mapped and (parts[1], parts[3]) in flags[parts[2]]):
+        if key in answers or (mapped and (parts[1], parts[3]) in flags[parts[2]]):
             raise SetupError(f"--unset {text}: a flag answers the same key; give one of them")
         if key in unset:
             continue
@@ -858,23 +791,9 @@ def run(args: argparse.Namespace) -> int:
             place(key, model, stated=True)
 
     # --- The other settings ---------------------------------------------------
-    # The clone's question is asked where it applies: the user's file, on a
-    # machine whose other side cannot read this clone. Elsewhere a value the
-    # file holds stays as it is, and a flag still sets it.
-    clone = homes.clone_standing(found)
-    unasked: dict[str, str] = {}
-    if scope == PROJECT:
-        unasked[homes.UNSHARED_KEY] = "the user's file alone holds it"
-    elif clone.shared is not False:
-        why = clone.why.removeprefix("not asked: ")
-        unasked[homes.UNSHARED_KEY] = f"the clone needs no such permission here ({why})"
     for key in unset:
         if key.split(".")[2:3] == ["role_models"]:
             flat.pop(key, None)
-    if skills_given:
-        place(PROJECT_ENABLED_KEY, skills_given, stated=True)
-    elif PROJECT_ENABLED_KEY in unset:
-        flat.pop(PROJECT_ENABLED_KEY, None)
     for key, flag, _, kind in _SETTINGS:
         if key in answers:
             place(key, answers[key], stated=True)
@@ -882,14 +801,6 @@ def run(args: argparse.Namespace) -> int:
         if key in unset:
             flat.pop(key, None)
             continue
-        if key in unasked:
-            continue
-        if key == homes.UNSHARED_KEY and dialogue.interactive:
-            print(
-                f"the clone {clone.real} is {clone.why}: render and doctor refuse it unless {homes.UNSHARED_OPTION} "
-                f"is given on each run, or {key} is true. Say true only where the {homes.other_side(found)} "
-                f"does not install from this clone ({homes.unshared_cases(found)})"
-            )
         value, typed = _settle_setting(dialogue, key, flag, kind, proposed(key))
         if value is _TAKEN_OUT:
             if key not in flat:
@@ -932,15 +843,10 @@ def run(args: argparse.Namespace) -> int:
     print()
     print("settings:")
     for key, _, _, _ in _SETTINGS:
-        if scope == PROJECT and key.split(".")[0] in schema.USER_ONLY:
-            continue
-        why = f"; not asked: {unasked[key]}" if key in unasked and key not in answers else ""
         if key in flat:
-            print(f"  {key} = {tomlio.format_value(flat[key])}  (in this file{why})")
+            print(f"  {key} = {tomlio.format_value(flat[key])}  (in this file)")
         else:
-            print(f"  {key} = {tomlio.format_value(below[key].value)}  ({below[key].layer}; not written{why})")
-    if PROJECT_ENABLED_KEY in flat:
-        print(f"  {PROJECT_ENABLED_KEY} = {tomlio.format_value(flat[PROJECT_ENABLED_KEY])}  (in this file)")
+            print(f"  {key} = {tomlio.format_value(below[key].value)}  ({below[key].layer}; not written)")
     print()
 
     # --- Plan -----------------------------------------------------------------
@@ -1014,33 +920,6 @@ def run(args: argparse.Namespace) -> int:
         print(f"the file as it was is in {roots.backups_dir_of(scope == PROJECT) / plan.stamp}")
     print(_next_steps())
     return 0
-
-
-def _project_skills(where: Any, target: Path, given: list[str], replaced: bool) -> list[str]:
-    """The names ``--skills`` gave, each checked against the clone's units and
-    without repeats; and the faults of the project's two files' lists, with
-    their file, as one ``SetupError``. The faults of the file being written
-    are left out where ``replaced`` says its list is replaced or taken out."""
-    held = any(
-        document.layer in settings.PROJECT_LAYERS and isinstance(document.data.get("project"), dict)
-        for document in settings.documents(where, ("project",))
-    )
-    if not (held or given):
-        return []
-    skills = validate.check(where).skills
-    names = list(dict.fromkeys(given))
-    every = units(where, skills)
-    problems = [
-        f"--skills {name}: no skill or rule of this clone; those are {', '.join(sorted(every)) or 'none'}"
-        for name in names if name not in every
-    ]
-    try:
-        project_selection(where, skills)
-    except SetupError as exc:
-        problems.extend(line for line in exc.lines if not (replaced and line.startswith(f"{target}:")))
-    if problems:
-        raise SetupError(*problems)
-    return names
 
 
 def _same(one: Any, other: Any) -> bool:

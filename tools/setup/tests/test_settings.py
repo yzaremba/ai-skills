@@ -29,13 +29,11 @@ class ShippedDefaultsTests(support.ScratchCase):
                 "process.questions": "all-together",
                 "process.recommend": True,
                 "process.density": "brief",
-                "roles.enabled": True,
                 "roles.manager_default": False,
                 "roles.high_stakes": False,
                 "roles.max_parallel_coders": 3,
                 "memory.dir": "docs/memory",
                 **support.SHIPPED_PROVIDERS,
-                "setup.allow_unshared_clone": False,
             },
         )
         self.assertEqual({entry.layer for entry in entries.values()}, {"shipped"})
@@ -80,7 +78,6 @@ class ShippedDefaultsTests(support.ScratchCase):
         self.assertEqual(
             keys,
             [
-                "roles.enabled",
                 "roles.manager_default",
                 "roles.high_stakes",
                 "roles.max_parallel_coders",
@@ -118,7 +115,6 @@ class LayerTests(support.ScratchCase):
                 "process.questions": ("one-at-a-time", "project"),
                 "process.recommend": (True, "local"),
                 "process.density": ("brief", "shipped"),
-                "roles.enabled": (True, "shipped"),
                 "roles.manager_default": (False, "shipped"),
                 "roles.high_stakes": (False, "shipped"),
                 "roles.max_parallel_coders": (5, "local"),
@@ -210,7 +206,7 @@ class ValidationTests(support.ScratchCase):
     def test_an_unknown_top_level_key(self) -> None:
         self.assertEqual(
             self.problems("[proces]\nrecommend = true\n"),
-            ["proces: unknown key; known here: schema_version, process, roles, memory, providers, setup, project"],
+            ["proces: unknown key; known here: schema_version, install, process, roles, memory, providers"],
         )
 
     def test_an_unknown_key_in_a_role_override(self) -> None:
@@ -222,7 +218,7 @@ class ValidationTests(support.ScratchCase):
     def test_an_unknown_scalar_under_roles_is_not_taken_for_a_role(self) -> None:
         self.assertEqual(
             self.problems("[roles]\nmax_coders = 2\n"),
-            ["roles.max_coders: unknown key; known here: enabled, manager_default, high_stakes, max_parallel_coders, <role id>"],
+            ["roles.max_coders: unknown key; known here: manager_default, high_stakes, max_parallel_coders, <role id>"],
         )
 
     def test_a_table_that_is_not_a_role_id(self) -> None:
@@ -439,119 +435,151 @@ class GroupIsolationTests(support.ScratchCase):
                         settings.resolve(self.locations(), (group,))
 
 
-class RememberedChoiceTests(support.ScratchCase):
-    """``roles.enabled`` and ``setup.allow_unshared_clone``: what the schema
-    takes, and which layers may hold each."""
+class OldKeyTests(support.ScratchCase):
+    """``setup.allow_unshared_clone`` is an old key: skipped, never a fault,
+    in any file, and listed with what replaces it."""
 
-    def problems(self, file, text: str, groups=schema.GROUPS) -> list[str]:
-        self.write(file, text)
+    def test_the_shipped_defaults_hold_no_setup_group(self) -> None:
+        self.assertNotIn("setup", tomllib.loads(support.DEFAULTS.read_text(encoding="utf-8")))
+        self.assertFalse([key for key in settings.resolve(self.repository()) if key.startswith("setup.")])
+
+    def test_an_old_key_is_skipped_not_reported(self) -> None:
+        self.write(self.user_file, '[roles]\nenabled = false\n[setup]\nenabled = ["a"]\ndisabled = 3\nallow_unshared_clone = true\n')
+        self.write(self.project_file, '[project]\nenabled = ["a"]\n[setup]\nallow_unshared_clone = true\n')
+        self.write(self.local_file, '[project]\ndisabled = ["a"]\n')
+        entries = settings.resolve(self.locations())
+        self.assertEqual(entries["roles.manager_default"].layer, "shipped")
+        self.assertEqual([key for key in entries if key.split(".")[0] in ("setup", "project")], [])
+        self.assertNotIn("roles.enabled", entries)
+        self.assertIn(
+            ("setup.allow_unshared_clone", "none: setup warns on such a clone"),
+            [(key, replacement) for _, key, replacement in settings.old_keys(self.locations())],
+        )
+        # A table of old keys is no unknown key; one with another key in it is.
+        self.write(self.project_file, '[project]\nenabled = ["a"]\nother = 1\n')
         with self.assertRaises(SetupError) as caught:
-            settings.resolve(self.locations(), groups)
-        return list(caught.exception.lines)
-
-    def test_both_take_a_boolean_only(self) -> None:
-        for text, line in (
-            ('[roles]\nenabled = "no"\n', "roles.enabled: expected a boolean, got a string"),
-            ("[roles]\nenabled = 0\n", "roles.enabled: expected a boolean, got an integer"),
-            ("[setup]\nallow_unshared_clone = 1\n", "setup.allow_unshared_clone: expected a boolean, got an integer"),
-            ("[setup]\nshared = true\n", "setup.shared: unknown key; known here: allow_unshared_clone, enabled, disabled"),
-            ("setup = true\n", "setup: expected a table, got a boolean"),
-        ):
-            with self.subTest(text=text):
-                self.assertEqual(self.problems(self.user_file, text), [f"{self.user_file}: {line}"])
-
-    def test_the_two_lists_take_arrays_of_names(self) -> None:
-        for text, line in (
-            ('[setup]\ndisabled = "usage-cost"\n', "setup.disabled: expected an array of strings, got a string"),
-            ('[setup]\nenabled = ["alpha", "alpha"]\n', 'setup.enabled: "alpha" is given twice'),
-            ('[setup]\nenabled = [""]\n', "setup.enabled: item 1 must not be empty"),
-        ):
-            with self.subTest(text=text):
-                self.assertEqual(self.problems(self.user_file, text), [f"{self.user_file}: {line}"])
-
-    def test_the_repositorys_defaults_set_both_and_ship_the_safe_values(self) -> None:
-        entries = settings.resolve(self.repository(), ("roles", "setup"))
-        self.assertEqual((entries["roles.enabled"].value, entries["roles.enabled"].layer), (True, "shipped"))
-        found = entries["setup.allow_unshared_clone"]
-        self.assertEqual((found.value, found.layer, found.file), (False, "shipped", support.DEFAULTS))
-
-    def test_roles_enabled_is_layered_like_any_key(self) -> None:
-        def value(project: bool = True) -> tuple:
-            entry = settings.resolve(self.locations(project), ("roles",)).get("roles.enabled")
-            return None if entry is None else (entry.value, entry.layer)
-
-        self.assertEqual(value(), (True, "shipped"))
-        self.write(self.user_file, "[roles]\nenabled = false\n")
-        self.assertEqual(value(), (False, "user"))
-        self.write(self.project_file, "[roles]\nenabled = true\n")
-        self.assertEqual(value(), (True, "project"))
-        self.assertEqual(value(project=False), (False, "user"))  # a home reads the user's file alone
-        self.write(self.local_file, "[roles]\nenabled = false\n")
-        self.assertEqual(value(), (False, "local"))
-
-    def test_the_setup_group_is_read_from_the_users_file(self) -> None:
-        self.write(self.user_file, "[setup]\nallow_unshared_clone = true\n")
-        entry = settings.resolve(self.locations(), ("setup",))["setup.allow_unshared_clone"]
-        self.assertEqual((entry.value, entry.layer, entry.file), (True, "user", self.user_file))
-
-    def test_a_projects_file_may_not_hold_the_setup_group(self) -> None:
-        for file in (self.project_file, self.local_file):
-            with self.subTest(file=file.name):
-                (line,) = self.problems(file, "[setup]\nallow_unshared_clone = true\n", ("setup",))
-                self.assertTrue(line.startswith(f"{file}: setup: read from the user's settings file alone"), line)
-                self.assertIn("~/.agents/workflow.toml", line)
-                self.assertIn("not of a project", line)
-                # Refused in the same words when every group is read, as by show.
-                self.assertEqual(self.problems(file, "[setup]\nallow_unshared_clone = false\n"), [line])
-                file.unlink()
-
-    def test_a_projects_setup_group_does_not_stop_a_reader_of_another_group(self) -> None:
-        self.write(self.project_file, "[setup]\nallow_unshared_clone = true\n[process]\ndocs_dir = \"p\"\n")
-        self.assertEqual(settings.resolve(self.locations(), ("process",))["process.docs_dir"].value, "p")
-
-
-class ProjectGroupTests(support.ScratchCase):
-    """``[project]``: read from a project's two files alone."""
-
-    def problems(self, file, text: str, groups=schema.GROUPS) -> list[str]:
-        self.write(file, text)
-        with self.assertRaises(SetupError) as caught:
-            settings.resolve(self.locations(), groups)
-        return list(caught.exception.lines)
-
-    def test_the_group_is_read_from_a_project_file(self) -> None:
-        self.write(self.project_file, '[project]\nenabled = ["alpha", "beta"]\n')
-        self.write(self.local_file, '[project]\nenabled = ["gamma"]\ndisabled = ["alpha"]\n')
-        entries = settings.resolve(self.locations(), ("project",))
-        # Per file, the later layer wins key by key here; the sets combine where they are read.
-        self.assertEqual(entries["project.enabled"].value, ["gamma"])
-        self.assertEqual(entries["project.enabled"].layer, "local")
-        self.assertEqual((entries["project.disabled"].value, entries["project.disabled"].layer), (["alpha"], "local"))
-
-    def test_the_shipped_layer_gives_nothing(self) -> None:
-        self.assertEqual(settings.resolve(self.repository(), ("project",)), {})
-
-    def test_the_users_file_may_not_hold_the_group(self) -> None:
-        (line,) = self.problems(self.user_file, '[project]\nenabled = ["alpha"]\n', ("project",))
-        self.assertTrue(line.startswith(f"{self.user_file}: project: read from a project's files alone"), line)
-        self.assertEqual(self.problems(self.user_file, '[project]\nenabled = ["alpha"]\n'), [line])
-
-    def test_disabled_is_a_fault_in_the_shared_file_only(self) -> None:
-        (line,) = self.problems(self.project_file, '[project]\ndisabled = ["alpha"]\n', ("project",))
-        self.assertEqual(line, f"{self.project_file}: project.disabled: allowed in .agents/workflow.local.toml only")
-        self.project_file.unlink()
-        self.write(self.local_file, '[project]\ndisabled = ["alpha"]\n')
-        self.assertEqual(settings.resolve(self.locations(), ("project",))["project.disabled"].value, ["alpha"])
-
-    def test_the_lists_take_arrays_of_names(self) -> None:
+            settings.resolve(self.locations())
         self.assertEqual(
-            self.problems(self.project_file, '[project]\nenabled = "alpha"\n'),
-            [f"{self.project_file}: project.enabled: expected an array of strings, got a string"],
+            [line for line in caught.exception.lines if "project:" in line and "unknown key" in line],
+            [f"{self.project_file}: project: unknown key; known here: schema_version, install, process, roles, "
+             "memory, providers"],
+        )
+        self.write(self.user_file, "[setup]\nshared = true\n")
+        with self.assertRaises(SetupError) as caught:
+            settings.resolve(self.locations())
+        self.assertTrue(any("setup: unknown key" in line for line in caught.exception.lines))
+
+
+class InstallTests(support.ScratchCase):
+    """``install``: a top-level list, read per layer, apart from the groups."""
+
+    def problems(self, file, text: str) -> list[str]:
+        self.write(file, text)
+        with self.assertRaises(SetupError) as caught:
+            settings.install(self.locations())
+        return list(caught.exception.lines)
+
+    def test_the_repository_ships_todays_set(self) -> None:
+        (entry,) = settings.install(self.repository(project=False))
+        self.assertEqual(
+            (entry.value, entry.layer, entry.file),
+            (["roles", "prd-implementation", "epic-implementation", "project-memory", "self-reflection"],
+             "shipped", support.DEFAULTS),
         )
 
-    def test_a_fault_in_the_group_does_not_stop_a_reader_of_process(self) -> None:
-        self.write(self.project_file, '[project]\ndisabled = ["a"]\n[process]\ndocs_dir = "p"\n')
+    def test_each_layer_is_read_apart_in_the_order_they_apply(self) -> None:
+        self.write(self.defaults_file, support.FIXTURE_DEFAULTS)
+        self.assertEqual(settings.install(self.locations()), [])
+        self.write(self.defaults_file, 'install = ["roles"]\n' + support.FIXTURE_DEFAULTS)
+        self.write(self.local_file, 'install = []\n')
+        self.write(self.user_file, 'install = ["alpha"]\n[process]\ndocs_dir = "u"\n')
+        self.write(self.project_file, '[process]\ndocs_dir = "p"\n')   # no install: no entry
+        self.assertEqual(
+            [(entry.value, entry.layer, entry.file) for entry in settings.install(self.locations())],
+            [(["roles"], "shipped", self.defaults_file), (["alpha"], "user", self.user_file), ([], "local", self.local_file)],
+        )
+        self.write(self.project_file, 'install = ["beta"]\n')
+        self.assertEqual([entry.layer for entry in settings.install(self.locations())],
+                         ["shipped", "user", "project", "local"])
+        # A home reads the shipped layer and the user's file alone.
+        self.assertEqual([entry.layer for entry in settings.install(self.locations(project=False))], ["shipped", "user"])
+        # The groups are read as before, and hold no install.
+        self.assertNotIn("install", settings.resolve(self.locations(), ("process",)))
+
+    def test_the_list_takes_names_once_each(self) -> None:
+        for text, line in (
+            ('install = "roles"\n', "install: expected an array of strings, got a string"),
+            ('install = ["roles", "roles"]\n', 'install: "roles" is given twice'),
+            ('install = ["  "]\n', "install: item 1 must not be blank"),
+            ("install = [1]\n", "install: expected an array of strings, but item 1 is an integer"),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.problems(self.user_file, text), [f"{self.user_file}: {line}"])
+
+    def test_every_layers_faults_are_reported_at_once(self) -> None:
+        self.write(self.project_file, 'install = ""\n')
+        self.assertEqual(self.problems(self.local_file, 'install = ["a", "a"]\n'), [
+            f"{self.project_file}: install: expected an array of strings, got a string",
+            f'{self.local_file}: install: "a" is given twice',
+        ])
+
+    def test_install_in_a_table_names_the_file_and_the_table(self) -> None:
+        text = '[process]\ndocs_dir = "p"\n\n[memory]\ndir = "m"\ninstall = ["roles"]\n'
+        line = (f"{self.user_file}: memory.install: install belongs at the top of the file, above every table; "
+                "here, below [memory], it is read as memory.install")
+        self.assertEqual(self.problems(self.user_file, text), [line])
+        # The reader of the group says the same, and a reader of another group is not stopped.
+        with self.assertRaises(SetupError) as caught:
+            settings.resolve(self.locations(), ("memory",))
+        self.assertEqual(caught.exception.lines, [line])
         self.assertEqual(settings.resolve(self.locations(), ("process",))["process.docs_dir"].value, "p")
+
+    def test_install_in_a_nested_table_or_a_named_entry(self) -> None:
+        for text, key, table in (
+            ('[roles.coder]\ntier = "deep"\ninstall = ["roles"]\n', "roles.coder.install", "roles.coder"),
+            ("[roles]\ninstall = []\n", "roles.install", "roles"),
+            ('[providers.acme.role_models]\ninstall = ["x"]\n', "providers.acme.role_models.install",
+             "providers.acme.role_models"),
+        ):
+            with self.subTest(key=key):
+                line = (f"{self.user_file}: {key}: install belongs at the top of the file, above every table; "
+                        f"here, below [{table}], it is read as {key}")
+                self.assertEqual(self.problems(self.user_file, text), [line])
+                with self.assertRaises(SetupError) as caught:
+                    settings.resolve(self.locations(), (key.split(".")[0],))
+                self.assertEqual(caught.exception.lines, [line])
+
+    def test_a_fault_in_install_does_not_break_a_reader_of_process(self) -> None:
+        self.write(self.user_file, 'install = ["roles", "roles"]\n[process]\ndocs_dir = "u"\n')
+        self.write(self.project_file, 'install = 3\n')
+        entries = settings.resolve(self.locations(), ("process",))
+        self.assertEqual(entries["process.docs_dir"].value, "u")
+        settings.resolve(self.locations())   # nor a reader of every group
+        with self.assertRaises(SetupError):
+            settings.install(self.locations())
+
+    def test_a_newer_schema_version_is_refused(self) -> None:
+        (line,) = self.problems(self.user_file, 'schema_version = 99\ninstall = ["roles"]\n')
+        self.assertTrue(line.startswith(f"{self.user_file}: schema_version: 99 is newer"), line)
+
+    def test_each_old_key_is_listed_with_its_replacement(self) -> None:
+        self.assertEqual(settings.old_keys(self.repository()), [])   # the shipped lists are not the user's
+        self.write(self.user_file, '[setup]\nenabled = ["alpha"]\ndisabled = []\nallow_unshared_clone = true\n[roles]\nenabled = false\n')
+        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
+        self.write(self.local_file, '[project]\ndisabled = ["alpha"]\n[roles]\nmanager_default = true\n')
+        self.assertEqual(settings.old_keys(self.locations()), [
+            (self.user_file, "setup.enabled", "install in ~/.agents/workflow.toml"),
+            (self.user_file, "setup.disabled", "install in ~/.agents/workflow.toml"),
+            (self.user_file, "roles.enabled", "roles in install"),
+            (self.user_file, "setup.allow_unshared_clone", "none: setup warns on such a clone"),
+            (self.project_file, "project.enabled", "install in the project's .agents/workflow.toml"),
+            (self.local_file, "project.disabled", "install in the project's .agents/workflow.local.toml"),
+        ])
+        self.assertEqual(set(schema.OLD_KEYS), {key for _, key, _ in settings.old_keys(self.locations())})
+        # No longer read.
+        self.assertNotIn("roles.enabled", settings.resolve(self.locations(), ("roles",)))
+        self.assertEqual([key for _, key, _ in settings.old_keys(self.locations(project=False))],
+                         ["setup.enabled", "setup.disabled", "roles.enabled", "setup.allow_unshared_clone"])
 
 
 class DictionarySeamTests(support.CloneCase):

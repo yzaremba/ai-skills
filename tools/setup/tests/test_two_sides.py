@@ -171,6 +171,8 @@ class WslLinkSeenFromWindowsCase(TreeCase):
         self.far = interop_support.need(self, python=True)
         with self.far.as_temp():
             super().setUp()
+        # These tests are about the links: the shipped install lacks the roles.
+        self.write(self.defaults_file, support.NO_ROLES_INSTALL + support.FIXTURE_DEFAULTS)
         self.script = self.install_tool()
         self.claude, self.codex = self.home / ".claude", self.home / ".codex"
         self.claude.mkdir()
@@ -194,7 +196,7 @@ class WslLinkSeenFromWindowsCase(TreeCase):
     def test_the_junctions_render_makes_on_windows_read_from_wsl_as_links_into_the_clone(self) -> None:
         # Setup's own way of making one (inside the Windows Python, not
         # ``mklink``), through the real commands on the Windows side.
-        code, out, err = self.run_there("render", "--no-roles")
+        code, out, err = self.run_there("render")
         self.assertEqual((code, err), (0, ""), out)
         where = Locations(home=self.home, clone=self.clone, real_home=True)
         sorter = homes.Classifier(homes.resolve(where, homes.Host.current()))
@@ -219,7 +221,7 @@ class WslLinkSeenFromWindowsCase(TreeCase):
         code, out, err = self.run_there("homes")
         self.assertEqual((code, err), (0, ""))
         self.assertIn("    - alpha: a file of its own, not a link", out.splitlines())
-        for argv in (("render", "--no-roles", "--dry-run"), ("render", "--no-roles")):
+        for argv in (("render", "--dry-run"), ("render",)):
             code, out, err = self.run_there(*argv)
             self.assertEqual(code, 2, out)
             self.assertEqual(len([line for line in err.splitlines() if "alpha" in line]), 1, err)
@@ -231,11 +233,11 @@ class WslLinkSeenFromWindowsCase(TreeCase):
         self.assertIn(code, (0, 1, 2))
 
     def test_where_setups_own_link_was(self) -> None:
-        self.assertEqual(self.run_there("render", "--no-roles")[0], 0)
+        self.assertEqual(self.run_there("render")[0], 0)
         link = self.claude / "skills" / "alpha"
         self.assertEqual(self.far.shell("rmdir", self.far.there(link)).returncode, 0)
         self.wsl_link(link, str(self.clone / "alpha"))
-        code, out, err = self.run_there("render", "--no-roles")
+        code, out, err = self.run_there("render")
         self.assertEqual(code, 2)
         self.assertEqual(len(err.splitlines()), 1, err)            # the conflict
         code, out, err = self.run_there("doctor", "--only", "links")
@@ -260,7 +262,7 @@ class WslLinkSeenFromWindowsCase(TreeCase):
         self.wsl_link(self.claude / "agents" / "sprint-coder.md")
         code, out, err = self.run_there("homes")
         self.assertEqual((code, err), (0, ""))
-        code, out, err = self.run_there("render", "--no-roles", "--apply-codex-settings")
+        code, out, err = self.run_there("render", "--apply-codex-settings")
         self.assertEqual(code, 2, out)
         rules = self.far.there(self.claude / "rules")
         self.assertEqual(sorted(err.splitlines()), sorted([
@@ -281,7 +283,7 @@ class WslLinkSeenFromWindowsCase(TreeCase):
     def test_where_setups_own_state_and_settings_are(self) -> None:
         state = self.wsl_link(self.home / ".agents" / "workflow-setup")
         record = self.far.there(state) + "\\manifest.json"
-        for argv in (("render", "--no-roles"), ("uninstall",), ("doctor", "--only", "links")):
+        for argv in (("render",), ("uninstall",), ("doctor", "--only", "links")):
             code, out, err = self.run_there(*argv)
             self.assertNotEqual(code, 0, argv)
             self.assertIn(f"{self.far.there(state)} is {WSL_NOTE}", out + err, argv)
@@ -305,7 +307,7 @@ class WslLinkSeenFromWindowsCase(TreeCase):
             "beta/references.md: [symlink] is a link; no link is committed, and Codex skips a linked file inside a skill",
             "2 problems",
         ])
-        code, out, err = self.run_there("render", "--no-roles")
+        code, out, err = self.run_there("render")
         self.assertEqual((code, out), (2, ""))
         self.assertEqual(len(err.splitlines()), 2)
         self.assertFalse((self.home / ".agents").exists())
@@ -317,35 +319,37 @@ class ProjectLinksOfBothSidesCase(TreeCase):
     reads the other's link as setup's link to the unit, by where it leads,
     and leaves it as it is (P3.4)."""
 
-    ONLY_BETA = '[setup]\nenabled = ["beta"]\ndisabled = ["alpha", "sample", "solo"]\n'
+    ONLY_BETA = 'install = ["beta"]\n'
 
     def setUp(self) -> None:
         self.far = interop_support.need(self, python=True)
         with self.far.as_temp():
             super().setUp()
+        # These tests are about the links: the shipped install lacks the roles.
+        self.write(self.defaults_file, support.NO_ROLES_INSTALL + support.FIXTURE_DEFAULTS)
         self.script = self.install_tool()
         (self.home / ".claude").mkdir()
         (self.home / ".codex").mkdir()
         self.write(self.user_file, self.ONLY_BETA)
-        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
+        self.write(self.project_file, 'install = ["alpha"]\n')
         self.links = [self.project / ".claude" / "skills" / "alpha", self.project / ".agents" / "skills" / "alpha"]
 
     run_there = WslLinkSeenFromWindowsCase.run_there
 
     def render_here(self) -> tuple[int, dict, str]:
         code, out, err = support.run(
-            "render", "--no-roles", "--json", "--home", str(self.home), "--project", str(self.project))
+            "render", "--json", "--home", str(self.home), "--project", str(self.project))
         return code, json.loads(out), err
 
     def render_there(self) -> tuple[int, dict, str]:
-        code, out, err = self.run_there("render", "--no-roles", "--json", "--project", self.far.there(self.project))
+        code, out, err = self.run_there("render", "--json", "--project", self.far.there(self.project))
         return code, json.loads(out), err
 
     def project_items(self, report: dict) -> dict[str, str]:
         return {item["name"]: item["status"] for item in report["project"]["items"] if item["kind"] == "link"}
 
     def test_a_relative_link_wsl_made_reads_from_windows_as_setups_link(self) -> None:
-        self.assertEqual(self.run_there("render", "--no-roles")[0], 0)      # the home, from Windows
+        self.assertEqual(self.run_there("render")[0], 0)      # the home, from Windows
         code, report, err = self.render_here()
         self.assertEqual((code, err), (0, ""), report["errors"])
         texts = [fsio.look(link).target for link in self.links]

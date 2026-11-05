@@ -54,7 +54,7 @@ ALL_MAPPINGS = [
     for argument in (flag, f"{provider}:{name}={value}")
 ]
 ALL_SETTINGS = [
-    "--docs-dir", "docs", "--questions", "all-together", "--recommend", "--roles", "--no-manager-default",
+    "--docs-dir", "docs", "--questions", "all-together", "--recommend", "--no-manager-default",
     "--no-high-stakes", "--max-parallel-coders", "3", "--memory-dir", "docs/memory",
 ]
 
@@ -224,7 +224,7 @@ class FlagTests(InitCase):
         self.assertEqual(data["process"], {"docs_dir": "docs", "questions": "all-together", "recommend": True})
         self.assertEqual(
             data["roles"],
-            {"enabled": True, "manager_default": False, "high_stakes": False, "max_parallel_coders": 3},
+            {"manager_default": False, "high_stakes": False, "max_parallel_coders": 3},
         )
         self.assertEqual(data["memory"], {"dir": "docs/memory"})
 
@@ -296,109 +296,22 @@ UNSHARED_WHY = "inside WSL, where the Windows side's links cannot lead"
 
 
 class RememberedChoiceTests(InitCase):
-    """``--roles`` / ``--no-roles`` and ``--allow-unshared-clone``: the two
-    choices `render` and `doctor` would otherwise need on every run."""
+    """``setup.allow_unshared_clone`` is gone: init has no flag for it, never
+    asks it, and does not fault a file that still holds it."""
 
-    def unshared(self, shared: bool | None = False) -> None:
-        """The clone as one the other side cannot read (a scratch home is
-        never asked, so the standing is given by hand)."""
-        why = UNSHARED_WHY if shared is False else "not asked: a scratch home (--home)"
-        standing = homes.CloneStanding(self.clone, self.clone, shared, why)
-        patch = mock.patch.object(homes, "clone_standing", return_value=standing)
-        patch.start()
-        self.addCleanup(patch.stop)
+    def test_the_flag_and_the_key_are_gone(self) -> None:
+        for flag in ("--allow-unshared-clone", "--no-allow-unshared-clone"):
+            with self.subTest(flag=flag):
+                code, _, err = self.init("--yes", flag)
+                self.assertEqual(code, 2)
+                self.assertIn(flag, err)
+        self.assertIn("no such setting", self.refused("--yes", "--unset", "setup.allow_unshared_clone"))
+        self.assertNotIn("setup.allow_unshared_clone", [key for key, _, _, _ in init._SETTINGS])
 
-    def test_no_roles_is_written_once_and_roles_takes_it_out(self) -> None:
-        out = self.ok("--yes", "--no-roles")
-        self.assertEqual(self.data()["roles"], {"enabled": False})
-        self.assertIn("  roles.enabled = false  (in this file)", out.splitlines())
-        self.ok("--yes", "--roles")
-        self.assertEqual(self.data()["roles"], {"enabled": True})  # stated, so it stays though the layer below gives it
-
-    def test_a_project_may_turn_its_roles_off(self) -> None:
-        self.ok("--yes", "--no-roles", project=True)
-        self.assertEqual(self.data(self.project_file)["roles"], {"enabled": False})
-        self.assertFalse(self.user_file.exists())
-
-    def test_the_clone_question_is_not_asked_where_it_does_not_apply(self) -> None:
-        out = self.ok("--yes")
-        self.assertNotIn("setup", self.data())
-        self.assertIn("  setup.allow_unshared_clone = false  (shipped; not written; not asked: the clone needs no "
-                      "such permission here (a scratch home (--home)))", out.splitlines())
-        # No terminal and no --yes: every other question is answered, and this one is not asked.
-        self.ok(*ALL_MAPPINGS, *ALL_SETTINGS, "--yes")
-        code, out, err = self.init(*ALL_MAPPINGS, *ALL_SETTINGS)
-        self.assertNotIn("allow_unshared_clone", err)
-
-    def test_where_it_applies_it_is_asked_and_proposes_a_shared_clone(self) -> None:
-        self.unshared()
-        asked = self.answers(*[""] * 13, "y")
-        out = self.ok()
-        prompts = [call.args[0] for call in asked.call_args_list]
-        self.assertEqual(len(prompts), 14)
-        self.assertEqual(prompts[12], "setup.allow_unshared_clone [false] (--allow-unshared-clone or "
-                                      "--no-allow-unshared-clone, or default to take it out): ")
-        self.assertIn(f"the clone {self.clone} is {UNSHARED_WHY}: render and doctor refuse it unless "
-                      "--allow-unshared-clone is given on each run, or setup.allow_unshared_clone is true", out)
-        self.assertIn("does not install from this clone (", out)
-        self.assertNotIn("nothing on the other side", out)
-        self.assertNotIn("setup", self.data())
-        # Answered true, it is written; the next proposal is what the file holds.
-        self.answers(*[""] * 12, "y", "y")
-        self.ok()
-        self.assertEqual(self.data()["setup"], {"allow_unshared_clone": True})
-        asked = self.answers(*[""] * 13)
-        self.ok("--dry-run")
-        self.assertEqual(asked.call_args_list[12].args[0], "setup.allow_unshared_clone [true] "
-                         "(--allow-unshared-clone or --no-allow-unshared-clone, or default to take it out): ")
-
-    def test_where_it_applies_yes_keeps_the_safe_proposal_and_the_flag_answers(self) -> None:
-        self.unshared()
-        self.ok("--yes")
-        self.assertNotIn("setup", self.data())
-        err = self.refused(*ALL_MAPPINGS, *ALL_SETTINGS)
-        self.assertIn("error: setup.allow_unshared_clone: not answered", err)
-        self.assertIn("Give --allow-unshared-clone or --no-allow-unshared-clone, or --yes", err)
-        self.ok("--yes", "--allow-unshared-clone")
-        self.assertEqual(self.data()["setup"], {"allow_unshared_clone": True})
-        self.ok("--yes")  # the value in effect is proposed, and kept
-        self.assertEqual(self.data()["setup"], {"allow_unshared_clone": True})
-        self.ok("--yes", "--no-allow-unshared-clone")
-        self.assertEqual(self.data()["setup"], {"allow_unshared_clone": False})
-
-    def test_the_flag_sets_it_where_it_is_not_asked(self) -> None:
-        self.ok("--yes", "--allow-unshared-clone")
-        self.assertEqual(self.data()["setup"], {"allow_unshared_clone": True})
-        out = self.ok("--yes")  # not asked here, and the file's value stays
-        self.assertEqual(self.data()["setup"], {"allow_unshared_clone": True})
-        self.assertIn("  setup.allow_unshared_clone = true  (in this file; not asked: the clone needs no such "
-                      "permission here (a scratch home (--home)))", out.splitlines())
-
-    def test_a_project_neither_asks_nor_takes_it(self) -> None:
-        self.unshared()
-        err = self.refused("--yes", "--allow-unshared-clone", project=True)
-        self.assertEqual(err, "error: --allow-unshared-clone: setup.allow_unshared_clone is read from the user's file "
-                              "alone (~/.agents/workflow.toml): it is a fact of this machine, not of a project. Give "
-                              "it to `init` without --project\n")
-        err = self.refused("--yes", "--no-allow-unshared-clone", project=True)
-        self.assertTrue(err.startswith("error: --no-allow-unshared-clone: setup.allow_unshared_clone is read"), err)
-        out = self.ok("--yes", project=True)
-        self.assertNotIn("allow_unshared_clone", out)
-        self.assertFalse(self.project_file.exists() and "setup" in self.data(self.project_file))
-        # A project's file that holds the group is a fault init does not write over.
+    def test_a_file_that_holds_the_old_key_is_no_fault(self) -> None:
         self.write(self.project_file, "[setup]\nallow_unshared_clone = true\n")
-        err = self.refused("--yes", project=True)
-        self.assertIn(f"{self.project_file}: setup: read from the user's settings file alone", err)
-        self.assertIn("init changes nothing while a settings file has a fault", err)
-
-    def test_render_and_doctor_read_what_init_wrote(self) -> None:
-        self.ok("--yes", "--no-roles", "--allow-unshared-clone")
-        entries = settings.resolve(Locations(home=self.home, clone=self.clone), ("roles", "setup"))
-        self.assertEqual((entries["roles.enabled"].value, entries["roles.enabled"].layer), (False, "user"))
-        found = entries["setup.allow_unshared_clone"]
-        self.assertEqual((found.value, found.layer, found.file), (True, "user", self.user_file))
-        allowance = homes.clone_allowance(Locations(home=self.home, clone=self.clone))
-        self.assertEqual((allowance.allowed, allowance.by), (True, homes.BY_SETTING))
+        self.ok("--yes", project=True)
+        self.ok("--yes")
 
 
 class NoTerminalTests(InitCase):
@@ -453,23 +366,21 @@ class NoTerminalTests(InitCase):
 
 class TerminalTests(InitCase):
     def test_enter_accepts_every_proposal_and_y_writes(self) -> None:
-        asked = self.answers(*[""] * 12, "y")
+        asked = self.answers(*[""] * 11, "y")
         self.ok()
         self.assertEqual(self.data(), {"schema_version": 1, "providers": PINNED})
         prompts = [call.args[0] for call in asked.call_args_list]
-        self.assertEqual(len(prompts), 13)
+        self.assertEqual(len(prompts), 12)
         self.assertIn("(--tier claude-code:...)", prompts[0])
         self.assertIn("(--effort claude-code:...)", prompts[1])
         self.assertIn("(--tier codex:...)", prompts[2])
         self.assertEqual(prompts[4], 'process.docs_dir ["docs"] (--docs-dir, or default to take it out): ')
         self.assertEqual(prompts[6], "process.recommend [true] (--recommend or --no-recommend, or default to take it out): ")
-        self.assertEqual(prompts[7], "roles.enabled [true] (--roles or --no-roles, or default to take it out): ")
-        self.assertEqual(prompts[12], "Write these settings? [y/N] (--yes): ")
-        # A scratch home: the clone's question does not apply, and is not asked.
+        self.assertEqual(prompts[11], "Write these settings? [y/N] (--yes): ")
         self.assertFalse(any("allow_unshared_clone" in prompt for prompt in prompts))
 
     def test_anything_but_yes_writes_nothing(self) -> None:
-        self.answers(*[""] * 12, "")
+        self.answers(*[""] * 11, "")
         before = self.tree()
         code, out, err = self.init()
         self.assertEqual((code, err), (1, ""))
@@ -477,9 +388,9 @@ class TerminalTests(InitCase):
         self.assertEqual(self.tree(), before)
 
     def test_a_flag_is_not_asked_again_and_yes_asks_nothing(self) -> None:
-        asked = self.answers(*[""] * 10, "yes")
+        asked = self.answers(*[""] * 9, "yes")
         self.ok("--docs-dir", "sprints", *ALL_MAPPINGS[:8])
-        self.assertEqual(asked.call_count, 11)
+        self.assertEqual(asked.call_count, 10)
         self.assertEqual(self.data()["process"], {"docs_dir": "sprints"})
         asked = self.answers()
         self.ok("--yes", "--docs-dir", "other")
@@ -488,10 +399,10 @@ class TerminalTests(InitCase):
     def test_answers_change_the_values(self) -> None:
         asked = self.answers(
             "deep=fable", "", "deep=gpt-6-astra fast=gpt-6-sol", "max=ultra",
-            "sprints", "one-at-a-time", "n", "", "y", "", "4", "", "y",
+            "sprints", "one-at-a-time", "n", "y", "", "4", "", "y",
         )
         out = self.ok()
-        self.assertEqual(asked.call_count, 13)
+        self.assertEqual(asked.call_count, 12)
         data = self.data()
         self.assertEqual(data["providers"]["claude-code"]["tiers"]["deep"], "fable")
         self.assertEqual(data["providers"]["codex"]["tiers"], {**CODEX_TIERS, "deep": "gpt-6-astra", "fast": "gpt-6-sol"})
@@ -506,10 +417,10 @@ class TerminalTests(InitCase):
     def test_a_bad_answer_is_asked_again(self) -> None:
         asked = self.answers(
             "deep", "huge=opus", "", "", "", "",
-            "", "sometimes", "", "", "", "", "", "none", "2", "", "y",
+            "", "sometimes", "", "", "", "", "none", "2", "", "y",
         )
         out = self.ok()
-        self.assertEqual(asked.call_count, 17)
+        self.assertEqual(asked.call_count, 16)
         self.assertIn("  deep: expected tier=MODEL\n", out)
         self.assertIn("  answer: providers.claude-code.tiers.huge: unknown key; known here: fast, standard, deep, frontier\n", out)
         self.assertIn('  answer: process.questions: "sometimes" is not allowed; allowed values: one-at-a-time, all-together\n', out)
@@ -518,9 +429,9 @@ class TerminalTests(InitCase):
 
     def test_a_missing_model_must_be_replaced_at_the_prompt(self) -> None:
         self.stub.answer(LIVE, provider_stub.fixture(MISSING))
-        asked = self.answers("", "", "", "frontier=gpt-9", "frontier=gpt-6-sol", *[""] * 9, "y")
+        asked = self.answers("", "", "", "frontier=gpt-9", "frontier=gpt-6-sol", *[""] * 8, "y")
         out = self.ok()
-        self.assertEqual(asked.call_count, 15)
+        self.assertEqual(asked.call_count, 14)
         self.assertIn('providers.codex.tiers.frontier: the model "gpt-6-astra" is not in codex\'s own list', out)
         self.assertIn('providers.codex.tiers.frontier: the model "gpt-9" is not in codex\'s own list', out)
         self.assertEqual(self.data()["providers"]["codex"]["tiers"]["frontier"], "gpt-6-sol")
@@ -533,10 +444,10 @@ class TerminalTests(InitCase):
         )
 
     def test_a_dry_run_asks_the_questions_and_not_the_confirmation(self) -> None:
-        asked = self.answers(*[""] * 12)
+        asked = self.answers(*[""] * 11)
         before = self.tree()
         out = self.ok("--dry-run")
-        self.assertEqual(asked.call_count, 12)
+        self.assertEqual(asked.call_count, 11)
         self.assertIn("dry run: nothing was written", out)
         self.assertEqual(self.tree(), before)
 
@@ -594,7 +505,7 @@ class ModelListTests(InitCase):
 
     def test_a_new_model_is_offered_at_the_prompt_and_a_hidden_one_is_not(self) -> None:
         self.stub.answer(LIVE, provider_stub.fixture(NEW))
-        self.answers("", "", "deep=gpt-7-nova", *[""] * 9, "y")
+        self.answers("", "", "deep=gpt-7-nova", *[""] * 8, "y")
         out = self.ok()
         self.assertIn(
             "  models: gpt-7-nova (new: not in the dictionary), gpt-6.1-sol, gpt-6-astra, gpt-6-sol, "
@@ -779,7 +690,8 @@ class AgainTests(InitCase):
         self.write(
             self.user_file,
             "# my own notes\n"
-            "[process]\n"
+            'install = ["roles", "alpha"]\n'
+            "\n[process]\n"
             'docs_dir = "sprints"   # where we keep them\n'
             'questions = "one-at-a-time"\n'
             "\n[roles.coder]\n"
@@ -798,6 +710,7 @@ class AgainTests(InitCase):
         self.assertNotIn("process.docs_dir:", out.split("changes to")[1])
         self.assertEqual(self.data(), {
             "schema_version": 1,
+            "install": ["roles", "alpha"],      # a key of the file itself is kept too
             # A value that equals the default stays where the user wrote it.
             "process": {"docs_dir": "sprints", "questions": "one-at-a-time"},
             "roles": {"coder": {"tier": "deep"}},
@@ -967,7 +880,7 @@ class ProjectTests(InitCase):
 
     def test_manager_default_typed_at_the_prompt_stays_and_enter_leaves_it_out(self) -> None:
         self.ok("--yes")
-        order = [key for key, _, _, _ in init._SETTINGS if key != "setup.allow_unshared_clone"]
+        order = [key for key, _, _, _ in init._SETTINGS]
         index = order.index("roles.manager_default")
         for typed, expected in (("n", {"manager_default": False}), ("", None)):
             self.project_file.unlink(missing_ok=True)
@@ -998,51 +911,6 @@ class ProjectTests(InitCase):
         self.assertEqual(self.tree(), before)
 
 
-class SkillsTests(InitCase):
-    """``init --project DIR --skills NAME...``: ``project.enabled``, exactly the names given."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        for name in ("alpha", "beta"):
-            self.write(self.clone / name / "SKILL.md",
-                       f"---\nname: {name}\ndescription: Does {name}.\ncompatibility: claude-code, codex\n---\n\n# {name}\n")
-        self.write(self.clone / "rules" / "sample" / "RULE.md", "A rule.\n")
-
-    def enabled(self) -> list:
-        return self.data(self.project_file)["project"]["enabled"]
-
-    def test_the_list_replaces_the_one_in_the_file(self) -> None:
-        self.write(self.project_file, '[project]\nenabled = ["alpha", "beta"]\n')
-        self.ok("--yes", "--rewrite-settings", "--skills", "beta", project=True)
-        self.assertEqual(self.enabled(), ["beta"])
-
-    def test_a_rule_is_taken_by_name_and_a_repeat_once(self) -> None:
-        self.ok("--yes", "--skills", "sample", "alpha", "sample", project=True)
-        self.assertEqual(self.enabled(), ["sample", "alpha"])
-
-    def test_an_unknown_name_is_an_error_and_writes_nothing(self) -> None:
-        err = self.refused("--yes", "--skills", "alpha", "nope", project=True)
-        self.assertIn("--skills nope: no skill or rule of this clone", err)
-
-    def test_it_is_refused_without_project(self) -> None:
-        err = self.refused("--yes", "--skills", "alpha")
-        self.assertIn("--skills: names the skills of a project; give it with --project DIR", err)
-
-    def test_a_name_in_both_lists_of_the_local_file_is_reported_without_skills(self) -> None:
-        self.write(self.local_file, '[project]\nenabled = ["alpha"]\ndisabled = ["alpha"]\n')
-        err = self.refused("--yes", project=True)
-        self.assertIn(f"{self.local_file}: project: alpha is in both project.enabled and project.disabled", err)
-
-    def test_unset_takes_the_list_out(self) -> None:
-        self.write(self.project_file, '[project]\nenabled = ["nope"]\n')
-        self.ok("--yes", "--rewrite-settings", "--unset", "project.enabled", project=True)
-        self.assertNotIn("enabled", self.data(self.project_file).get("project", {}))
-
-    def test_unset_with_skills_is_an_error(self) -> None:
-        err = self.refused("--yes", "--skills", "alpha", "--unset", "project.enabled", project=True)
-        self.assertIn("a flag answers the same key", err)
-
-
 class UnsetTests(InitCase):
     def test_unset_takes_a_setting_out_and_says_the_value_then(self) -> None:
         self.ok("--yes", "--no-manager-default", "--docs-dir", "sprints")
@@ -1063,7 +931,7 @@ class UnsetTests(InitCase):
 
     def test_unset_is_not_asked_and_may_be_repeated(self) -> None:
         self.ok("--yes", "--no-manager-default", "--no-high-stakes")
-        asked = self.answers(*[""] * 6, "y")   # the 8 settings asked, less the 2 unset
+        asked = self.answers(*[""] * 5, "y")   # the 8 settings asked, less the 2 unset
         self.ok(*ALL_MAPPINGS, "--unset", "roles.manager_default", "--unset", "roles.high_stakes")
         prompts = [call.args[0] for call in asked.call_args_list]
         self.assertFalse(any("manager_default" in prompt or "high_stakes" in prompt for prompt in prompts))
@@ -1091,15 +959,12 @@ class UnsetTests(InitCase):
         self.assertIn("coder", err.split("definitions: ", 1)[1])
 
     def test_unset_with_a_flag_for_the_same_key_is_an_error(self) -> None:
-        self.assertIn("a flag answers the same key", self.refused("--yes", "--unset", "roles.enabled", "--roles"))
-        self.assertIn("a flag answers the same key", self.refused("--yes", "--unset", "roles.enabled", "--no-roles"))
+        self.assertIn("a flag answers the same key", self.refused("--yes", "--unset", "roles.manager_default", "--manager-default"))
+        self.assertIn("a flag answers the same key", self.refused("--yes", "--unset", "roles.manager_default", "--no-manager-default"))
         self.assertIn("a flag answers the same key", self.refused(
             "--yes", "--unset", "providers.codex.role_models.coder", "--role-model", "codex:coder=gpt-6-sol"))
         self.assertIn("a flag answers the same key", self.refused(
             "--yes", "--unset", "providers.codex.tiers.deep", "--tier", "codex:deep=gpt-6-astra", project=True))
-
-    def test_unset_of_the_clone_setting_is_refused_with_project(self) -> None:
-        self.assertIn("user's file alone", self.refused("--yes", "--unset", "setup.allow_unshared_clone", project=True))
 
     def test_unset_of_a_tier_or_an_effort_is_refused_in_the_user_file(self) -> None:
         self.assertIn("holds the tiers mapping in full", self.refused("--yes", "--unset", "providers.codex.tiers.deep"))
@@ -1121,7 +986,7 @@ class UnsetTests(InitCase):
 
     def test_default_at_a_setting_prompt_takes_the_key_out(self) -> None:
         self.ok("--yes", "--no-manager-default")
-        order = [key for key, _, _, _ in init._SETTINGS if key != "setup.allow_unshared_clone"]
+        order = [key for key, _, _, _ in init._SETTINGS]
         lines = [""] * len(order)
         lines[order.index("roles.manager_default")] = "default"
         self.answers(*lines, "y")
@@ -1131,13 +996,13 @@ class UnsetTests(InitCase):
     def test_default_at_a_map_prompt_takes_a_key_out_in_a_project_file_only(self) -> None:
         self.ok("--yes")
         self.ok("--yes", "--tier", "codex:deep=gpt-6-astra", project=True)
-        asked = self.answers("", "", "deep=default", "", *[""] * 8, "y")
+        asked = self.answers("", "", "deep=default", "", *[""] * 7, "y")
         out = self.ok(project=True)
         prompts = [call.args[0] for call in asked.call_args_list]
         self.assertIn("tier=default to take one out", prompts[2])
         self.assertEqual(self.data(self.project_file), {"schema_version": 1})
         # In the user's file the prompt does not offer it, and the answer is refused and asked again.
-        asked = self.answers("deep=default", "", "", "", "", *[""] * 8, "y")
+        asked = self.answers("deep=default", "", "", "", "", *[""] * 7, "y")
         self.ok()
         prompts = [call.args[0] for call in asked.call_args_list]
         self.assertNotIn("default", prompts[0])
@@ -1145,7 +1010,7 @@ class UnsetTests(InitCase):
 
     def test_default_for_an_unknown_name_is_refused_and_asked_again(self) -> None:
         self.ok("--yes")
-        asked = self.answers("", "", "bogus=default", "", *[""] * 9, "y")
+        asked = self.answers("", "", "bogus=default", "", *[""] * 8, "y")
         out = self.ok(project=True)
         prompts = [call.args[0] for call in asked.call_args_list]
         self.assertIn("bogus", out)
@@ -1154,7 +1019,7 @@ class UnsetTests(InitCase):
 
     def test_default_for_a_key_not_held_says_so(self) -> None:
         self.ok("--yes")
-        self.answers("", "", "deep=default", "", *[""] * 8, "y")
+        self.answers("", "", "deep=default", "", *[""] * 7, "y")
         out = self.ok(project=True)
         self.assertIn("deep=default: the file does not hold providers.codex.tiers.deep; nothing to take out", out)
 

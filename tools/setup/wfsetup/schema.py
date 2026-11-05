@@ -103,24 +103,6 @@ PROVIDER = Table({
 # ``roles.high_stakes`` is the general switch and ``[roles.<id>]`` the
 # explicit setting for one role definition: an explicit ``tier`` wins over
 # the switch, whichever layer sets each (see ``profiles``).
-#
-# ``roles.enabled`` is whether ``render`` generates the roles at all: false
-# is the process alone, what ``render --no-roles`` does for one run. No role
-# id can be ``enabled``: Codex reserves it (``validate``, role-reserved).
-#
-# ``[setup]`` is read by the setup tool alone, and from the user's file
-# alone (``USER_ONLY``): it holds facts of this machine, not of a project.
-# ``setup.allow_unshared_clone`` is what ``--allow-unshared-clone`` says for
-# one run, decided once. ``setup.enabled`` and ``setup.disabled`` name the
-# skills and rules a home installs and goes without; which names they may
-# hold is checked against the clone where they are read
-# (``definitions.list_problems``).
-#
-# ``[project]`` is read by the setup tool alone, and from a project's two
-# files alone (``PROJECT_ONLY``): it names the skills and rules the project
-# uses. ``project.enabled`` may be in either file; ``project.disabled`` is
-# for the local file alone (``settings.resolve``). The two lists combine
-# across the files instead of one replacing the other.
 SCHEMA: dict[str, Table] = {
     "process": Table({
         "docs_dir": _STRING,
@@ -130,7 +112,6 @@ SCHEMA: dict[str, Table] = {
     }),
     "roles": Table(
         {
-            "enabled": _BOOLEAN,
             "manager_default": _BOOLEAN,
             "high_stakes": _BOOLEAN,
             "max_parallel_coders": Value("integer", minimum=1),
@@ -145,28 +126,39 @@ SCHEMA: dict[str, Table] = {
         "dir": _STRING,
     }),
     "providers": Table(each=PROVIDER, each_name="provider name"),
-    "setup": Table({
-        "allow_unshared_clone": _BOOLEAN,
-        "enabled": Strings(),
-        "disabled": Strings(),
-    }),
-    "project": Table({
-        "enabled": Strings(),
-        "disabled": Strings(),
-    }),
 }
 GROUPS = tuple(SCHEMA)
-# The groups a project's files may not hold: read from the user's file alone.
-USER_ONLY = ("setup",)
-# The groups the user's file and the shipped defaults may not hold: read from
-# a project's files alone.
-PROJECT_ONLY = ("project",)
+
+# ``install``: what a place installs, by name: the skills of the clone, the
+# rule and ``roles`` (the role definitions and a session's entry points). It
+# is a key of the file itself, above every table, and no group: a reader of
+# a group never meets a fault in it (``check_install``, ``settings.install``).
+# Each layer's list replaces the one below it whole.
+INSTALL_KEY = "install"
+INSTALL = Strings()
+ROLES_ITEM = "roles"
+# The keys ``install`` replaces, each with what replaces it. They are no part
+# of the schema: a file that holds one is not faulted for it and the key is
+# not read (``settings.resolve`` skips it), and ``settings.old_keys`` names
+# each one a file holds.
+OLD_KEYS: dict[str, str] = {
+    "setup.enabled": "install in ~/.agents/workflow.toml",
+    "setup.disabled": "install in ~/.agents/workflow.toml",
+    "project.enabled": "install in the project's .agents/workflow.toml",
+    "project.disabled": "install in the project's .agents/workflow.local.toml",
+    "roles.enabled": "roles in install",
+    "setup.allow_unshared_clone": "none: setup warns on such a clone",
+}
+# The tables an old key lived in that the schema no longer has: a file that
+# holds one with old keys alone is not faulted for it.
+OLD_TABLES = tuple(sorted({key.split(".")[0] for key in OLD_KEYS} - set(SCHEMA)))
 _ROOT = Table(dict(SCHEMA))
 
 
 def check_document(data: dict[str, Any], file: Any, problems: list[str]) -> bool:
     """Check what holds for the file as a whole: its version, and the names
-    of its top-level keys. No group's content is looked at.
+    of its top-level keys. No group's content is looked at, nor
+    ``install``'s: ``check_install`` checks that.
 
     Returns False when the file is from a newer schema; nothing else in it
     is then worth checking.
@@ -183,15 +175,55 @@ def check_document(data: dict[str, Any], file: Any, problems: list[str]) -> bool
     elif version < 1:
         problems.append(f"{file}: {VERSION_KEY}: {version} is not a schema version; the first is 1")
     for key in data:
-        if key != VERSION_KEY and key not in SCHEMA:
+        if key not in (VERSION_KEY, INSTALL_KEY) and key not in SCHEMA and not _old_table(key, data[key]):
             problems.append(
-                f"{file}: {tomlio.format_key(key)}: unknown key; known here: {VERSION_KEY}, {', '.join(GROUPS)}"
+                f"{file}: {tomlio.format_key(key)}: unknown key; known here: "
+                f"{VERSION_KEY}, {INSTALL_KEY}, {', '.join(GROUPS)}"
             )
     return True
 
 
+def _old_table(key: str, value: Any) -> bool:
+    """A table of the old keys that the schema no longer has, holding old keys alone."""
+    return key in OLD_TABLES and isinstance(value, dict) and all(f"{key}.{name}" in OLD_KEYS for name in value)
+
+
+def strip_old_keys(group: str, content: Any) -> Any:
+    """``content`` of ``group`` without the keys of ``OLD_KEYS``."""
+    if not isinstance(content, dict):
+        return content
+    return {name: item for name, item in content.items() if f"{group}.{name}" not in OLD_KEYS}
+
+
+def check_install(data: dict[str, Any], file: Any, problems: list[str]) -> None:
+    """Check the file's ``install``: an array of names, none blank and none
+    given twice, and no ``install`` inside a table, where a line added below
+    ``[memory]`` is read as ``memory.install``. Of the groups nothing else is
+    looked at."""
+    if INSTALL_KEY in data:
+        _validate(INSTALL, data[INSTALL_KEY], (INSTALL_KEY,), file, problems)
+    tables = [((key,), value) for key, value in data.items() if isinstance(value, dict)]
+    for path, table in tables:   # a loop, not recursion: tables may nest deeper than Python recurses
+        for key, value in table.items():
+            if isinstance(value, dict):
+                tables.append((path + (key,), value))
+            elif key == INSTALL_KEY and isinstance(value, list):
+                problems.append(_misplaced(path, file))
+
+
+def _misplaced(table: tuple[str, ...], file: Any) -> str:
+    """An ``install`` list read as a key of ``table``."""
+    key = tomlio.dotted(table + (INSTALL_KEY,))
+    return (
+        f"{file}: {key}: {INSTALL_KEY} belongs at the top of the file, above every table; "
+        f"here, below [{tomlio.dotted(table)}], it is read as {key}"
+    )
+
+
 def validate(group: str, value: Any, file: Any, problems: list[str]) -> None:
-    """Check one group's content, adding a line to ``problems`` per fault."""
+    """Check one group's content, adding a line to ``problems`` per fault.
+    The keys of ``OLD_KEYS`` are not looked at."""
+    value = strip_old_keys(group, value)
     _validate(SCHEMA[group], value, (group,), file, problems)
 
 
@@ -245,6 +277,9 @@ def _validate(node: Node, value: Any, path: tuple[str, ...], file: Any, problems
         problems.append(f"{where}: expected a table, got {tomlio.article(actual)}")
         return
     for key, item in value.items():
+        if key == INSTALL_KEY and key not in node.keys and isinstance(item, list):
+            problems.append(_misplaced(path, file))
+            continue
         child = node.child(key)
         if child is not None:
             _validate(child, item, path + (key,), file, problems)

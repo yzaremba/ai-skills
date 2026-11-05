@@ -245,13 +245,6 @@ class ResolutionCase(HomesCase):
 
         self.assertEqual(self.found(self.host()).provider(homes.CLAUDE_CODE).installed, False)
 
-    def test_the_shared_option(self) -> None:
-        import argparse
-        parser = argparse.ArgumentParser()
-        homes.add_arguments(parser)
-        self.assertFalse(parser.parse_args([]).allow_unshared_clone)
-        self.assertTrue(parser.parse_args(["--allow-unshared-clone"]).allow_unshared_clone)
-
 
 @unittest.skipUnless(SYMLINKS and POSIX, "the view from WSL is rebuilt from symlinks on a POSIX file system")
 class TwoSidesCase(HomesCase):
@@ -389,7 +382,7 @@ class TwoSidesCase(HomesCase):
         shared = self.drive / "work" / "clone"
         self.put(shared / "json-tools" / "SKILL.md", "a skill\n")
         found = homes.resolve(Locations(home=self.home, clone=shared, real_home=True), self.wsl)
-        self.assertIs(homes.require_shared_clone(found).shared, True)
+        self.assertIs(homes.clone_standing(found).shared, True)
         link = self.claude / "skills" / "json-tools"
         plan = fileops.Plan(found.roots(), stamp=self.stamp())
         plan.create_link(link, shared / "json-tools")
@@ -533,41 +526,27 @@ class CloneCase(HomesCase):
     def at(self, clone: Path, host: homes.Host, real_home: bool = True) -> homes.Homes:
         return homes.resolve(Locations(home=self.home, clone=clone, real_home=real_home), host)
 
-    def test_a_clone_inside_wsl_is_refused(self) -> None:
+    def test_a_clone_inside_wsl_is_a_warning(self) -> None:
         found = self.at(self.clone, self.wsl())
         self.assertIs(homes.clone_standing(found).shared, False)
-        with self.assertRaises(SetupError) as caught:
-            homes.require_shared_clone(found)
-        text = str(caught.exception)
-        self.assertIn(str(self.clone), text)
-        self.assertIn("clone the repository to a directory on a Windows drive", text)
-        self.assertIn("/mnt/<drive>/", text)
-        self.assertIn("run setup from that clone", text)
-        self.assertIn("--allow-unshared-clone", text)
+        self.assertEqual(
+            homes.clone_warning(found),
+            "Windows can't read this clone; install Windows from its own clone or from one on a Windows drive.",
+        )
 
-    def test_the_refusal_says_when_the_setting_is_right_in_this_sides_words(self) -> None:
-        with self.assertRaises(SetupError) as caught:
-            homes.require_shared_clone(self.at(self.clone, self.wsl()))
-        self.assertIn("only where the Windows side does not install from this clone (WSL used alone, or a clone "
-                      "for each side)", str(caught.exception))
+    def test_seen_from_windows_a_clone_off_a_local_drive_is_a_warning_too(self) -> None:
         windows = homes.Host(homes.WINDOWS, {}, ())
         standing = homes.CloneStanding(self.clone, self.clone, False, "not on a local drive")
         with mock.patch.object(homes, "clone_standing", return_value=standing):
-            with self.assertRaises(SetupError) as caught:
-                homes.require_shared_clone(self.at(self.clone, windows))
-        text = str(caught.exception)
-        self.assertIn("only where the WSL side does not install from this clone (a clone for each side)", text)
-        self.assertNotIn("WSL used alone", text)
-
-    def test_the_flag_allows_it(self) -> None:
-        found = self.at(self.clone, self.wsl())
-        self.assertIs(homes.require_shared_clone(found, allow_unshared=True).shared, False)
+            self.assertEqual(homes.clone_warning(self.at(self.clone, windows)), homes.CLONE_WARNING)
 
     @unittest.skipUnless(POSIX, "the view from WSL: a POSIX path under a mount point")
     def test_a_clone_on_a_windows_drive_is_shared(self) -> None:
         clone = self.root / "drive" / "work" / "clone"
         clone.mkdir(parents=True)
-        self.assertIs(homes.require_shared_clone(self.at(clone, self.wsl())).shared, True)
+        found = self.at(clone, self.wsl())
+        self.assertIs(homes.clone_standing(found).shared, True)
+        self.assertIsNone(homes.clone_warning(found))
 
     @unittest.skipUnless(SYMLINKS and POSIX, "the view from WSL is rebuilt from symlinks on a POSIX file system")
     def test_the_real_path_of_the_clone_is_what_counts(self) -> None:
@@ -581,28 +560,29 @@ class CloneCase(HomesCase):
 
     def test_a_scratch_home_is_not_asked(self) -> None:
         found = self.at(self.clone, self.wsl(), real_home=False)
-        standing = homes.require_shared_clone(found)
+        standing = homes.clone_standing(found)
         self.assertIsNone(standing.shared)
         self.assertIn("scratch home", standing.why)
+        self.assertIsNone(homes.clone_warning(found))
 
     def test_a_plain_linux_is_not_asked(self) -> None:
         found = self.at(self.clone, self.host(homes.LINUX))
-        standing = homes.require_shared_clone(found)
+        standing = homes.clone_standing(found)
         self.assertIsNone(standing.shared)
         self.assertIn("no Windows side", standing.why)
+        self.assertIsNone(homes.clone_warning(found))
 
     @unittest.skipIf(WINDOWS, "on Windows a scratch clone is on a local drive")
-    def test_seen_as_windows_a_path_that_is_no_drive_path_is_refused(self) -> None:
+    def test_seen_as_windows_a_path_that_is_no_drive_path_is_not_shared(self) -> None:
         found = self.at(self.clone, self.host(homes.WINDOWS))
         self.assertIs(homes.clone_standing(found).shared, False)
-        with self.assertRaises(SetupError):
-            homes.require_shared_clone(found)
+        self.assertEqual(homes.clone_warning(found), homes.CLONE_WARNING)
 
     @unittest.skipUnless(WINDOWS, "needs Windows")
     def test_on_windows_a_clone_on_a_local_drive_is_shared(self) -> None:
         found = self.at(self.clone, homes.Host.current())
         self.assertEqual(found.host.side, homes.WINDOWS)
-        self.assertIs(homes.require_shared_clone(found).shared, True)
+        self.assertIs(homes.clone_standing(found).shared, True)
 
     def test_the_command_reports_and_does_not_refuse(self) -> None:
         with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.wsl())):
