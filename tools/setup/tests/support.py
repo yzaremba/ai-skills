@@ -25,13 +25,14 @@ from unittest import mock
 TESTS = Path(__file__).resolve().parent
 SETUP = TESTS.parent
 SCRIPT = SETUP / "workflow_setup.py"
+SETUP_SCRIPT = SETUP / "setup.py"
 DEFAULTS = SETUP / "defaults.toml"
 REPOSITORY = SETUP.parents[1]
 
 if str(SETUP) not in sys.path:
     sys.path.insert(0, str(SETUP))
 
-from wfsetup import cli, fsio, locations  # noqa: E402
+from wfsetup import cli, fileops, fsio, homes, locations, program, settingsfile  # noqa: E402
 from wfsetup.locations import Locations  # noqa: E402
 
 # A test builds its scratch world with ``fsio``'s own functions (a link, a
@@ -304,6 +305,75 @@ def run(*argv: str) -> tuple[int, str, str]:
     return code, out.getvalue(), err.getvalue()
 
 
+def setup(*argv: str) -> tuple[int, str, str]:
+    """``run``, for the program ``setup.py``: exit code, stdout, stderr."""
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            code = cli.main(list(argv), program.main)
+        except SystemExit as exc:
+            code = exc.code
+    return code, out.getvalue(), err.getvalue()
+
+
+def write_settings(*argv: str) -> tuple[int, str, str]:
+    """The settings file of a run of ``setup.py`` and nothing else: its
+    options (``--yes`` is implied), the file written, no install. Exit code,
+    stdout, stderr, as ``run`` gives them."""
+    out, err = io.StringIO(), io.StringIO()
+
+    def work(arguments: list[str]) -> int:
+        args = program.build_parser().parse_args(["--yes", *arguments])
+        where = locations.from_args(args, project_label="DIR")
+        found = homes.resolve(where)
+        with fileops.locked(found.roots(), home=True, project=found.project is not None):
+            prepared = settingsfile.prepare(where, found, args, dry_run=args.dry_run)
+            lines = prepared.lines if args.dry_run else [*prepared.lines, *prepared.apply()]
+        print("\n".join(lines))
+        return 0
+
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            code = cli.main(list(argv), work)
+        except SystemExit as exc:
+            code = exc.code
+    return code, out.getvalue(), err.getvalue()
+
+
+# What ``git init`` writes in a repository's exclude file.
+GIT_EXCLUDE = (
+    b"# git ls-files --others --exclude-from=.git/info/exclude\n"
+    b"# Lines that start with '#' are comments.\n"
+)
+
+
+def make_repository(top: Path, exclude: bytes | None = GIT_EXCLUDE) -> Path:
+    """``top`` as a repository's main worktree, as far as setup reads one
+    (``gitrepo``): ``top/.git`` with ``HEAD``, ``objects``, ``refs`` and
+    ``info``, and the exclude file ``git init`` writes. Returns that file."""
+    git = top / ".git"
+    for name in ("objects", "refs", "info"):
+        (git / name).mkdir(parents=True, exist_ok=True)
+    (git / "HEAD").write_bytes(b"ref: refs/heads/main\n")
+    if exclude is not None:
+        (git / "info" / "exclude").write_bytes(exclude)
+    return git / "info" / "exclude"
+
+
+def make_worktree(repository: Path, top: Path, name: str = "wt") -> Path:
+    """``top`` as a linked worktree of the repository at ``repository``, as
+    ``git worktree add`` leaves it: a ``.git`` file naming its directory in
+    the common one, which names it back. Returns the exclude file."""
+    admin = repository / ".git" / "worktrees" / name
+    admin.mkdir(parents=True)
+    (admin / "HEAD").write_bytes(b"ref: refs/heads/" + name.encode("utf-8") + b"\n")
+    (admin / "commondir").write_bytes(b"../..\n")
+    top.mkdir(parents=True, exist_ok=True)
+    (admin / "gitdir").write_bytes(str(top / ".git").encode("utf-8") + b"\n")
+    (top / ".git").write_bytes(b"gitdir: " + str(admin).encode("utf-8") + b"\n")
+    return repository / ".git" / "info" / "exclude"
+
+
 def child_environment() -> dict[str, str]:
     """The environment of a child process: this one's, without what would
     change where Python finds modules or whether it writes bytecode."""
@@ -325,6 +395,9 @@ class ScratchCase(unittest.TestCase):
     """
 
     FILLED = True
+    # The scratch project is a repository's top, so that setup lists what
+    # it makes there in ``self.exclude_file`` (R6.3).
+    GIT_PROJECT = True
 
     def setUp(self) -> None:
         scratch = tempfile.TemporaryDirectory()
@@ -336,6 +409,7 @@ class ScratchCase(unittest.TestCase):
         self.project = self.root / "project"
         self.home.mkdir()
         self.project.mkdir()
+        self.exclude_file = make_repository(self.project) if self.GIT_PROJECT else None
         self.user_file = self.home / ".agents" / "workflow.toml"
         self.project_file = self.project / ".agents" / "workflow.toml"
         self.local_file = self.project / ".agents" / "workflow.local.toml"
@@ -390,6 +464,7 @@ class ScratchCase(unittest.TestCase):
         child process runs the real code on the fixtures."""
         target = self.clone / "tools" / "setup"
         shutil.copyfile(SCRIPT, target / SCRIPT.name)
+        shutil.copyfile(SETUP_SCRIPT, target / SETUP_SCRIPT.name)
         shutil.copytree(SETUP / "wfsetup", target / "wfsetup", ignore=shutil.ignore_patterns("__pycache__"))
         return target / SCRIPT.name
 

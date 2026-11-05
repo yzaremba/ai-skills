@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 
 import support
-from wfsetup import fileops
+from wfsetup import fileops, gitrepo
 from wfsetup.manifest import Roots
 
 
@@ -53,7 +53,9 @@ class OpsCase(support.ScratchCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.roots = Roots(self.home, self.project, self.clone)
+        # The project is a repository's top (``support.ScratchCase``): its
+        # exclude file is a root of the run, as ``homes`` gives it.
+        self.roots = Roots(self.home, self.project, self.clone, git_info=gitrepo.find(self.project).info)
         self.state = self.home / ".agents" / "workflow-setup"
         self.manifest_file = self.state / "manifest.json"
         self.project_state = self.project / ".agents" / "workflow-setup"

@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Callable
 from unittest import mock
 
-import support  # noqa: F401  (puts the package on the path)
+import support  # puts the package on the path; the repository fixtures
 from wfsetup import fileops, fsio, lock
 from wfsetup.manifest import Roots
 
@@ -234,7 +234,12 @@ class World:
     def __init__(self, root: Path, prefix: str = "T") -> None:
         self.root = Path(root)
         self.home, self.project, self.clone = self.root / "home", self.root / "project", self.root / "clone"
-        self.roots = Roots(self.home, self.project, self.clone)
+        # The project is a linked worktree of the repository beside it: its
+        # exclude file is in the common git directory, outside the project
+        # (R6.3), a root of its own. ``root`` is a real path.
+        self.repository = self.root / "repository"
+        self.exclude = self.repository / ".git" / "info" / "exclude"
+        self.roots = Roots(self.home, self.project, self.clone, git_info=self.exclude.parent)
         self.prefix, self.runs = prefix, 0
 
     def stamp(self) -> str:
@@ -276,7 +281,8 @@ class World:
         fsio.make_link(str(self.clone / "old-skill"), claude / "skills" / "csv-tools", True)
         fsio.make_link(str(self.home / "elsewhere"), claude / "skills" / "users-own", True)
         self.put(self.project / ".claude" / "settings.json", self.SETTINGS)
-        self.put(self.project / ".gitignore", self.IGNORE)
+        support.make_repository(self.repository, exclude=self.IGNORE)
+        support.make_worktree(self.repository, self.project)
         self.put(self.project / "src" / "main.py", "print(1)\n")
 
     # --- The runs ---------------------------------------------------------------
@@ -329,7 +335,7 @@ class World:
         plan.edit_json(self.project / ".claude" / "settings.json", set={"agent": "manager"})
         plan.write_file(self.project / ".claude" / "agents" / "manager.md", "generated\n", inputs="digest-3")
         plan.edit_block(self.project / ".codex" / "config.toml", 'model = "m"\n', place=fileops.HEAD)
-        plan.ignore(add=[".claude/agents/manager.md"])
+        plan.ignore(self.exclude, add=[".claude/agents/manager.md"])
         return plan
 
     def everything(self) -> fileops.Plan:
@@ -337,7 +343,7 @@ class World:
         plan = self.migrate()
         plan.edit_json(self.project / ".claude" / "settings.json", set={"agent": "manager"})
         plan.write_file(self.project / ".claude" / "agents" / "manager.md", "generated\n", inputs="digest-3")
-        plan.ignore(add=[".claude/agents/manager.md"])
+        plan.ignore(self.exclude, add=[".claude/agents/manager.md"])
         return plan
 
     def uninstall(self) -> list[tuple[str, str]]:

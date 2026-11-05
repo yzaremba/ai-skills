@@ -45,6 +45,13 @@ The project (``--project``)
     effort is then not set for the first time, and one setup set earlier is
     left as it is, neither changed nor taken out, until the ``agent`` key
     is setup's again or is no longer wanted.
+    Both keys are set, changed and taken out only by a run that changed the
+    project's choices (``execute``'s ``project_changed``: ``setup.py DIR``
+    wrote the project's ``.agents/workflow.toml``; the old ``render
+    --project`` always). Any other run leaves them as they are, set or not,
+    and what the record holds of them, even where the home's mapping now
+    gives the role another effort (R6.1): the file is tracked, and one
+    user's mapping is not the project's. A note says so.
     A rule of the project's list is copied into ``.claude/rules/<name>/``
     for Claude Code (``fill_project_rules``), a generated file like the
     definitions; the sweep (``Run.other_sides``) keeps a copy whose rule is
@@ -52,10 +59,13 @@ The project (``--project``)
     side, which may have made it. A project's link, whoever made it, is
     setup's by where it leads, not by its text, and the sweep removes it so.
     They are recorded in the project's record, swept from it like a home's
-    files, and the generated files are listed in the project's ignore
-    block. The key and the block are not: they are setup's part of a file
-    the project owns and may commit, and an ignore entry would hide the
-    whole file. A project's path is the project's whichever side of the
+    files, and the generated files are listed in setup's block of the
+    repository's exclude file, ``info/exclude`` in its common git directory
+    (R6.3, ``gitrepo``); a project with no git directory this side can read
+    gets no list, and a note. The key and the block are not listed: they
+    are setup's part of a file the project owns and may commit, and an
+    entry would hide the whole file. A ``.codex/config.toml`` that setup
+    created for its block is listed; one that was there before never is. A project's path is the project's whichever side of the
     machine it is on: only a link in the way is asked about.
 
     A key or a block that was changed by hand since setup wrote it is
@@ -120,7 +130,7 @@ What ``Run.file`` decides for one generated file, in this order
     ``release``: setup's part is taken out and the rest left, as yours.
     ``inputs`` goes into the record with the file's hash. It starts with
     ``GENERATED_PREFIX``, which is how the stale sweep knows a file is one
-    ``render`` generates and not, say, a settings file ``init`` wrote.
+    ``render`` generates and not, say, a settings file ``settingsfile`` wrote.
 
 Stale files
     A generated file in the record that no part asked for is removed when it
@@ -203,7 +213,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from . import blocks, carried, definitions, dictionary, entry, fileops, fsio, homes, jsonkeys, modellist, paths, schema, settings
+from . import blocks, carried, definitions, dictionary, entry, fileops, fsio, gitrepo, homes, jsonkeys, modellist, paths, schema, settings
 from . import codexsettings
 from .errors import EXIT_ERROR, SetupError
 from .locations import Locations
@@ -235,6 +245,7 @@ LINK = "link"
 FILE = "file"
 KEY = "key"                # one key of a JSON file the project owns
 BLOCK = "block"            # setup's marked block in a text file the project owns
+NEW_FILE = "write, in a new file"   # what a block's item says where setup creates its file
 
 # Where a project's items are, in an item's ``place``.
 PROJECT = "project"
@@ -310,6 +321,8 @@ class Outcome:
     report: dict[str, Any]
     code: int
     errors: list[str] = field(default_factory=list)
+    # The project's ``.claude/settings.json`` when this run wrote it (R6.2).
+    written: tuple[Path, ...] = ()
 
 
 _fold = paths.fold_key
@@ -320,12 +333,16 @@ class Run:
     and the plan the parts fill."""
 
     def __init__(self, found: homes.Homes, sources: Sources, options: Any = None, *, follow: bool = False,
-                 overwrite: bool = False, stamp: str | None = None) -> None:
+                 overwrite: bool = False, stamp: str | None = None, project_changed: bool = True) -> None:
         self.homes = found
         self.sources = sources
         self.options = options
         self.follow = follow
         self.overwrite = overwrite
+        # Whether the project's choices changed in this run; while they did
+        # not, the two keys of ``.claude/settings.json`` are left (R6.1).
+        self.project_changed = project_changed
+        self._codex_tracked: dict[Path, bool | None] = {}
         self.errors: list[str] = []
         self.roots = found.roots()
         self.sorter = homes.Classifier(found)
@@ -871,7 +888,7 @@ class Run:
             item.status, item.says = ERROR, f"{path}: {exc}"
             return item
         if data is None:
-            item.says = "write, in a new file"
+            item.says = NEW_FILE
         elif wanted == data:
             item.status, item.says = UP_TO_DATE, "as generated" + (
                 "" if known is not None else "; the record did not hold the block, and takes it up"
@@ -1059,6 +1076,86 @@ class Run:
             what = "it was edited since setup wrote it" if seen.kind == fsio.FILE else f"a {seen.kind} is there"
             item.status, item.says = KEPT, f"no longer generated, and {what}; kept, it is yours"
 
+    def _ignore(self, project: Path) -> None:
+        """Setup's block in the project's exclude file: the generated files
+        and the links of the project, and a ``.codex/config.toml`` that
+        setup created; never a file setup writes into and did not create.
+        A project with no git directory this side can read gets no list,
+        and a note says why; a block an earlier run listed in the record
+        is then left as it is."""
+        def entry_of(item: Item) -> str:
+            return item.path.relative_to(project).as_posix()
+
+        def created(item: Item) -> bool:
+            # A file setup holds a block in, and that setup created: one
+            # this run creates, or one the record says setup created.
+            if item.status in (ERROR, EDITED, KEPT):
+                return False
+            if item.says == NEW_FILE:
+                return True
+            known = self.record.get(item.key) if item.key else None
+            return known is not None and known.get("kind") == "text" and bool(known.get("created"))
+
+        add = sorted({
+            entry_of(item) for item in self.items
+            if item.project and (item.kind == FILE or (item.kind == LINK and item.status != SKIPPED))
+        } | {
+            entry_of(item) for item in self.items
+            if item.project and item.kind == BLOCK and entry_of(item) in fileops.IGNORE_CREATED and created(item)
+        })
+        remove = sorted({
+            entry_of(item) for item in self.stale
+            if item.project and item.status in (REMOVE, FORGET) and (
+                item.kind in (FILE, LINK) or (item.kind == BLOCK and entry_of(item) in fileops.IGNORE_CREATED)
+            )
+        } - set(add))
+        held = self.record.project is not None and self.record.project.on_disk
+        if not (add or remove or held or self._ignore_always):
+            return
+        found = self.homes.repository
+        exclude = None if found is None else found.exclude
+        why = None if exclude is None else fileops.refusal(self.roots, exclude)
+        if exclude is None or why is not None:
+            note = found.note if exclude is None and found is not None and found.note else f"{project}: {why}"
+            if self.record.get(fileops.GIT_INFO_EXCLUDE) is not None:
+                note += f"; the block the record lists in {fileops.GIT_INFO_EXCLUDE} is left as it is"
+            self.notes.append(f"project: {note}")
+            return
+        self.plan.ignore(exclude, add=add, remove=remove, replace=fileops.ANY if self.overwrite else fileops.OWN)
+
+    def codex_tracked(self, path: Path) -> bool | None:
+        """Whether git tracks the project's ``.codex/config.toml`` (R6.4):
+        asked once per run; None where ``git`` could not be asked."""
+        if path not in self._codex_tracked:
+            project = self.homes.project
+            assert project is not None
+            self._codex_tracked[path] = gitrepo.tracked(project, path.relative_to(project).as_posix())
+        return self._codex_tracked[path]
+
+    def _old_ignore(self, project: Path) -> None:
+        """Setup's old block in the project's ``.gitignore`` (R10.3): named
+        for the user to remove, with its file and lines, and its record
+        entry, if there is one, forgotten. The file is never edited: setup
+        lists in the repository's exclude file now. A block whose markers
+        are setup's counts with or without a record (a fresh checkout has
+        none)."""
+        path = project / ".gitignore"
+        key = self.roots.key(path)
+        try:
+            data = fsio.read_bytes(path) if fsio.look(path).kind == fsio.FILE else None
+            if data is not None:
+                blocks.check_text(data)
+            span = None if data is None else blocks.scan(blocks.split_bom(data)[1], blocks.GITIGNORE).get("")
+        except (SetupError, blocks.Refusal):
+            return
+        if key is not None and self._recorded(key, "text", "blocks", "") is not None:
+            self.plan.forget_block(path, name="")
+        if span is not None:
+            self.notes.append(
+                f"project: {path}: lines {span[0] + 1}-{span[1]} are setup's old ignore block; setup lists in "
+                f"{fileops.GIT_INFO_EXCLUDE} now and never edits it again: remove those lines"
+            )
+
     def _writes_into(self, directory: Path) -> bool:
         """Whether this run writes into the place ``directory`` as it is."""
         if not _is_directory(directory):
@@ -1069,26 +1166,15 @@ class Run:
         return self.in_clone(directory) is None
 
     def finish(self) -> None:
-        """After the sweep: the project's ignore block (R6.6), and the
-        directories of setup's that this run leaves empty."""
+        """After the sweep: the project's ignore block in the repository's
+        exclude file (R6.3), and the directories of setup's that this run
+        leaves empty."""
         if self.errors:
             return
         project = self.homes.project
         if project is not None:
-            def entry_of(item: Item) -> str:
-                return item.path.relative_to(project).as_posix()
-
-            add = sorted({
-                entry_of(item) for item in self.items
-                if item.project and (item.kind == FILE or (item.kind == LINK and item.status != SKIPPED))
-            })
-            remove = sorted({
-                entry_of(item) for item in self.stale
-                if item.project and item.kind in (FILE, LINK) and item.status in (REMOVE, FORGET)
-            } - set(add))
-            held = self.record.project is not None and self.record.project.on_disk
-            if add or remove or held or self._ignore_always:
-                self.plan.ignore(add=add, remove=remove, replace=fileops.ANY if self.overwrite else fileops.OWN)
+            self._ignore(project)
+            self._old_ignore(project)
         asked: dict[str, Path] = {}
         places = {
             paths.fold(paths.absolute(place.path))
@@ -1251,6 +1337,18 @@ def _windows_path(text: str) -> str:
     if match is None:
         return text
     return f"{match.group(1).upper()}:" + (match.group(2) or "\\").replace("/", "\\")
+
+
+def _wsl_path(text: str) -> str:
+    """``D:\\proj`` as WSL names it, ``/mnt/d/proj``; ``\\\\wsl.localhost\\Distro\\home\\me``
+    as ``/home/me``; any other path as it is."""
+    share = re.fullmatch(r"\\\\(?:wsl\.localhost|wsl\$)\\[^\\]+(\\.*)?", text, re.IGNORECASE)
+    if share is not None:
+        return (share.group(1) or "\\").replace("\\", "/")
+    match = re.fullmatch(r"([A-Za-z]):(\\.*)?", text)
+    if match is None:
+        return text
+    return f"/mnt/{match.group(1).lower()}" + (match.group(2) or "").replace("\\", "/").rstrip("/")
 
 
 def fill_rules(run: Run) -> None:
@@ -1431,14 +1529,55 @@ def fill_entry(run: Run) -> None:
             run.fail(*exc.lines)
             return
     if project is not None and not run.errors:
+        if not run.project_changed:
+            _keys_left(run, project)
         # The effort first: it was set after the role, and the last member
         # taken out first gives back the bytes that were there.
-        if not wanted_effort:
+        if not wanted_effort and run.project_changed:
             run.drop_json_key(project / entry.CLAUDE_SETTINGS, entry.EFFORT_KEY)
-        if not wanted_key:
+        if not wanted_key and run.project_changed:
             run.drop_json_key(project / entry.CLAUDE_SETTINGS, entry.AGENT_KEY)
         if not wanted_block:
-            run.drop_block(project / entry.CODEX_CONFIG, entry.BLOCK_NAME)
+            _old_codex_block(run, project / entry.CODEX_CONFIG)
+
+
+def _old_codex_block(run: Run, path: Path) -> None:
+    """A block setup no longer asks for in the project's ``.codex/config.toml``.
+    Where git tracks the file (R10.3) the block is the user's to remove: it is
+    named with its lines, its record entry is forgotten, and the file is never
+    edited. Where git does not, setup takes the block out as before. Where git
+    could not be asked, the block and the record stay as they are."""
+    key = run.roots.key(path)
+    recorded = key is not None and run._recorded(key, "text", "blocks", entry.BLOCK_NAME) is not None
+    span = None
+    try:
+        data = fsio.read_bytes(path) if fsio.look(path).kind == fsio.FILE else None
+        if data is not None:
+            blocks.check_text(data)
+            span = blocks.scan(blocks.split_bom(data)[1], blocks.TOML).get(entry.BLOCK_NAME)
+    except (SetupError, blocks.Refusal):
+        pass
+    if not (recorded or span is not None):
+        return
+    tracked = run.codex_tracked(path)
+    if tracked is False:
+        run.drop_block(path, entry.BLOCK_NAME)
+        return
+    if tracked is None:
+        if run.project_facts.get("manager_default"):
+            return   # the line of ``_fill_entry`` says it
+        run.notes.append(
+            f"project: {path}: git could not be asked whether it tracks the file, so setup's block there "
+            "is left as it is"
+        )
+        return
+    if recorded:
+        run.plan.forget_block(path, name=entry.BLOCK_NAME)
+    if span is not None:
+        run.notes.append(
+            f"project: {path}: lines {span[0] + 1}-{span[1]} are setup's old Codex block (git tracks the file, "
+            "so setup never edits it): remove those lines"
+        )
 
 
 def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[homes.Provider],
@@ -1534,16 +1673,29 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
     # The starting role as the project's default.
     if default:
         role = run.project_facts["starting_role"]
+        left = False
         for provider in providers:
-            if provider.name == definitions.CLAUDE_CODE:
+            if provider.name == definitions.CLAUDE_CODE and not run.project_changed:
+                left = True   # the keys stay as they are (R6.1); ``fill_entry`` says so
+            elif provider.name == definitions.CLAUDE_CODE:
                 wanted_key = True
                 item = run.json_key(provider, project / entry.CLAUDE_SETTINGS, entry.AGENT_KEY, role)
                 _point(run, provider.name, "project-default", role,
                        f'"{entry.AGENT_KEY}": "{role}" in {entry.CLAUDE_SETTINGS}', status=item.status)
                 wanted_effort = _project_effort(run, provider, where, role, item)
             elif provider.name == definitions.CODEX:
-                wanted_block = True
                 path = project / entry.CODEX_CONFIG
+                tracked = run.codex_tracked(path)
+                if tracked is not False:
+                    # R6.4: nothing is written into a file git tracks, or may track.
+                    run.notes.append(
+                        f"project: {path} " + (
+                            "is tracked by git" if tracked else "was not checked: git could not be started"
+                        ) + f", so setup writes nothing there: Codex sessions in the project will not start as {role}"
+                    )
+                    run.project_facts["codex_default"] = "tracked" if tracked else "unknown"
+                    continue
+                wanted_block = True
                 _, content = entry.project_block(where, run.homes)
                 taken_keys = _keys_outside(path, content)
                 if taken_keys:
@@ -1560,9 +1712,28 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
                 _point(run, provider.name, "project-default", role,
                        f"the block {entry.BLOCK_NAME} at the head of {entry.CODEX_CONFIG}, read in a trusted "
                        "project only; it wins over a profile", status=item.status)
-        if wanted_key or wanted_block:
+        if wanted_key or left or wanted_block:
             run.ignore_always()
     return wanted_key, wanted_effort, wanted_block
+
+
+def _keys_left(run: Run, project: Path) -> None:
+    """A run that did not change the project's choices leaves the keys
+    ``agent`` and ``effortLevel`` of ``.claude/settings.json`` as they are,
+    set or not, with their record entries (R6.1): the file is tracked, and
+    the home's mapping of one user is not the project's. One note, where the
+    project's default would set them or the record holds one."""
+    if not any(provider.name == definitions.CLAUDE_CODE for provider in _entry_providers(run)):
+        return
+    key = run.roots.key(project / entry.CLAUDE_SETTINGS)
+    held = [name for name in (entry.AGENT_KEY, entry.EFFORT_KEY) if run._recorded(key, "json", "keys", name)]
+    if not (held or run.project_facts.get("manager_default")):
+        return
+    run.notes.append(
+        f"{entry.CLAUDE_SETTINGS}: {entry.AGENT_KEY} and {entry.EFFORT_KEY} are left as they are, and so is what "
+        f"the record holds of them: this run did not write {_locations(run, project).project_file}, and only a run that "
+        f"writes it sets, changes or removes them"
+    )
 
 
 def _project_effort(run: Run, provider: homes.Provider, where: Locations, role: str, agent: Item) -> bool:
@@ -1692,7 +1863,7 @@ PARTS: tuple[Part, ...] = (
     Part("rules", fill_rules),
     Part("roles", fill_roles),
     Part("entry", fill_entry),
-    Part("codex-settings", codexsettings.fill, codexsettings.configure),
+    Part("codex-settings", codexsettings.fill),   # its options: setup.py, and the old render
     Part(MODEL_LIST_PART, fill_model_list),
 )
 
@@ -1701,17 +1872,22 @@ PARTS: tuple[Part, ...] = (
 
 def execute(found: homes.Homes, sources: Sources, options: Any = None, *, dry_run: bool = False,
             follow: bool = False, overwrite_edited: bool = False, parts: tuple[Part, ...] | None = None,
-            stamp: str | None = None, clone_warning: str | None = None) -> Outcome:
+            stamp: str | None = None, clone_warning: str | None = None, project_changed: bool = True) -> Outcome:
     """Fill one plan from the parts, then show it (``dry_run``) or apply it.
     The sources are valid and the clone was checked before this is called;
-    ``clone_warning`` is the line that check gave, or None (``homes.clone_warning``)."""
+    ``clone_warning`` is the line that check gave, or None (``homes.clone_warning``).
+    ``project_changed`` says whether this run changed the project's choices
+    (wrote its ``.agents/workflow.toml``); while it is false the project's
+    ``agent`` and ``effortLevel`` keys are left as they are (R6.1)."""
     recovered: fileops.Result | None = None
+    before = _bytes_of(found.project / entry.CLAUDE_SETTINGS) if found.project is not None else None
     if not dry_run:
         # What an interrupted run left is settled before anything looks at
         # the disk to decide what to do: a file it left under a temporary
         # name is no file of the user's.
         recovered = fileops.recover(found.roots(), follow_config_symlinks=follow)
-    run = Run(found, sources, options, follow=follow, overwrite=overwrite_edited, stamp=stamp)
+    run = Run(found, sources, options, follow=follow, overwrite=overwrite_edited, stamp=stamp,
+              project_changed=project_changed)
     if recovered is not None and recovered.changed:
         run.notes.extend([*recovered.lines, *recovered.notes])
     for part in PARTS if parts is None else parts:
@@ -1734,7 +1910,20 @@ def execute(found: homes.Homes, sources: Sources, options: Any = None, *, dry_ru
     code = EXIT_ERROR if errors else EXIT_NEEDS_FLAG if needs_flag else 0
     report = _report(run, result, errors, dry_run, code)
     report["clone_warning"] = clone_warning
-    return Outcome(report, code, errors)
+    written: list[Path] = []
+    if found.project is not None and not dry_run and not errors:
+        path = found.project / entry.CLAUDE_SETTINGS
+        if _bytes_of(path) != before:
+            written.append(path)
+    return Outcome(report, code, errors, tuple(written))
+
+
+def _bytes_of(path: Path) -> bytes | None:
+    """The bytes of a file, or None where there is none or it cannot be read."""
+    try:
+        return fsio.read_bytes(path) if fsio.look(path).kind == fsio.FILE else None
+    except (SetupError, OSError):
+        return None
 
 
 def _count(items: list[Item], *statuses: str, kind: str | None = None) -> int:

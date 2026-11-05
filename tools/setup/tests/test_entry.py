@@ -115,12 +115,13 @@ class EntryCase(DefinitionsCase):
     def project_entries(self) -> dict:
         return json.loads((self.project / self.PROJECT_RECORD).read_text(encoding="utf-8"))["entries"]
 
-    def assertOnlyStateAndIgnoreFileAdded(self, before: dict, after: dict) -> None:
-        """A project got the ignore file and setup's state directory, with
-        the record in it, and nothing else."""
+    def assertOnlyStateAdded(self, before: dict, after: dict) -> None:
+        """A project got setup's state directory, with the record in it,
+        and nothing else: its ignore block is in the repository's exclude
+        file, which was there."""
         added = set(after) - set(before)
         inside = self.PROJECT_STATE + "/"
-        self.assertEqual({name for name in added if not name.startswith(inside)}, {".gitignore", self.PROJECT_STATE})
+        self.assertEqual({name for name in added if not name.startswith(inside)}, {self.PROJECT_STATE})
         self.assertIn(self.PROJECT_RECORD, added)
         self.assertTrue(all(name == self.PROJECT_RECORD or name.startswith(inside + "backups")
                             for name in added if name.startswith(inside)), sorted(added))
@@ -531,6 +532,9 @@ class StableCase(EntryCase):
         )
 
     def test_two_clone_paths_give_the_same_bytes(self) -> None:
+        # Two repositories with no exclude file yet: setup creates each, and
+        # takes no backup whose stamp would tell the records apart.
+        self.exclude_file.unlink()
         self.write(self.project_file, DEFAULT_ON + OVERRIDE)
         self.with_project()
         other_clone = self.root / "elsewhere" / "a longer name" / "clone-two"
@@ -539,6 +543,7 @@ class StableCase(EntryCase):
         (other_home / ".claude").mkdir(parents=True)
         (other_home / ".codex").mkdir()
         self.write(other_project / ".agents" / "workflow.toml", DEFAULT_ON + OVERRIDE)
+        support.make_repository(other_project, exclude=None)
         with mock.patch.object(locations, "CLONE", other_clone), \
                 mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
             code, _, err = support.run("render", "--home", str(other_home), "--project", str(other_project))
@@ -580,7 +585,7 @@ class StableCase(EntryCase):
         (self.project / SETTINGS).write_bytes(USER_JSON)
         (self.project / ".codex").mkdir()
         (self.project / CONFIG).write_bytes(USER_TOML)
-        (self.project / ".gitignore").write_bytes(b"node_modules/\n")
+        self.exclude_file.write_bytes(b"node_modules/\n")
         home_before, project_before, clone_before = tree(self.home), tree(self.project), tree(self.clone)
         self.with_project()
         self.assertNotEqual(tree(self.home), home_before)
@@ -696,10 +701,10 @@ class NoRolesCase(EntryCase):
         self.assertEqual({item["status"] for item in report["stale"]}, {render.REMOVE})
         # The project holds its settings, the record and the ignore block, and nothing else.
         after = tree(self.project)
-        self.assertOnlyStateAndIgnoreFileAdded(project_before, after)
-        self.assertEqual((self.project / ".gitignore").read_bytes(),
-                         ("# workflow-setup:start\n" + "".join(f"{entry}\n" for entry in ALWAYS)
-                          + "# workflow-setup:end\n").encode("utf-8"))
+        self.assertOnlyStateAdded(project_before, after)
+        self.assertEqual(self.exclude_file.read_bytes(),
+                         support.GIT_EXCLUDE + ("\n# workflow-setup:start\n" + "".join(f"{entry}\n" for entry in ALWAYS)
+                                                + "# workflow-setup:end\n").encode("utf-8"))
         before = tree(self.root)
         code, report, _ = self.report(*self.project_arg)
         self.assertEqual((code, report["plan"], report["stale"]), (0, [], []))
@@ -1059,7 +1064,7 @@ class ProjectDefinitionsCase(EntryCase):
             "project:.codex/agents", "project:.codex/agents/worker.toml",
         })
         changed = {key for key in project_record if record[key] != project_record[key]}
-        self.assertEqual(changed, {"project:.gitignore"})  # the ignore block lists the two files
+        self.assertEqual(changed, {"git-info:exclude"})  # the ignore block lists the two files
         for key in (f"project:{SETTINGS}", f"project:{CONFIG}"):
             self.assertEqual(record[key]["sha256"], project_record[key]["sha256"])
         self.assertEqual(report["plan"][:2], ["create directory project:.claude/agents", "create directory project:.codex/agents"])
@@ -1094,28 +1099,47 @@ class ProjectDefinitionsCase(EntryCase):
         })
 
     def test_the_ignore_block_lists_what_is_generated(self) -> None:
-        (self.project / ".gitignore").write_bytes(b"node_modules/\n")
+        self.exclude_file.write_bytes(b"node_modules/\n")
         self.write(self.project_file, DEFAULT_ON + OVERRIDE)
         self.with_project()
-        held = blocks.content_of((self.project / ".gitignore").read_bytes(), blocks.GITIGNORE)
-        # The key and the block are setup's part of files the project owns: not listed.
-        self.assertEqual(held, sorted([*ALWAYS, ".claude/agents/worker.md", ".codex/agents/worker.toml"]))
-        self.assertTrue((self.project / ".gitignore").read_bytes().startswith(b"node_modules/\n"))
+        held = blocks.content_of(self.exclude_file.read_bytes(), blocks.GITIGNORE)
+        # The key is setup's part of a file the project owns: not listed. The
+        # Codex config is listed: setup created it for its block (R6.3).
+        self.assertEqual(held, sorted([*ALWAYS, CONFIG, ".claude/agents/worker.md", ".codex/agents/worker.toml"]))
+        self.assertTrue(self.exclude_file.read_bytes().startswith(b"node_modules/\n"))
         # An override that goes takes its files and their entries with it.
         self.write(self.project_file, DEFAULT_ON)
         out = self.with_project()
         self.assertIn("  remove file project:.claude/agents/worker.md (backup)", out.splitlines())
         self.assertIn("  remove directory project:.codex/agents", out.splitlines())
-        held = blocks.content_of((self.project / ".gitignore").read_bytes(), blocks.GITIGNORE)
-        self.assertEqual(held, ALWAYS)
+        held = blocks.content_of(self.exclude_file.read_bytes(), blocks.GITIGNORE)
+        self.assertEqual(held, sorted([*ALWAYS, CONFIG]))
         self.assertEqual(set(self.project_files()), {SETTINGS, CONFIG})
         self.assertNothingAt(self.project / ".claude" / "agents")
 
     def test_a_default_alone_still_gets_the_ignore_block(self) -> None:
         self.write(self.project_file, DEFAULT_ON)
         self.with_project()
-        self.assertEqual(blocks.content_of((self.project / ".gitignore").read_bytes(), blocks.GITIGNORE),
-                         ALWAYS)
+        self.assertEqual(blocks.content_of(self.exclude_file.read_bytes(), blocks.GITIGNORE),
+                         sorted([*ALWAYS, CONFIG]))
+
+    def test_a_codex_config_is_listed_only_while_setup_created_it(self) -> None:
+        self.write(self.project_file, DEFAULT_ON)
+        self.with_project()
+        self.assertIn(CONFIG, blocks.content_of(self.exclude_file.read_bytes(), blocks.GITIGNORE))
+        # The default off: the block goes, the file setup created with it,
+        # and its entry from the list.
+        self.write(self.project_file, "[roles]\nmanager_default = false\n")
+        self.with_project()
+        self.assertNothingAt(self.project / CONFIG)
+        self.assertNotIn(CONFIG, blocks.content_of(self.exclude_file.read_bytes(), blocks.GITIGNORE))
+        # The user's own config: setup writes its block into it and never lists it.
+        (self.project / CONFIG).parent.mkdir()
+        (self.project / CONFIG).write_bytes(USER_TOML)
+        self.write(self.project_file, DEFAULT_ON)
+        self.with_project()
+        self.assertTrue((self.project / CONFIG).read_bytes().endswith(USER_TOML))
+        self.assertEqual(blocks.content_of(self.exclude_file.read_bytes(), blocks.GITIGNORE), ALWAYS)
 
     def test_a_users_own_file_where_a_projects_definition_goes_is_a_conflict(self) -> None:
         self.keep(self.project / ".claude/agents/worker.md")
@@ -1310,7 +1334,7 @@ class ProjectDefaultCase(EntryCase):
         self.assertNothingAt(self.project / ".claude")
         self.assertNothingAt(self.project / ".codex")
         after = tree(self.project)
-        self.assertOnlyStateAndIgnoreFileAdded(before, after)
+        self.assertOnlyStateAdded(before, after)
         self.assertEqual(report["counts"]["default_remove"], 3)
         self.assertIn("0 project defaults set, 3 removed", report["summary"])
         self.assertEqual(report["project"]["manager_default"], False)

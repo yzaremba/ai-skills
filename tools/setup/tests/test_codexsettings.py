@@ -1,4 +1,4 @@
-"""Tests for the Codex settings: ``render --apply-codex-settings`` and the
+"""Tests for the Codex settings: ``setup.py --codex-settings`` and the
 check ``codex-settings`` of ``doctor``.
 
 Run from the repository root:
@@ -20,15 +20,19 @@ import re
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
+import support
 from fileops_support import POSIX, SYMLINKS
 from test_doctor import SECRET, DoctorCase
 from test_render import tree
 from wfsetup import blocks, codexsettings, doctor, fileops, fsio, homes, render
 
-APPLY = "--apply-codex-settings"
-REMOVE = "--remove-codex-settings"
-DEFAULT = "--default-codex-permissions"
+# The item as the tests say it: APPLY alone is "on", with DEFAULT it is "profile", REMOVE is "off";
+# ``SettingsCase.go`` gives them to ``setup.py`` as ``--codex-settings`` (the old names are the old command's).
+APPLY = "apply"
+REMOVE = "remove"
+DEFAULT = "default"
 ROOT = "--worktree-root"
 KEY = "max_concurrent_threads_per_session"
 LIMIT = f"agents.{KEY}"
@@ -121,23 +125,35 @@ class SettingsCase(DoctorCase):
         self.config = self.codex / "config.toml"
         self.key = "home:.codex/config.toml"
 
+    def snapshot(self, base: Path | None = None) -> dict:
+        """The scratch tree but the home's settings file, which a run of ``setup.py`` writes (the first one,
+        its tier and effort mappings) before the install plan can refuse."""
+        return {key: value for key, value in tree(base or self.root).items()
+                if not key.endswith((".agents", ".agents/workflow.toml", ".agents/workflow-setup"))}
+
     def user(self, text: str | bytes) -> bytes:
         data = text if isinstance(text, bytes) else text.encode("utf-8")
         self.config.write_bytes(data)
         return data
 
     def go(self, *argv: str, host: homes.Host | None = None) -> tuple[int, str, str]:
-        return self.render(*argv, host=host)
+        """``setup.py --yes`` over the scratch home, with the item the tests say as APPLY, DEFAULT and REMOVE."""
+        words = [one for one in argv if one not in (APPLY, REMOVE, DEFAULT)]
+        mode = "off" if REMOVE in argv else "profile" if DEFAULT in argv else "on" if APPLY in argv else None
+        if mode is not None:
+            words += ["--codex-settings", mode]
+        with mock.patch.object(homes.Host, "current", classmethod(lambda cls: host or self.host)):
+            return support.setup("--yes", "--rewrite-settings", *words, "--home", str(self.home))
 
     def apply(self, *argv: str, code: int = 0) -> str:
-        """``render --apply-codex-settings``, which must end with ``code``."""
+        """``setup.py --codex-settings on``, which must end with ``code``."""
         got, out, err = self.go(APPLY, *argv)
         self.assertEqual(got, code, out + err)
         return " ".join((out + err).split())
 
     def as_json(self, *argv: str) -> dict:
         code, out, err = self.go("--json", *argv)
-        return json.loads(out)
+        return json.loads(out)["install"]
 
     def statuses(self, report: dict) -> dict[str, str]:
         for provider in report["providers"]:
@@ -253,10 +269,10 @@ class LimitCase(SettingsCase):
                     self.assertIn(f"{LIMIT}: your file sets it to {value}, so setup writes nothing for it", out)
                     self.assertIn("that is enough" if value >= 8 else "raising it is yours to do", out)
                 # A second run writes nothing.
-                home = tree(self.home)
+                home = self.snapshot(self.home)
                 again = self.apply()
                 self.assertIn("nothing was written", again)
-                self.assertEqual(tree(self.home), home)
+                self.assertEqual(self.snapshot(self.home), home)
                 # Taking it out gives the file's bytes back.
                 self.go(REMOVE)
                 self.assertEqual(self.config.read_bytes(), original)
@@ -339,10 +355,10 @@ class WaitCase(SettingsCase):
                     self.assertIn(f"{WAIT}.{MIN}: not written. Your file defines `features` in a form", out)
                     self.assertIn(f"these lines: {MIN} = 300000; {DEF} = 3600000", out)
                 # A second run writes nothing.
-                home = tree(self.home)
+                home = self.snapshot(self.home)
                 again = self.apply()
                 self.assertIn("nothing was written", again)
-                self.assertEqual(tree(self.home), home)
+                self.assertEqual(self.snapshot(self.home), home)
                 # Taking it out gives the file's bytes back.
                 self.go(REMOVE)
                 self.assertEqual(self.config.read_bytes(), original)
@@ -452,13 +468,13 @@ class ProfileCase(SettingsCase):
 
     def test_sandbox_mode_and_the_limit_set_leave_nothing_to_write(self) -> None:
         original = self.user(f'sandbox_mode = "read-only"\n\n[agents]\n{KEY} = 8\n\n{FLOORED}')
-        before = tree(self.home)
+        before = self.snapshot(self.home)
         report = self.as_json(APPLY)
         self.assertEqual(self.statuses(report), {codexsettings.BLOCK: render.UP_TO_DATE})
         self.assertEqual(self.config.read_bytes(), original)
         self.assertEqual(self.recorded(), {})
         self.assertFalse(any("config.toml" in line for line in report["plan"]))
-        self.assertEqual(tree(self.home)[".codex/config.toml"], before[".codex/config.toml"])
+        self.assertEqual(self.snapshot(self.home)[".codex/config.toml"], before[".codex/config.toml"])
 
     def test_without_the_option_or_a_default_of_the_users_the_profile_is_only_printed(self) -> None:
         original = self.user('model = "x"\n')
@@ -475,8 +491,8 @@ class ProfileCase(SettingsCase):
         self.assertEqual(self.loaded()["features"]["multi_agent_v2"], FLOOR)
         self.assertIn("permission profile: not written. Codex (0.163.0) refuses to load a config that defines a "
                       "[permissions] profile and sets no default_permissions while sandbox_mode is unset, and after "
-                      "this run your file would set none: --default-codex-permissions was not given", flat)
-        self.assertIn("to use it: run render --apply-codex-settings --default-codex-permissions, which writes it "
+                      "this run your file would set none: --codex-settings profile was not given", flat)
+        self.assertIn("to use it: run setup.py --codex-settings profile, which writes it "
                       "and selects it", flat)
         self.assertIn("permission profiles are beta in Codex", flat)
         self.assertIn("no worktree root is in the profile", flat)
@@ -484,9 +500,9 @@ class ProfileCase(SettingsCase):
         printed = "\n".join(line[len("note:     "):] for line in lines if line.startswith("note:     "))
         self.assertEqual(tomllib.loads(printed)["permissions"]["workflow"], codexsettings.profile_data(None))
         # A second run writes nothing.
-        home = tree(self.home)
+        home = self.snapshot(self.home)
         self.assertIn("nothing was written", self.apply())
-        self.assertEqual(tree(self.home), home)
+        self.assertEqual(self.snapshot(self.home), home)
 
     def test_a_default_of_the_users_gets_the_profile_written_and_not_selected(self) -> None:
         for value in (":workspace", ":read-only", "mine"):
@@ -501,9 +517,9 @@ class ProfileCase(SettingsCase):
                 self.assertIn("permission profile: `workflow` defined in setup's block at the end of the file", out)
                 self.assertIn(f'default_permissions: your file sets it to "{value}"; setup leaves it alone. The '
                               "profile is written and not selected", out)
-                home = tree(self.home)
+                home = self.snapshot(self.home)
                 self.assertIn("nothing was written", self.apply())
-                self.assertEqual(tree(self.home), home)
+                self.assertEqual(self.snapshot(self.home), home)
 
     def test_an_earlier_block_with_the_profile_and_no_default_fails_doctor_and_goes_with_a_run(self) -> None:
         # An earlier run beside the user's own default; the user then took that default out.
@@ -516,8 +532,8 @@ class ProfileCase(SettingsCase):
         self.assertEqual(code, 1)
         self.assertFinding(findings, doctor.ERROR, "setup's block codex-settings defines the permission profile "
                            "`workflow` and the file sets no default_permissions", "so Codex will not start",
-                           "render --apply-codex-settings --default-codex-permissions",
-                           "render --remove-codex-settings")
+                           "setup.py --codex-settings profile",
+                           "setup.py --codex-settings off")
         self.assertFinding(findings, doctor.OK, "setup's block codex-settings: in the file, as setup wrote it")
         # The fix by the option keeps the profile and selects it.
         self.apply(DEFAULT)
@@ -529,7 +545,7 @@ class ProfileCase(SettingsCase):
         self.assertNotIn("permissions", self.loaded())
         self.assertNotIn("default_permissions", self.loaded())
         self.assertEqual(self.limit(), 8)
-        self.assertIn("this run was given no --default-codex-permissions, so default_permissions is taken out", out)
+        self.assertIn("this run was given no --codex-settings profile, so default_permissions is taken out", out)
         # The same from the old block itself, as an earlier setup left it.
         self.go(REMOVE)
         self.user('default_permissions = ":workspace"\nmodel = "x"\n')
@@ -537,15 +553,15 @@ class ProfileCase(SettingsCase):
         self.config.write_bytes(self.config.read_bytes().replace(b'default_permissions = ":workspace"\n', b""))
         out = self.apply()
         self.assertIn("codex-settings: update: ", out)
-        self.assertIn("the permission profile `workflow` is taken out, because --default-codex-permissions was not "
+        self.assertIn("the permission profile `workflow` is taken out, because --codex-settings profile was not "
                       "given to this run and your file sets no default_permissions", out)
         self.assertIn("the earlier block defined the permission profile `workflow`", out)
         self.assertNotIn("permissions", self.loaded())
         self.assertEqual(self.loaded()["features"]["multi_agent_v2"], FLOOR)
         self.assertEqual(self.only("codex-settings")[0], 0)
-        home = tree(self.home)
+        home = self.snapshot(self.home)
         self.assertIn("nothing was written", self.apply())
-        self.assertEqual(tree(self.home), home)
+        self.assertEqual(self.snapshot(self.home), home)
         # The fix by removal.
         self.go(REMOVE)
         self.user('default_permissions = ":workspace"\nmodel = "x"\n')
@@ -580,7 +596,7 @@ class ProfileCase(SettingsCase):
         out = self.apply()
         self.assertNotIn("default_permissions", self.loaded())
         self.assertIsNone(self.block(codexsettings.TOP_BLOCK))
-        self.assertIn("this run was given no --default-codex-permissions, so default_permissions is taken out", out)
+        self.assertIn("this run was given no --codex-settings profile, so default_permissions is taken out", out)
         self.assertEqual(self.without_blocks(), original)
 
     def test_a_default_the_user_set_is_reported_and_not_changed(self) -> None:
@@ -671,7 +687,7 @@ class WorktreeRootCase(SettingsCase):
 
     def test_a_relative_path_another_users_home_and_an_empty_one_are_refused(self) -> None:
         original = self.user('model = "x"\n')
-        before = tree(self.root)
+        before = self.snapshot()
         top = Path(self.root).anchor   # the root of the file system, with its drive on Windows
         for given, why in (("trees", "not an absolute path"), ("./trees", "not an absolute path"),
                            ("~other/trees", "another user's home"), ("~/../x", "a path with .. in it"),
@@ -690,7 +706,7 @@ class WorktreeRootCase(SettingsCase):
                     self.assertIn(f"error: --worktree-root", err)
                     self.assertIn(why, err)
                     self.assertEqual(len(err.strip().splitlines()), 1, err)
-                    self.assertEqual(tree(self.root), before)
+                    self.assertEqual(self.snapshot(), before)
         self.assertEqual(self.config.read_bytes(), original)
 
     def test_a_root_given_while_sandbox_mode_is_set_is_only_printed(self) -> None:
@@ -701,31 +717,55 @@ class WorktreeRootCase(SettingsCase):
         self.assertNotIn("trees", self.config.read_bytes().decode("utf-8"))
         self.assertIn(f"note:     {json.dumps(str(trees))} = \"write\"", out.splitlines())
 
-    def test_a_run_without_the_option_takes_the_root_out_and_says_so(self) -> None:
+    def test_a_run_without_the_options_keeps_the_root_and_the_profile(self) -> None:
         trees = self.root / "trees"
         self.apply(DEFAULT, ROOT, str(trees))
-        out = self.apply(DEFAULT)
-        self.assertEqual(self.written(), [])
-        self.assertIn(f"the earlier block held the worktree root {trees}, and this run was given no --worktree-root", out)
+        before = self.config.read_bytes()
+        code, out, err = self.go()   # no flag of the item: a refresh
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertEqual(self.written(), [str(trees)])
+        self.assertEqual(self.loaded()["default_permissions"], "workflow")
+        self.assertNotIn("taken out", out)
 
-    def test_the_options_that_go_with_apply_are_refused_without_it(self) -> None:
-        before = tree(self.root)
-        for argv, why in (((ROOT, str(self.root)), "--worktree-root: goes with --apply-codex-settings"),
-                          ((DEFAULT,), "--default-codex-permissions: goes with --apply-codex-settings"),
-                          ((APPLY, REMOVE), "--apply-codex-settings and --remove-codex-settings: one or the other")):
+    def test_a_flag_changes_only_its_own_part(self) -> None:
+        trees, more = self.root / "trees", self.root / "more"
+        self.apply(DEFAULT, ROOT, str(trees))
+        self.assertEqual(self.go(ROOT, str(more))[0], 0)   # the root alone: the profile stays selected
+        self.assertEqual(self.written(), [str(more)])
+        self.assertEqual(self.loaded()["default_permissions"], "workflow")
+        out = self.apply()   # on: the profile part goes (the file sets no default_permissions of its own)
+        self.assertNotIn("permissions", self.loaded())
+        self.assertNotIn("default_permissions", self.loaded())
+        self.assertIn("--codex-settings profile was not given", out)
+
+    def test_off_takes_the_blocks_out_and_a_refresh_keeps_them_out(self) -> None:
+        self.apply(DEFAULT, ROOT, str(self.root / "trees"))
+        self.apply(REMOVE)
+        self.assertFalse(self.config.exists())
+        self.assertEqual(self.recorded(), {})
+        self.assertEqual(self.go()[0], 0)
+        self.assertFalse(self.config.exists())
+
+    def test_the_root_goes_with_an_item_that_is_on(self) -> None:
+        before = self.snapshot()
+        for argv, why in (((ROOT, str(self.root)), "give --codex-settings on with it"),
+                          ((REMOVE, ROOT, str(self.root)), "give --codex-settings on with it")):
             code, out, err = self.go(*argv)
             self.assertEqual(code, 2)
             self.assertIn(why, err)
-            self.assertEqual(tree(self.root), before)
+            self.assertEqual(self.snapshot(), before)
+        self.apply()
+        self.assertEqual(self.go(ROOT, str(self.root / "trees"))[0], 0)   # on, by the blocks the file holds
 
 
 class StayCase(SettingsCase):
     def test_a_dry_run_writes_nothing_and_says_what_it_would(self) -> None:
         self.user('model = "x"\n')
-        before = tree(self.root)
+        before = self.snapshot()
         code, out, err = self.go(APPLY, DEFAULT, "--dry-run")
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(tree(self.root), before)
+        self.assertEqual(self.snapshot(), before)
         self.assertIn("write 2 blocks of Codex settings and remove 0", out.splitlines()[-1])
         self.assertIn("    codex-settings: create: write, at the end of the file", out.splitlines())
         self.assertIn("    codex-settings-top: create: write, at the head of the file", out.splitlines())
@@ -734,12 +774,12 @@ class StayCase(SettingsCase):
         self.user('model = "x"\n')
         trees = self.root / "trees"
         self.apply(DEFAULT, ROOT, str(trees))
-        before = tree(self.root)
+        before = self.snapshot()
         report = self.as_json(APPLY, DEFAULT, ROOT, str(trees))
         self.assertEqual((report["exit_code"], report["plan"], report["changed"]), (0, [], False))
         self.assertEqual(self.statuses(report), {codexsettings.BLOCK: render.UP_TO_DATE,
                                               codexsettings.TOP_BLOCK: render.UP_TO_DATE})
-        self.assertEqual(tree(self.root), before)
+        self.assertEqual(self.snapshot(), before)
 
     def test_the_file_is_backed_up_before_it_is_changed(self) -> None:
         original = self.user('model = "x"\n')
@@ -818,48 +858,48 @@ class StayCase(SettingsCase):
 
     def test_the_reversal_restores_the_home_byte_for_byte(self) -> None:
         self.user(b'# Mine.\r\nmodel = "x"\r\n\r\n[features]\r\nfast = true\r\n')
-        before = tree(self.home)
+        before = self.snapshot(self.home)
         self.apply(DEFAULT, ROOT, str(self.root / "my trees"))
         self.apply(ROOT, "~/trees")
         self.assertEqual(self.render()[0], 0)
-        self.assertNotEqual(tree(self.home), before)
+        self.assertNotEqual(self.snapshot(self.home), before)
         where = self.roots()
         result = fileops.plan_reversal(where).apply()
         self.assertEqual(result.kept, [])
         self.assertTrue(fileops.remove_state(where))
-        self.assertEqual(tree(self.home), before)
+        self.assertEqual(self.snapshot(self.home), before)
 
     def test_the_reversal_removes_a_file_setup_created(self) -> None:
-        before = tree(self.home)
+        before = self.snapshot(self.home)
         self.apply(DEFAULT)
         where = self.roots()
         fileops.plan_reversal(where).apply()
         self.assertTrue(fileops.remove_state(where))
-        self.assertEqual(tree(self.home), before)
+        self.assertEqual(self.snapshot(self.home), before)
 
     def test_codex_not_installed_writes_nothing(self) -> None:
         import shutil
         shutil.rmtree(self.codex)
-        before = tree(self.home)
+        before = self.snapshot(self.home)
         code, out, err = self.go(APPLY, "--dry-run")
         self.assertEqual((code, err), (0, ""))
         self.assertIn("codex settings: Codex is not installed; nothing is written for it", out)
-        self.assertEqual(tree(self.home), before)
+        self.assertEqual(self.snapshot(self.home), before)
 
 
 class RefusedCase(SettingsCase):
     def assertRefused(self, data: bytes, *words: str) -> None:
         self.user(data)
-        before = tree(self.root)
+        self.assertEqual(self.go()[0], 0)   # a run that was not asked about the file is not stopped by it
+        before = self.snapshot()
         for argv in ((APPLY,), (APPLY, "--dry-run"), (APPLY, "--json"), (REMOVE,)):
             code, out, err = self.go(*argv)
             self.assertEqual(code, 2, out)
-            self.assertEqual(tree(self.root), before)
+            self.assertEqual(self.snapshot(), before)
             for word in words:
                 self.assertIn(word, err)
             self.assertNotIn(SECRET, out + err)
             self.assertNotIn("sk-doctor", out + err)
-        # A render that was not asked about the file is not stopped by it.
         code, out, err = self.go()
         self.assertEqual((code, err), (0, ""))
         self.assertNotIn(SECRET, out)
@@ -913,7 +953,7 @@ class LinkedCase(SettingsCase):
         elsewhere.write_bytes(b'model = "x"\n')
         os.symlink(str(elsewhere), self.config)
         for argv in ((APPLY,), (APPLY, "--dry-run"), (APPLY, "--follow-config-symlinks", "--dry-run"),
-                     (APPLY, "--follow-config-symlinks"), (APPLY, "--default-codex-permissions", "--follow-config-symlinks"),
+                     (APPLY, "--follow-config-symlinks"), (DEFAULT, "--follow-config-symlinks"),
                      (REMOVE, "--follow-config-symlinks"), (REMOVE,)):
             with self.subTest(argv=argv):
                 code, out, err = self.go(*argv)
@@ -968,7 +1008,7 @@ class LinkedCase(SettingsCase):
 
 class DoctorReportCase(SettingsCase):
     def would(self, findings: list[dict], *words: str) -> str:
-        return self.assertFinding(findings, doctor.INFO, "render --apply-codex-settings would now:", *words)
+        return self.assertFinding(findings, doctor.INFO, "setup.py --codex-settings on would now:", *words)
 
     def test_no_file(self) -> None:
         findings = self.settings()
@@ -976,7 +1016,7 @@ class DoctorReportCase(SettingsCase):
         self.assertFinding(findings, doctor.INFO, f"{LIMIT}: unset", "needs 8 or more")
         self.assertFinding(findings, doctor.INFO, "setup has written no block into the file")
         self.would(findings, f"{LIMIT}: set to 8 in setup's block at the end of the file")
-        self.would(findings, "permission profile: not written", "--default-codex-permissions was not given")
+        self.would(findings, "permission profile: not written", "--codex-settings profile was not given")
         self.assertFinding(findings, doctor.INFO, "would print the permission profile `workflow` as text")
         self.assertFalse(self.config.exists())
         self.assertFalse(self.manifest_file.exists())
@@ -1071,7 +1111,7 @@ class DoctorReportCase(SettingsCase):
         self.assertFinding(findings, doctor.OK, "setup's block codex-settings: in the file, as setup wrote it")
         self.assertFinding(findings, doctor.OK, "setup's block codex-settings-top: in the file, as setup wrote it")
         self.assertFinding(findings, doctor.INFO, 'default_permissions = "workflow"')
-        asked = "render --apply-codex-settings --worktree-root <the same directory> --default-codex-permissions"
+        asked = "setup.py --codex-settings profile --worktree-root <the same directory>"
         self.assertFinding(findings, doctor.INFO, f"{asked} would change nothing: setup's blocks hold what that run writes")
         self.assertFalse(any("would now" in found["detail"] for found in findings))
         self.assertEqual(self.config.read_bytes(), data)
@@ -1089,7 +1129,7 @@ class DoctorReportCase(SettingsCase):
         self.config.write_bytes(self.config.read_bytes().replace(b'model = "x"', b'sandbox_mode = "read-only"'))
         findings = self.settings()
         self.assertFinding(findings, doctor.OK, "setup's block codex-settings: in the file, as setup wrote it")
-        self.assertFinding(findings, doctor.INFO, "--default-codex-permissions would now: permission profile: not written")
+        self.assertFinding(findings, doctor.INFO, "--codex-settings profile would now: permission profile: not written")
         self.assertFinding(findings, doctor.INFO, 'default_permissions = "workflow"', "not used while sandbox_mode is set")
         # The run then takes the profile and its selection out again, and keeps the limit.
         self.apply()
@@ -1143,10 +1183,10 @@ class DoctorReportCase(SettingsCase):
     def test_doctor_writes_nothing(self) -> None:
         self.user('sandbox_mode = "workspace-write"\n')
         self.apply()
-        before = tree(self.root)
+        before = self.snapshot()
         self.run_doctor(*MINE, "--codex-probe")
         self.run_doctor(*MINE, "--json")
-        self.assertEqual(tree(self.root), before)
+        self.assertEqual(self.snapshot(), before)
 
 
 # The Manager's model and effort in the head block (R2.1 to R2.3 of sprint 03).
@@ -1214,7 +1254,7 @@ class PinCase(SettingsCase):
         self.assertIn(
             "model: the Manager's model is not pinned. Your file sets model and model_reasoning_effort outside "
             "setup's blocks, and a key given twice is not valid TOML, so setup writes neither. Delete these "
-            'lines yourself and run render --apply-codex-settings again: line 1: model = "gpt-6-luna"; line 2: '
+            'lines yourself and run setup.py --codex-settings on again: line 1: model = "gpt-6-luna"; line 2: '
             f'model_reasoning_effort = "high". Until they are gone the Manager\'s {PINNED.replace(", ", " and ")} are not pinned', out)
         findings = self.settings()
         detail = self.assertFinding(findings, doctor.WARNING, "the Manager's model is not pinned",
@@ -1235,7 +1275,7 @@ class PinCase(SettingsCase):
         # Line 2 starts with "[" and line 4 with "model", both inside the array; line 7 is the user's key.
         self.user('notify = [\n  ["a", "]"],\n  """\nmodel = "no"\n""",\n]\nmodel = "gpt-6-luna"\n\n[x]\ny = 1\n')
         out = self.apply()
-        self.assertIn('Delete this line yourself and run render --apply-codex-settings again: line 7: '
+        self.assertIn('Delete this line yourself and run setup.py --codex-settings on again: line 7: '
                       'model = "gpt-6-luna"', out)
         self.assertFinding(self.settings(), doctor.WARNING, 'line 7: model = "gpt-6-luna"')
         # An inline table over several lines (TOML 1.1) is a value too.
@@ -1288,7 +1328,7 @@ class PinCase(SettingsCase):
         self.assertIn("model_reasoning_effort is yours, setup pins the model and the effort together, and a key "
                       "given twice is not valid TOML, so setup writes neither", out)
         self.assertNotIn("second top-level", out)
-        self.assertIn('Delete this line yourself and run render --apply-codex-settings again: line 2: '
+        self.assertIn('Delete this line yourself and run setup.py --codex-settings on again: line 2: '
                       'model_reasoning_effort = "high". Until it is gone', out)
         self.assertNotIn(SECRET, out)
         for argv in ((), ("--json",)):
@@ -1302,7 +1342,7 @@ class PinCase(SettingsCase):
         self.write(self.user_file, "install = []\n")
         detail = self.assertFinding(self.settings(), doctor.WARNING, f"setup's block codex-settings-top pins {PINNED}",
                                     "the Manager is not installed for Codex as a loadable role now")
-        self.assertIn("render --apply-codex-settings takes model and model_reasoning_effort out", detail)
+        self.assertIn("setup.py --codex-settings on takes model and model_reasoning_effort out", detail)
         out = self.apply()
         self.assertEqual(self.pin(), (None, None))
         self.assertIsNone(self.block(codexsettings.TOP_BLOCK))
@@ -1328,7 +1368,7 @@ class PinCase(SettingsCase):
         findings = self.settings()
         self.assertFinding(findings, doctor.WARNING, f"setup's block codex-settings-top pins {PINNED}",
                            f'the Manager now resolves to model = {SOL}, model_reasoning_effort = "high"',
-                           "render --apply-codex-settings writes the Manager's current ones")
+                           "setup.py --codex-settings on writes the Manager's current ones")
         self.assertFinding(findings, doctor.INFO, "would now: model: the Manager's", '"high"')
         self.apply()
         self.assertEqual(self.pin(), ("gpt-6.1-sol", "high"))

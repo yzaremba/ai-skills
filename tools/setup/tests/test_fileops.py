@@ -50,7 +50,7 @@ class FullPlanCase(OpsCase):
         self.agents_md = self.put(self.home / ".codex" / "AGENTS.md", self.AGENTS_MD)
         self.config = self.put(self.home / ".codex" / "config.toml", self.CONFIG_TOML, 0o600 if POSIX else None)
         self.settings = self.put(self.project / ".claude" / "settings.json", self.SETTINGS)
-        self.ignore = self.put(self.project / ".gitignore", self.IGNORE)
+        self.ignore = self.put(self.exclude_file, self.IGNORE)
         self.workflow = self.put(self.home / ".agents" / "workflow.toml", self.WORKFLOW)
         self.stale = self.put(self.home / ".claude" / "rules" / "prd-implementation.md", "v1\n")
         self.user_link = self.home / ".claude" / "agents-old"
@@ -72,7 +72,7 @@ class FullPlanCase(OpsCase):
         plan.edit_block(self.config, "top = 1\n", name="codex-settings", place=fileops.HEAD)
         plan.edit_block(self.project / ".codex" / "config.toml", 'model = "m"\n', place=fileops.HEAD)
         plan.edit_json(self.settings, set={"agent": "manager"})
-        plan.ignore(add=[".claude/agents/manager.md"])
+        plan.ignore(self.ignore, add=[".claude/agents/manager.md"])
         return plan
 
     def undo(self) -> list[tuple[str, str]]:
@@ -109,7 +109,7 @@ class DryRunTests(FullPlanCase):
             "create file project:.codex/config.toml",
             "edit file project:.claude/settings.json (backup)",
             "    key agent: set",
-            "edit file project:.gitignore (backup)",
+            "edit file git-info:exclude (backup)",
         ):
             self.assertIn(expected, lines)
         if SYMLINKS:
@@ -1135,7 +1135,7 @@ class FailureTests(FullPlanCase):
                 self.assertEqual(fsio.sha256(path.read_bytes()), entry["sha256"], key)
             elif entry["kind"] == "directory":
                 self.assertTrue(path.is_dir(), key)
-        for key in ("home:.codex/AGENTS.md", "home:.codex/config.toml", "project:.claude/settings.json", "project:.gitignore"):
+        for key in ("home:.codex/AGENTS.md", "home:.codex/config.toml", "project:.claude/settings.json", "git-info:exclude"):
             self.assertIsNone(record.get(key), key)
         self.assertIsNotNone(record.get("home:.claude/CLAUDE.md"))
         # The next run finishes the work, and the way back is still exact.
@@ -1300,14 +1300,15 @@ class RecordTests(FullPlanCase):
             self.assertNotIn(self.root.as_posix(), text)
             data = json.loads(text)
             for key in data["entries"]:
-                self.assertRegex(key, r"^(home|project):[^/\\:]")
+                self.assertRegex(key, r"^(home|project|git-info):[^/\\:]")
             for backup in data["backups"]:
                 if backup["kind"] == "file":
                     scope = "home" if file == self.manifest_file else "project"
-                    self.assertRegex(backup["backup"], rf"^{scope}:\.agents/workflow-setup/backups/[^/]+/{scope}/")
+                    anchors = "home" if scope == "home" else "project|git-info"
+                    self.assertRegex(backup["backup"], rf"^{scope}:\.agents/workflow-setup/backups/[^/]+/({anchors})/")
                 else:
                     self.assertRegex(backup["target"], r"^(clone|home|project):")
-                self.assertRegex(backup["path"], r"^(home|project):")
+                self.assertRegex(backup["path"], r"^(home|project|git-info):")
 
     def test_a_projects_entries_are_in_the_projects_record(self) -> None:
         self.full().apply()
@@ -1317,12 +1318,13 @@ class RecordTests(FullPlanCase):
         self.assertEqual(
             sorted(project["entries"]),
             [
-                "project:.agents", "project:.agents/workflow-setup", "project:.claude/settings.json", "project:.codex",
-                "project:.codex/config.toml", "project:.gitignore",
+                "git-info:exclude", "project:.agents", "project:.agents/workflow-setup", "project:.claude/settings.json",
+                "project:.codex", "project:.codex/config.toml",
             ],
         )
         self.assertEqual(project["entries"]["project:.agents/workflow-setup"]["kind"], "directory")
-        self.assertTrue(all(item["path"].startswith("project:") for item in project["backups"]))
+        # The exclude file is the project's, and so is its backup.
+        self.assertTrue(all(item["path"].startswith(("project:", "git-info:")) for item in project["backups"]))
         # The project's backups are in the project, the home's in the home.
         self.assertTrue(all(item["backup"].startswith("project:") for item in project["backups"] if "backup" in item))
         self.assertTrue(all(item["backup"].startswith("home:") for item in home["backups"] if "backup" in item))
@@ -1396,6 +1398,43 @@ class RecordTests(FullPlanCase):
             self.assertIn("entry home:../outside.md: not a path a record may hold", caught.exception.lines[0])
         self.assertEqual(self.snap(), before)
         self.assertEqual((self.root / "outside.md").read_bytes(), b"x\n")
+
+
+    def test_the_exclude_file_is_the_one_path_of_the_git_directory_a_record_names(self) -> None:
+        from wfsetup import manifest
+        entry_ = {"kind": "text", "sha256": fsio.sha256(b"x\n"), "created": True, "original": None,
+                  "syntax": "gitignore", "blocks": {}, "removed_lines": []}
+        self.assertIsNone(manifest._path_fault("git-info:exclude", manifest.PROJECT))
+        self.assertEqual(manifest.scope_of("git-info:exclude"), manifest.PROJECT)
+        for key in ("git-info:attributes", "git-info:exclude/x", "git-info:."):
+            for scope in (manifest.PROJECT, manifest.HOME, None):
+                self.assertIsNotNone(manifest._path_fault(key, scope), (key, scope))
+        # The user-level record names none of it.
+        self.put(self.manifest_file, json.dumps({"schema_version": 1, "entries": {"git-info:exclude": entry_}}))
+        with self.assertRaises(SetupError) as caught:
+            self.record()
+        self.assertIn("entry git-info:exclude: the user-level record lists no path of a project's git directory",
+                      caught.exception.lines[0])
+        self.manifest_file.unlink()
+        # A project's record that names another file there is refused whole.
+        self.put(self.project_manifest_file, json.dumps({"schema_version": 1, "entries": {"git-info:config": entry_}}))
+        with self.assertRaises(SetupError) as caught:
+            self.record()
+        self.assertIn("other than its exclude file", caught.exception.lines[0])
+        # A link's target is never there.
+        self.assertIsNotNone(manifest._target_fault("git-info:exclude", manifest.PROJECT))
+        self.assertTrue(self.roots.target_key(str(self.exclude_file), manifest.HOME).startswith("raw:"))
+
+    def test_the_exclude_files_backup_is_in_the_project_and_the_way_back_restores_it(self) -> None:
+        self.full().apply()
+        record = json.loads(self.project_manifest_file.read_bytes())
+        backups = [item for item in record["backups"] if item["path"] == "git-info:exclude"]
+        self.assertEqual(len(backups), 1)
+        self.assertRegex(backups[0]["backup"], r"^project:\.agents/workflow-setup/backups/[^/]+/git-info/exclude$")
+        self.assertEqual(self.roots.path(backups[0]["backup"]).read_bytes(), self.IGNORE)
+        self.assertNotIn("git-info:exclude", json.loads(self.manifest_file.read_bytes())["entries"])
+        self.undo()
+        self.assertEqual(self.ignore.read_bytes(), self.IGNORE)
 
 
 class StateTests(FullPlanCase):
@@ -1534,7 +1573,7 @@ class RoundTripTests(FullPlanCase):
         plan.edit_block(self.claude_md, "second\n", name="second")
         plan.write_file(self.workflow, "schema_version = 1\n# v2\n", replace=fileops.ANY)
         plan.edit_json(self.settings, set={"agent": "coder"})
-        plan.ignore(add=[".codex/agents/manager.toml"], remove=[".claude/agents/manager.md"])
+        plan.ignore(self.ignore, add=[".codex/agents/manager.toml"], remove=[".claude/agents/manager.md"])
         plan.apply()
         self.assertEqual(self.undo(), [])
         self.assertEqual(self.snap(), start)

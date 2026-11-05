@@ -9,7 +9,7 @@ How a command uses it
     plan.create_link(home / ".claude/skills/json-tools", clone / "json-tools")
     plan.edit_block(home / ".codex/AGENTS.md", "Sprint work follows ...\\n")
     plan.edit_json(project / ".claude/settings.json", set={"agent": "manager"})
-    plan.ignore(add=[".claude/agents/coder.md"])   # the project's .gitignore
+    plan.ignore(info / "exclude", add=[".claude/agents/coder.md"])   # the project's exclude file
     plan.remove_directory(home / ".claude/skills/manager")   # setup's own, once empty
     result = plan.run(dry_run=args.dry_run)        # or describe() / apply()
     for line in result.lines: print(line)
@@ -310,7 +310,7 @@ from . import blocks, carried, fsio, jsonkeys, lock, manifest as records, paths
 from .errors import SetupError
 from .fsio import ABSENT, DIRECTORY, FILE, LINK, OTHER
 from .lock import LockHeld
-from .manifest import CLONE, HOME, PROJECT, RAW, Manifest, Record, Roots
+from .manifest import CLONE, GIT_INFO_EXCLUDE, HOME, PROJECT, RAW, Manifest, Record, Roots
 
 __all__ = [
     "Leftovers", "LockHeld", "Plan", "PlanError", "Problem", "Result", "Roots", "SymlinkedConfigPath",
@@ -380,7 +380,7 @@ REPLACEABLE = (REMOVED_LINK, REMOVED_DIRECTORY)
 
 # The mark on the entry of a file that ``write_file(replace=ANY)`` wrote over
 # a version its owner had edited since setup's last write (the settings file
-# ``init`` rewrites on request). Such a file is made from what its owner put
+# setup rewrites on request). Such a file is made from what its owner put
 # there, so its hash says "as setup left it" of content that is not setup's
 # alone. A caller that undoes the record (``uninstall``) does not remove it
 # on the strength of that hash.
@@ -795,6 +795,13 @@ class Plan:
         removes it, after a backup of the file."""
         self._actions.append(("remove_block", {"path": Path(path), "name": name, "syntax": syntax, "policy": replace}))
 
+    def forget_block(self, path: Path, *, name: str = "") -> None:
+        """Take setup's block ``name`` out of the record and leave the file
+        as it is: a change of the record alone. The block is the user's
+        from then on, and no later run edits it. Nothing is done where the
+        record does not hold the block."""
+        self._actions.append(("forget_block", {"path": Path(path), "name": name}))
+
     def remove_lines(self, path: Path, lines: Iterable[str]) -> None:
         """Remove every line of a text file that equals one of ``lines``
         exactly, the line ending aside. What was not found is a note. The
@@ -809,8 +816,11 @@ class Plan:
         left, with a note."""
         self._actions.append(("edit_json", {"path": Path(path), "values": dict(set or {}), "remove": list(remove)}))
 
-    def ignore(self, add: Iterable[str] = (), remove: Iterable[str] = (), *, replace: str = OWN) -> None:
-        """Keep setup's one block in the project's ``.gitignore``.
+    def ignore(self, path: Path, add: Iterable[str] = (), remove: Iterable[str] = (), *, replace: str = OWN) -> None:
+        """Keep setup's one block in the project's exclude file (R6.3):
+        ``path``, ``info/exclude`` in its common git directory, which the
+        roots name as ``git-info:exclude`` (``Roots.git_info``, from
+        ``gitrepo``); any other path is refused.
 
         The block holds ``IGNORE_ALWAYS``, what it held before, and ``add``,
         less ``remove``; sorted, each entry once, and without any line the
@@ -827,7 +837,7 @@ class Plan:
         ``replace`` is ``ANY``;
         then it is written, and what it held is kept in the record and put
         back when setup's block goes."""
-        self._actions.append(("ignore", {"add": list(add), "remove": list(remove), "policy": replace}))
+        self._actions.append(("ignore", {"path": Path(path), "add": list(add), "remove": list(remove), "policy": replace}))
 
     def _reverse(self, project: bool, keep: dict[Path, str] | None = None,
                  release: dict[Path, str] | None = None) -> None:
@@ -1692,6 +1702,11 @@ class _Fold:
         if any(paths.fold_key(part) == ".git" for part in relative.split("/")):
             self._problem(OUTSIDE, path, f"{path}: inside a .git directory, which setup never changes")
             return None
+        if anchor == records.GIT_INFO and paths.fold_key(key) != paths.fold_key(GIT_INFO_EXCLUDE):
+            self._problem(
+                OUTSIDE, path, f"{path}: in the project's git directory, where setup changes the exclude file alone"
+            )
+            return None
         return key
 
     def check_roots(self) -> None:
@@ -2544,6 +2559,18 @@ class _Fold:
         entry["blocks"].pop(name, None)
         self._store(ident, key, state, entry, new, empty=new is not None and not blocks.split_bom(new)[1].strip())
 
+    def do_forget_block(self, path: Path, name: str) -> None:
+        key = self.roots.key(path)
+        known = self._entry(key) if key is not None else None
+        if known is None or known.get("kind") != "text" or name not in (known.get("blocks") or {}):
+            return
+        found = self._text(path, None, needs_syntax=False)
+        if found is None:
+            return
+        ident, key, state, entry, _ = found
+        entry["blocks"].pop(name, None)
+        self._store(ident, key, state, entry, state.data if state.kind == FILE else None, empty=False)
+
     def do_remove_lines(self, path: Path, lines: list[str]) -> None:
         if any(not isinstance(line, str) or not line or "\n" in line or "\r" in line for line in lines):
             self._problem(BAD_ACTION, path, f"{path}: a line to remove is one whole line, and not an empty one")
@@ -2569,11 +2596,18 @@ class _Fold:
             entry["removed_lines"].append(removed)
         self._store(ident, key, state, entry, new, empty=False)
 
-    def do_ignore(self, add: list[str], remove: list[str], policy: str = OWN) -> None:
+    def do_ignore(self, path: Path, add: list[str], remove: list[str], policy: str = OWN) -> None:
         if self.roots.project is None:
             self._problem(BAD_ACTION, None, "the ignore block is a project's; no project was named")
             return
-        path = self.roots.project / ".gitignore"
+        key = self.roots.key(path)
+        if key is None or paths.fold_key(key) != paths.fold_key(records.GIT_INFO_EXCLUDE):
+            self._problem(
+                BAD_ACTION, path,
+                f"{path}: not the project's exclude file ({records.GIT_INFO_EXCLUDE}); setup keeps its ignore block "
+                "there and nowhere else",
+            )
+            return
         for line in [*add, *remove]:
             if not isinstance(line, str) or not line or line != line.strip() or "\n" in line or line[0] in "#!":
                 self._problem(BAD_ACTION, path, f"{path}: {line!r} is not an entry setup puts into an ignore block")
@@ -3417,6 +3451,9 @@ class _Fold:
 # the role definitions it generates in a project, and the links to the
 # project's skills.
 _IGNORE_OWN = (".claude/agents/", ".codex/agents/", ".claude/skills/", ".agents/skills/")
+# A file setup created in a project to hold a block of its own (R6.3): the
+# Codex config, listed only while setup created it.
+IGNORE_CREATED = (".codex/config.toml",)
 
 
 _RULE_COPY = ".claude/rules/"
@@ -3425,7 +3462,7 @@ _RULE_COPY = ".claude/rules/"
 def own_ignore_entry(line: str) -> bool:
     """Whether ``line`` is an entry setup itself writes into a project's
     ignore block: one it always writes, or a file it generates there."""
-    if line in IGNORE_ALWAYS:
+    if line in IGNORE_ALWAYS or line in IGNORE_CREATED:
         return True
     for head in _IGNORE_OWN:
         rest = line[len(head):] if line.startswith(head) else ""

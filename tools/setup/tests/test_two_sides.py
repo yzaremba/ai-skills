@@ -178,9 +178,9 @@ class WslLinkSeenFromWindowsCase(TreeCase):
         self.claude.mkdir()
         self.codex.mkdir()
 
-    def run_there(self, *argv: str) -> tuple[int, str, str]:
+    def run_there(self, *argv: str, script: Path | None = None) -> tuple[int, str, str]:
         done = self.far.run(
-            self.far.python, "-B", self.far.there(self.script), *argv, "--home", self.far.there(self.home))
+            self.far.python, "-B", self.far.there(script or self.script), *argv, "--home", self.far.there(self.home))
         out, err = done.stdout.decode("utf-8"), done.stderr.decode("utf-8")
         self.assertNotIn("Traceback", out + err, argv)
         self.assertNotIn("\r", out + err, argv)
@@ -290,8 +290,8 @@ class WslLinkSeenFromWindowsCase(TreeCase):
             self.assertLessEqual(len([line for line in (out + err).splitlines() if record in line]), 2, argv)
         os.unlink(state)
         settings = self.wsl_link(self.home / ".agents" / "workflow.toml")
-        for argv in (("show",), ("init", "--user", "--yes", "--rewrite-settings")):
-            code, out, err = self.run_there(*argv)
+        for argv in (("show",), ("--yes", "--rewrite-settings")):
+            code, out, err = self.run_there(*argv, script=self.script if argv[0] == "show" else self.script.with_name("setup.py"))
             self.assertEqual(code, 2, argv)
             self.assertEqual(err.splitlines()[0],
                              f"error: {self.far.there(settings)}: cannot be read: Invalid argument (it is {WSL_NOTE})")

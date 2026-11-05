@@ -71,7 +71,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         help="the project whose settings files are read: DIR/.agents/workflow.toml and "
         "DIR/.agents/workflow.local.toml. The project is only ever this directory; it is "
         "not taken from the working directory. Without --project no project file is read. "
-        "An empty DIR is refused. A command that writes (init, render, uninstall) also refuses "
+        "An empty DIR is refused. A command that writes (setup.py, render, uninstall) also refuses "
         "the home directory itself, a directory that holds the home or the clone, and the clone setup "
         "runs from or a directory inside it",
     )
@@ -86,7 +86,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def from_args(args: argparse.Namespace, writes: bool = True) -> Locations:
+def from_args(args: argparse.Namespace, writes: bool = True, project_label: str = "--project") -> Locations:
     """The locations the command line named. A directory given must exist.
 
     An option given with an empty value is refused and never read as "not
@@ -102,9 +102,12 @@ def from_args(args: argparse.Namespace, writes: bool = True) -> Locations:
     project (``show``, ``validate``, ``homes``, ``doctor``). Such a command
     may be given the clone as its project: the repository is worked on like
     any project, and a session in it asks ``show`` for its settings.
+
+    ``project_label`` is how the project's errors name it: ``--project``,
+    or ``DIR`` for the program whose project is its argument.
     """
     home = _own_home() if args.home is None else _directory(args.home, "--home")
-    project = None if args.project is None else _directory(args.project, "--project")
+    project = None if args.project is None else _directory(args.project, project_label)
     # The clone is read here and not left to the dataclass default, so that
     # a test can stand a scratch clone in its place.
     clone = CLONE
@@ -116,12 +119,12 @@ def from_args(args: argparse.Namespace, writes: bool = True) -> Locations:
     if project is not None:
         if writes and _within(project, clone):
             raise SetupError(
-                f"--project: {args.project}: {_where(project, clone)} the clone setup runs from ({clone}); setup "
+                f"{project_label}: {args.project}: {_where(project, clone)} the clone setup runs from ({clone}); setup "
                 "writes nothing inside the clone, so it cannot be set up as a project. Name a directory outside it"
             )
         if writes and _real(project) == _real(home):
             raise SetupError(
-                f"--project: {args.project}: is the home directory itself; a project is a directory of its own, "
+                f"{project_label}: {args.project}: is the home directory itself; a project is a directory of its own, "
                 "with its own settings and its own install record"
             )
         if writes:
@@ -130,7 +133,7 @@ def from_args(args: argparse.Namespace, writes: bool = True) -> Locations:
             for what, other in (("the home directory", home), ("the clone setup runs from", clone)):
                 if _within(other, project):
                     raise SetupError(
-                        f"--project: {args.project}: holds {what} ({other}); a project is a directory of its own, "
+                        f"{project_label}: {args.project}: holds {what} ({other}); a project is a directory of its own, "
                         "and setup changes nothing of a home or of the clone through a project. Name the project "
                         "itself"
                     )

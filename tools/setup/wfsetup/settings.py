@@ -28,9 +28,10 @@ a project's file holds.
 """
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 from . import dictionary, paths, schema, tomlio
 from .errors import SetupError
@@ -39,6 +40,25 @@ from .locations import Locations
 LAYERS = ("shipped", "user", "project", "local")
 # The layers of a project's files.
 PROJECT_LAYERS = ("project", "local")
+
+
+# The content a file would have, by path, for a run that shows a plan and
+# writes nothing: see ``pending``.
+_PENDING: dict[Path, dict[str, Any]] = {}
+
+
+@contextlib.contextmanager
+def pending(content: dict[Path, dict[str, Any]]) -> Iterator[None]:
+    """Inside the block, a settings file in ``content`` reads as the content
+    given, as if it were written: a dry run shows the plan of the install
+    that the settings it also shows would give."""
+    before = dict(_PENDING)
+    _PENDING.update(content)
+    try:
+        yield
+    finally:
+        _PENDING.clear()
+        _PENDING.update(before)
 
 
 @dataclass(frozen=True)
@@ -71,7 +91,7 @@ def documents(where: Locations, groups: Iterable[str] = schema.GROUPS) -> list[D
     for layer, file in (("user", where.user_file), ("project", where.project_file), ("local", where.local_file)):
         if file is None:
             continue
-        data = _load_layer(file)
+        data = _PENDING[file] if file in _PENDING else _load_layer(file)
         if data is not None:
             found.append(Document(layer, file, data))
     return found
@@ -116,7 +136,7 @@ def resolve(
     schema's order. Every fault found in those groups is reported at once.
 
     With ``layers``, only those layers count: what the values would be
-    without the others, which is what ``init`` compares a file with. A
+    without the others, which is what ``settingsfile`` compares a file with. A
     layer left out is not checked either; its file must still parse.
     """
     groups = tuple(groups)

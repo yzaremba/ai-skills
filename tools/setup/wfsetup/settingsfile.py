@@ -1,172 +1,53 @@
-"""Write a settings file for the providers installed here.
+"""The settings file a run of ``setup.py`` writes: the values given by flag.
 
-    init [--user | --project DIR] [--home DIR] [--yes [--rewrite-settings]]
-         [--dry-run] [--follow-config-symlinks] [answers]
+The file is ~/.agents/workflow.toml, or with DIR DIR/.agents/workflow.toml.
+``prepare`` works out what the file should hold, from the file as it is and
+the flags of the run, and plans the write; ``Prepared.apply`` makes it. The
+options are in ``add_arguments``; ``program`` prints them in its help.
 
-Which file
-    --user (the default when neither is given) writes ~/.agents/workflow.toml,
-    the user layer. --project DIR writes DIR/.agents/workflow.toml, the
-    project layer, and puts .agents/workflow.local.toml into the project's
-    ignore block. Giving both is an error.
+What a run writes
+    A user file holds the tier and effort mapping of each installed
+    provider in full, as it was confirmed: a later version of the dictionaries
+    does not change it, since a model changes cost and behaviour. Every other
+    value is written where a flag stated it, and otherwise only where it
+    differs from the layers below. A value given by flag is stated: it is
+    written even when it equals what the layers below give. A value accepted
+    as shown is not: when it equals what the layers below give, the key stays
+    out and follows them. This holds for a project's file as for the user's,
+    the provider mappings included.
 
-What is asked
-    For each installed provider (its program is on PATH, or its home
-    exists) that has a dictionary: which model each tier means, and which
-    of the provider's values each effort name means. Then the process,
-    roles and memory settings. Every question has a flag, and a flag's
-    answer is not asked again:
+    A value already in the file stays as it is unless a flag changes it.
+    `--reset KEY` takes KEY out of the file, so that it follows the layer
+    below again. The file written holds no old key.
 
-        --tier PROVIDER:TIER=MODEL        --tier codex:deep=gpt-6-astra
-        --effort PROVIDER:NAME=VALUE      --effort codex:max=ultra
-        --role-model PROVIDER:ROLE=MODEL  --role-model codex:coder-hard=gpt-6-astra
-                                          (an empty MODEL takes the entry out;
-                                          never asked, only set by this flag)
-        --docs-dir DIR                    process.docs_dir
-        --questions HOW                   process.questions
-        --recommend / --no-recommend      process.recommend
-        --manager-default / --no-...      roles.manager_default
-        --high-stakes / --no-...          roles.high_stakes
-        --max-parallel-coders N           roles.max_parallel_coders
-        --memory-dir DIR                  memory.dir
-        --unset KEY                       take KEY out of the file (below)
-
-    The first three, and --unset, may be given several times. Each answer is checked by
-    the settings schema, with the schema's own message.
-
-    What is proposed for a question is the value in effect now: the one in
-    the file being written if it has one, else the one the layers below
-    give (the shipped defaults and the provider dictionaries; for a project
-    file, the user's file too). --yes accepts every proposal no flag
-    answers, and confirms the write. Questions are asked on a terminal
-    only: when standard input is not one and --yes is not given, a question
-    without a flag is an error that names the flag. Nothing waits for input
-    that cannot come.
+A file that setup did not write in its present form (one written by hand, or
+edited since: its content is not the one the install record holds) is not
+rewritten by --yes alone, because --yes cannot have meant its comments and
+layout: --rewrite-settings as well. The file is rewritten from its values;
+the file as it was is copied to the backup directory first.
 
 The model list
-    A provider's mapping is checked against the provider's own list where
-    one can be read without starting a session. For Codex that is
-    `codex debug models`, and `codex debug models --bundled` when the first
-    fails; the command sends no model request. Claude Code has no such
-    command, so its dictionary alone is used, and the output says so; the
-    same holds when a list cannot be read. What an account can actually use
-    may differ from both. The command is started with --dry-run as well. It
-    is a program of the provider's, and may write state of its own into the
-    provider's home; with --home DIR that home is DIR/.codex, never the real
-    one.
-
-      - A mapped model that the list does not hold must be replaced: with a
-        --tier flag, or at the prompt. --yes alone is then an error, not a
-        silent choice. --allow-unlisted keeps such a model, by name.
-      - A model the list offers and the dictionary does not know is named,
-        and can be chosen.
-      - A hidden entry of the list is not offered.
-      - An effort value that the model of a role does not accept is an
-        error. What a model accepts is read from the list where there is
-        one, else from the dictionary.
-
-    The final mapping is shown as a table (tier, model, the efforts the
-    model accepts) before anything is written.
-
-What is written
-    A user file holds the tier and effort mapping of each installed
-    provider in full. They are what was confirmed, and they stay that even
-    when a later version of the dictionaries proposes other models: a
-    model changes cost and behaviour, so it changes when `init` is run
-    again and not with an update of the clone. Every other value is
-    written where an answer stated it, and otherwise only where it differs
-    from the layers below. An answer given by flag or typed at the prompt is
-    stated: it is written even when it equals what the layers below give, so
-    a deliberate --no-manager-default shows in the file. A proposal accepted
-    with Enter or --yes is not stated: when it equals what the layers below
-    give, the key stays out and follows them. This holds for a project's
-    file as for the user's, the provider mappings included; a project's file
-    is shared, and what it does not set is each user's own.
-
-    A value already in the file stays as it is unless an answer changes
-    it.
-
-Taking a key out
-    --unset KEY takes KEY out of the file being written, so that it follows
-    the layer below again; the output shows it as "taken out; the value is
-    then ...". KEY is a key `init` writes: one of the settings above, or
-    providers.<p>.tiers.<t>, providers.<p>.efforts.<e> or
-    providers.<p>.role_models.<role> of a provider this run sets up (a role
-    id that no role definition has only if the file holds it). Any other key
-    is an error. An unset
-    key is an answer: its question is not asked. A key the file does not
-    hold changes nothing, and a line says so. --unset together with a flag
-    that answers the same key is an error. --role-model PROVIDER:ROLE= with
-    an empty model also takes one entry out.
-
-    At a question about a setting, the answer `default` does the same. At a
-    tier or effort question of a project's file, NAME=default takes that
-    key out; a tier or effort value that is really named default is given by
-    --tier or --effort. In the user's file the tier and effort mappings are
-    held in full, so --unset of one is refused there, and `default` is not
-    offered at their questions.
-
-Running it again
-    The same answers write nothing, and the output says so. Other answers
-    show each changed key with its old and new value and, once confirmed,
-    replace the file; the file as it was is copied to the backup directory
-    first (~/.agents/workflow-setup/backups/<time of the run>/, or for a
-    project's file DIR/.agents/workflow-setup/backups/<time of the run>/; a
-    full copy, readable by you alone). The file is rewritten from its
-    values: every key it holds is kept, including those `init` asks nothing
-    about ([roles.<id>] overrides, the section of a provider that is not
-    installed), unless --unset or `default` takes it out. Its comments and
-    layout are not kept. A file whose values do not change is not touched, so
-    comments in it stay.
-
-    A file that `init` did not write in its present form (one written by
-    hand, or edited since `init` wrote it: its content is not the one the
-    install record holds) is not rewritten on --yes alone, because --yes
-    cannot have meant its comments and layout. Such a rewrite needs
-    --rewrite-settings as well; without it the run stops before anything is
-    written and says so. At a terminal the confirmation asks instead.
-
-What `uninstall` does with the file
-    No value you set is removed. `uninstall` removes the file only when
-    `init` created it and it holds exactly what `init` wrote from its own
-    answers; it puts back, byte for byte, a file that was there before the
-    first `init`, when nothing but `init` has written the file since. Once
-    you edit the file, or `init` rewrites a version you had edited (the
-    rewrite above), it holds values you set: `uninstall` then leaves it as
-    it is, and it is yours. The backup copies go with the install record
-    when `uninstall` finishes.
-
---dry-run prints what would be written and writes nothing of setup's; it
-asks the same questions and leaves out the confirmation. Everything goes
-through setup's file operations, so `uninstall` can take it back: the whole
-plan is checked before the first write, and a plan that is refused writes
-nothing. One run writes to a home at a time, and one to a project: a second
-one ends at once with exit code 2 and names the run that holds the lock.
-
-Exit code 0 when the file was written, was already as asked, or on a dry
-run; 1 when the write was declined at the prompt; 2 on an error, which is
-printed to stderr; 130 when interrupted with Ctrl-C, and 128 plus the
-signal's number when told to end by a signal; 141 when the reader of the
-output went away.
+    A provider's mapping is checked against the provider's own list where one
+    can be read (``modellist``). A mapped model the list does not hold is an
+    error, unless --allow-unlisted keeps it; an effort value the model of a
+    role does not accept is an error.
 """
 from __future__ import annotations
 
 import argparse
-import os
 import re
-import sys
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from .. import commands, dictionary, fileops, fsio, homes, locations, modellist, profiles, roles, schema, settings
-from .. import tomlio
-from ..dictionary import Dictionary
-from ..errors import SetupError
-from ..modellist import Comparison, Reading
+from . import dictionary, fileops, fsio, homes, locations, modellist, profiles, roles, schema, settings
+from . import tomlio
+from .dictionary import Dictionary
+from .errors import SetupError
+from .modellist import Comparison, Reading
 
-SUMMARY = "write a settings file for the installed providers (asks, or takes flags)"
-PROG = "workflow_setup.py"
-EXIT_DECLINED = 1
+PROG = "setup.py"
 
 USER = "user"
 PROJECT = "project"
@@ -194,24 +75,26 @@ _MAPS = {
 }
 
 
-def configure(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--user", action="store_true",
-        help="write the user's file, ~/.agents/workflow.toml. The default; not to be given with --project",
-    )
-    locations.add_arguments(parser)
-    parser.add_argument(
-        "--yes", action="store_true",
-        help="accept every proposal that no flag answers, and confirm the write, without asking. It does not "
-        f"confirm the rewrite of a settings file that `init` did not write: that takes {REWRITE_OPTION} as well",
-    )
+def add_arguments(parser: argparse.ArgumentParser) -> None:
+    """The options that give a value (R1.3), and ``--install``, ``--reset``
+    and ``--rewrite-settings``. ``--allow-unlisted`` is the program's."""
     parser.add_argument(
         REWRITE_OPTION, action="store_true",
         help="with --yes: also rewrite a settings file that was written or edited by hand. The file is rewritten "
         "from its values: every key is kept, its comments and layout are not. The file as it was is copied to "
         "the backup directory first",
     )
-    fileops.add_arguments(parser)
+    parser.add_argument(
+        "--install", nargs="+", metavar="NAME",
+        help="what is installed: the whole list, replacing the file's own (skills and rules of the clone by name, "
+        f"and `{schema.ROLES_ITEM}`)",
+    )
+    parser.add_argument(
+        "--reset", action="append", default=[], metavar="KEY",
+        help="take KEY out of the file, so that it follows the layer below again; a setting, `install`, or a "
+        "provider's tier, effort or role model (a tier or an effort is refused when writing the user's file). "
+        "May be given several times",
+    )
     parser.add_argument(
         "--tier", action="append", default=[], metavar="PROVIDER:TIER=MODEL",
         help=f"the model of a tier ({', '.join(schema.TIERS)}) on a provider; may be given several times",
@@ -225,17 +108,6 @@ def configure(parser: argparse.ArgumentParser) -> None:
         help="a model for one role definition, whatever its tier; an empty MODEL takes the entry out; "
         "may be given several times",
     )
-    parser.add_argument(
-        "--unset", action="append", default=[], metavar="KEY",
-        help="take KEY out of the file, so that it follows the layer below again; a setting above, or a "
-        "provider's tier, effort or role model (a tier or an effort is refused when writing the user's file). "
-        "Not asked. "
-        "May be given several times",
-    )
-    parser.add_argument(
-        "--allow-unlisted", action="store_true",
-        help="keep a mapped model that the provider's own list does not hold, instead of refusing it",
-    )
     parser.add_argument("--docs-dir", metavar="DIR", help="process.docs_dir: where the sprint docs live")
     parser.add_argument(
         "--questions", metavar="HOW", help=f"process.questions: {' or '.join(schema.QUESTIONS)}",
@@ -243,7 +115,8 @@ def configure(parser: argparse.ArgumentParser) -> None:
     switch = argparse.BooleanOptionalAction
     parser.add_argument("--recommend", action=switch, help="process.recommend: a recommendation with each question")
     parser.add_argument(
-        "--manager-default", action=switch, help="roles.manager_default: a session in the project starts as the Manager",
+        "--manager-default", action=switch,
+        help="roles.manager_default: a session in the project starts as the Manager (with DIR only)",
     )
     parser.add_argument("--high-stakes", action=switch, help="roles.high_stakes: roles use their high-stakes tier")
     parser.add_argument(
@@ -253,27 +126,6 @@ def configure(parser: argparse.ArgumentParser) -> None:
 
 
 # --- Asking -------------------------------------------------------------------
-
-def _terminal() -> bool:
-    """Whether a question can be asked: standard input is a terminal.
-
-    On Windows ``isatty`` is true of every character device, the null
-    device included, so the console is asked whether the handle is its own.
-    """
-    try:
-        if sys.stdin is None or not sys.stdin.isatty():
-            return False
-        if os.name != "nt":
-            return True
-        import ctypes
-        import msvcrt
-
-        mode = ctypes.c_uint32()
-        handle = ctypes.c_void_p(msvcrt.get_osfhandle(sys.stdin.fileno()))
-        return bool(ctypes.windll.kernel32.GetConsoleMode(handle, ctypes.byref(mode)))
-    except (OSError, ValueError, AttributeError):
-        return False
-
 
 class _Dialogue:
     def __init__(self, yes: bool, interactive: bool) -> None:
@@ -422,13 +274,8 @@ class _Provider:
         return ", ".join(entry.efforts) if entry.takes_effort else "none: the model takes no effort setting"
 
 
-def _settle_map(
-    dialogue: _Dialogue, state: _Provider, table: str, allow_unlisted: bool, reset: Callable[[str], str] | None,
-    held: Callable[[str], bool] = lambda key: True,
-) -> None:
-    """Bring one mapping of a provider to its final values, or raise. With
-    ``reset`` (a project's file), NAME=default takes a key out, and the value
-    is then the one ``reset`` gives for the name."""
+def _settle_map(dialogue: _Dialogue, state: _Provider, table: str, allow_unlisted: bool) -> None:
+    """Bring one mapping of a provider to its final values, or raise."""
     word, meta, names, flag = _MAPS[table]
     values, given = state.maps[table], state.given[table]
     while True:
@@ -445,70 +292,41 @@ def _settle_map(
             print(f"  models: {', '.join(state.choices()) or 'none listed'}")
         for line in problems:
             print(f"  {line}")
-        offered = f"{word}={meta} ..." if reset is None else f"{word}={meta} ... or {word}=default to take one out"
-        answer = dialogue.ask(f"  change, as {offered}, or nothing to accept ({flag} {state.name}:...): ")
+        answer = dialogue.ask(f"  change, as {word}={meta} ..., or nothing to accept ({flag} {state.name}:...): ")
         if not answer:
             if not problems:
                 return
             continue
         try:
             changed: dict[str, str] = {}
-            dropped: set[str] = set()
-            notes: list[str] = []
             for item in answer.split():
                 name, equals, value = item.partition("=")
                 if not equals or not name:
                     raise SetupError(f"{item}: expected {word}={meta}")
-                if value == "default" and reset is not None:
-                    key = f"providers.{state.name}.{table}.{name}"
-                    if name not in names:
-                        _check(key, value, "answer")   # an unknown name is refused as NAME=MODEL is
-                        raise SetupError(f"{item}: {name} is not a {word} of {state.name}")
-                    if not held(key):
-                        notes.append(f"  {item}: the file does not hold {key}; nothing to take out")
-                    dropped.add(name)
-                    changed[name] = reset(name)
-                    continue
-                if value == "default":
-                    raise SetupError(
-                        f"{item}: the user's file holds the {word} mapping in full, so a key is not taken out; "
-                        f"{'an effort' if table == 'efforts' else 'a model'} really named default is given by "
-                        f"{flag} {state.name}:{name}=default"
-                    )
                 _check(f"providers.{state.name}.{table}.{name}", value, "answer")
                 changed[name] = value
         except SetupError as exc:
             for line in exc.lines:
                 print(f"  {line}")
             continue
-        for note in notes:
-            print(note)
         values.update(changed)
-        state.stated[table].update(name for name in changed if name not in dropped)
-        state.stated[table].difference_update(dropped)
-        state.unset[table].update(dropped)
-        state.unset[table].difference_update(name for name in changed if name not in dropped)
+        state.stated[table].update(changed)
+        state.unset[table].difference_update(changed)
         if not state.faults(table, allow_unlisted):
             return
 
 
-_TAKEN_OUT = object()   # what _settle_setting gives for the answer `default`
-
-
 def _settle_setting(dialogue: _Dialogue, key: str, flag: str, kind: str, proposed: Any) -> tuple[Any, bool]:
-    """The value, and whether it was typed: Enter and --yes accept a proposal, which is not an answer.
-    The answer `default` gives ``_TAKEN_OUT``: the key leaves the file."""
+    """The value, and whether it was typed: Enter and --yes accept a proposal, which is not an answer."""
     if dialogue.yes:
         return proposed, False
     hint = f"{flag} or --no-{flag[2:]}" if kind == "boolean" else flag
     if not dialogue.interactive:
         raise dialogue.unanswered(key, hint)
     while True:
-        answer = dialogue.ask(f"{key} [{tomlio.format_value(proposed)}] ({hint}, or default to take it out): ")
+        answer = dialogue.ask(f"{key} [{tomlio.format_value(proposed)}] ({hint}): ")
         if not answer:
             return proposed, False
-        if answer == "default":
-            return _TAKEN_OUT, False
         value = _typed(kind, answer)
         try:
             _check(key, value, "answer")
@@ -519,6 +337,7 @@ def _settle_setting(dialogue: _Dialogue, key: str, flag: str, kind: str, propose
         return value, True
 
 
+
 # --- The file -----------------------------------------------------------------
 
 def _header(scope: str) -> list[str]:
@@ -526,30 +345,29 @@ def _header(scope: str) -> list[str]:
         what = "the user layer (~/.agents/workflow.toml)"
         written = [
             "The tiers and efforts of each installed provider are written in full: they",
-            "are the mapping confirmed at `init`, and an update of the clone does not",
-            "change them. Every other key is here where an answer stated it or it differs",
+            "are the mapping confirmed by a run of setup, and an update of the clone does",
+            "not change them. Every other key is here where a flag stated it or it differs",
             "from the layers below; a key that is not here has the value of the layer below.",
         ]
     else:
         what = "the project layer (.agents/workflow.toml in the project)"
         written = [
-            "A key is here where an answer stated it or it differs from the layers below;",
+            "A key is here where a flag stated it or it differs from the layers below;",
             "a key that is not here has the value of the layer below, which for the",
             "provider mappings is each user's own file.",
         ]
     return [
         f"Workflow settings: {what}.",
-        f"Written by `{PROG} init`.",
+        f"Written by `{PROG}`. `install` lists what is installed, by name.",
         "",
         "Layers, later wins: the shipped defaults (tools/setup/defaults.toml and",
         "providers/<name>/dictionary.toml in the clone), ~/.agents/workflow.toml,",
         "<project>/.agents/workflow.toml, <project>/.agents/workflow.local.toml.",
         *written,
         "",
-        "To change a value, run `init` again with a flag (`init --help` lists them),",
-        "or edit this file. `init` rewrites the file from its values: every key is",
-        "kept, comments and layout are not. `show` prints each effective value and",
-        "the layer it came from.",
+        f"To change a value, run `{PROG}` again with a flag (`{PROG} --help` lists",
+        "them), or edit this file. Setup rewrites the file from its values: every key",
+        "is kept, comments and layout are not.",
     ]
 
 
@@ -557,7 +375,7 @@ def _flat(data: dict[str, Any]) -> dict[str, Any]:
     flat = {
         key: value
         for group in schema.GROUPS if group in data
-        for key, value in schema.flatten(data[group], (group,))
+        for key, value in schema.flatten(schema.strip_old_keys(group, data[group]), (group,))
     }
     if schema.INSTALL_KEY in data:     # a key of the file itself, above every table: kept as it is
         flat[schema.INSTALL_KEY] = data[schema.INSTALL_KEY]
@@ -595,36 +413,55 @@ def _changes(old: dict[str, Any], new: dict[str, Any], below: dict[str, settings
     return lines
 
 
-def _next_steps() -> str:
-    known = commands.names()
+# --- The run ------------------------------------------------------------------
 
-    def named(name: str) -> str:
-        return f"`{PROG} {name}`" + ("" if name in known else " (not in this clone yet)")
+@dataclass
+class Prepared:
+    """What the run does about the settings file: ``lines`` tell it. Nothing
+    is written until ``apply``."""
 
-    return (
-        f"next: {named('render')} installs the skills and the role definitions with these settings, "
-        f"then {named('doctor')} checks the result"
-    )
+    target: Path
+    lines: list[str]
+    changed: bool                    # the file is written
+    data: dict[str, Any] | None      # what the file would hold, as it is read (None: it is not written)
+    _plan: fileops.Plan | None = None
+    _roots: Any = None
+    _replaces: bool = False
+    _project: bool = False
+
+    def apply(self) -> list[str]:
+        """Write the file; the lines to tell."""
+        if not self.changed or self._plan is None:
+            return []
+        self._plan.apply()
+        lines = [f"written: {self.target}"]
+        if self._replaces:
+            lines.append(f"the file as it was is in {self._roots.backups_dir_of(self._project) / self._plan.stamp}")
+        return lines
 
 
-# --- The command --------------------------------------------------------------
-
-def run(args: argparse.Namespace) -> int:
-    if args.user and args.project is not None:
-        raise SetupError("--user and --project: give one; they name two different files")
-    where = locations.from_args(args)
+def prepare(where: locations.Locations, found: homes.Homes, args: argparse.Namespace, *, dry_run: bool) -> Prepared:
+    """Work out the settings file of this run, from the file as it is and the
+    flags, and plan its write. Nothing is asked: a value no flag states is
+    accepted as shown. The providers are those of ``found`` that are installed
+    and have a dictionary. A fault in a flag, or in the model list, is a
+    ``SetupError`` and nothing is written."""
     scope = PROJECT if where.project is not None else USER
     target: Path = where.project_file if scope == PROJECT else where.user_file  # type: ignore[assignment]
     below_layers = ("shipped",) if scope == USER else ("shipped", USER)
-    found = homes.resolve(where)
     dictionaries = dictionary.load_all(where)
+    lines: list[str] = []
+    say = lines.append
+
+    if args.manager_default is not None and scope == USER:
+        raise SetupError("--manager-default is about a project's sessions: give it with DIR")
 
     # The file as it is must be one this tool reads: it is the base of
     # what is written.
     try:
         settings.resolve(where, layers=(*below_layers, scope))
     except SetupError as exc:
-        raise SetupError(*exc.lines, "init changes nothing while a settings file has a fault; correct the file first") from None
+        raise SetupError(*exc.lines, "setup changes nothing while a settings file has a fault; correct the file first") from None
     below = settings.resolve(where, layers=below_layers)
     current = [document for document in settings.documents(where) if document.layer == scope]
     existing = _flat(current[0].data) if current else None
@@ -634,9 +471,8 @@ def run(args: argparse.Namespace) -> int:
         return flat[key] if key in flat else below[key].value
 
     def place(key: str, value: Any, pin: bool = False, stated: bool = False) -> None:
-        """Set, keep or take out one key; see "What is written". A stated
-        value (a flag, or typed at a prompt) is written whatever the layers
-        below give."""
+        """Set, keep or take out one key; see "What a run writes". A stated
+        value (a flag) is written whatever the layers below give."""
         if pin or stated or (key in flat and _same(flat[key], value)):
             flat[key] = value
         elif key in below and _same(below[key].value, value):
@@ -644,25 +480,20 @@ def run(args: argparse.Namespace) -> int:
         else:
             flat[key] = value
 
-    dialogue = _Dialogue(args.yes, _terminal())
+    dialogue = _Dialogue(True, False)
     layer = "the user layer" if scope == USER else "the project layer"
-    print(f"settings file: {target} ({layer}; {'it exists' if existing is not None else 'not there yet'})")
+    say(f"settings file: {target} ({layer}; {'it exists' if existing is not None else 'not there yet'})")
 
     # --- Which providers ------------------------------------------------------
     configured = []
     for provider in found.providers:
         if not provider.installed:
-            print(
-                f"{provider.name}: not installed (the program `{provider.program}` is not on PATH and "
-                f"{provider.home} does not exist); left out"
-            )
-        elif provider.name not in dictionaries:
-            print(f"{provider.name}: installed, but this clone has no dictionary for it; left out")
+            continue
+        if provider.name not in dictionaries:
+            say(f"{provider.name}: installed, but this clone has no dictionary for it; left out")
         else:
             configured.append(provider)
     names = [provider.name for provider in configured]
-    if not names:
-        print("no provider is installed here: no provider section is written")
 
     # --- The flags ------------------------------------------------------------
     flags = {
@@ -690,45 +521,52 @@ def run(args: argparse.Namespace) -> int:
                 raise SetupError(f"{flag}: the value holds a control character or a line break")
             answers[key] = _typed(kind, value) if isinstance(value, str) else value
             _check(key, answers[key], flag)
+    if args.install is not None:
+        problems: list[str] = []
+        schema.check_install({schema.INSTALL_KEY: list(args.install)}, "--install", problems)
+        if problems:
+            raise SetupError(*problems)
+        answers[schema.INSTALL_KEY] = list(args.install)
 
     # --- What is taken out ----------------------------------------------------
     unset: set[str] = set()
-    settings_keys = {key for key, _, _, _ in _SETTINGS}
-    for text in args.unset:
-        key = ".".join(schema.parse_key(text))
+    settings_keys = {key for key, _, _, _ in _SETTINGS} | {schema.INSTALL_KEY}
+    for text in args.reset:
+        key = text if text == schema.INSTALL_KEY else ".".join(schema.parse_key(text))
         parts = key.split(".")
         mapped = len(parts) == 4 and parts[0] == "providers" and parts[2] in (*_MAPS, "role_models")
         if mapped and parts[2] in _MAPS and parts[3] not in _MAPS[parts[2]][2]:
             mapped = False
-        if not (key in settings_keys or mapped):
+        # A key setup writes, or any other key of the file itself (process.density, a role's override).
+        if not (key in settings_keys or mapped or key in flat):
             raise SetupError(
-                f"--unset {text}: not a key `init` writes; those are {', '.join(sorted(settings_keys))}, "
-                "and providers.<provider>.tiers.<tier>, "
+                f"--reset {text}: not a key setup writes or the file holds; those setup writes are "
+                f"{', '.join(sorted(settings_keys))}, and providers.<provider>.tiers.<tier>, "
                 ".efforts.<effort> and .role_models.<role>"
             )
         if mapped and parts[1] not in names:
             raise SetupError(
-                f"--unset {text}: {parts[1]} is not a provider this run sets up; installed here, "
+                f"--reset {text}: {parts[1]} is not a provider this run sets up; installed here, "
                 f"with a dictionary: {', '.join(names) or 'none'}"
             )
         if mapped and parts[2] == "role_models" and key not in flat:
             ids = [definition.id for definition in roles.definitions(where)]
             if parts[3] not in ids:
                 raise SetupError(
-                    f"--unset {text}: no role definition has the id {parts[3]}; definitions: {', '.join(ids) or 'none'}"
+                    f"--reset {text}: no role definition has the id {parts[3]}; definitions: {', '.join(ids) or 'none'}"
                 )
         if mapped and scope == USER and parts[2] in _MAPS:
             raise SetupError(
-                f"--unset {text}: the user's file holds the {parts[2]} mapping in full, so a key of it is not taken "
+                f"--reset {text}: the user's file holds the {parts[2]} mapping in full, so a key of it is not taken "
                 "out; give --tier or --effort to change one"
             )
         if key in answers or (mapped and (parts[1], parts[3]) in flags[parts[2]]):
-            raise SetupError(f"--unset {text}: a flag answers the same key; give one of them")
+            raise SetupError(f"--reset {text}: a flag answers the same key; give one of them")
         if key in unset:
             continue
         unset.add(key)
         if key not in flat:
-            print(f"--unset {text}: {target} does not hold it; nothing to take out")
+            say(f"--reset {text}: {target} does not hold it; nothing to take out")
 
     # --- The mappings ---------------------------------------------------------
     states: list[_Provider] = []
@@ -759,13 +597,12 @@ def run(args: argparse.Namespace) -> int:
                     state.maps[table][name] = below[key].value
                     state.given[table].add(name)
                     state.unset[table].add(name)
-        print(f"{state.name}: {reading.describe()}")
+        say(f"{state.name}: {reading.describe()}")
         if state.comparison is not None:
             for line in state.comparison.lines():
-                print(f"  {line}")
+                say(f"  {line}")
         for table in _MAPS:
-            reset = None if scope == USER else (lambda name, t=table, n=state.name: below[f"providers.{n}.{t}.{name}"].value)
-            _settle_map(dialogue, state, table, args.allow_unlisted, reset, lambda key: key in flat)
+            _settle_map(dialogue, state, table, args.allow_unlisted)
         states.append(state)
 
     for state in states:
@@ -792,8 +629,12 @@ def run(args: argparse.Namespace) -> int:
 
     # --- The other settings ---------------------------------------------------
     for key in unset:
-        if key.split(".")[2:3] == ["role_models"]:
+        if not key.startswith("providers.") or key.split(".")[2:3] == ["role_models"]:
             flat.pop(key, None)
+    if schema.INSTALL_KEY in answers:
+        flat[schema.INSTALL_KEY] = answers[schema.INSTALL_KEY]
+    elif schema.INSTALL_KEY in unset:
+        flat.pop(schema.INSTALL_KEY, None)
     for key, flag, _, kind in _SETTINGS:
         if key in answers:
             place(key, answers[key], stated=True)
@@ -802,12 +643,7 @@ def run(args: argparse.Namespace) -> int:
             flat.pop(key, None)
             continue
         value, typed = _settle_setting(dialogue, key, flag, kind, proposed(key))
-        if value is _TAKEN_OUT:
-            if key not in flat:
-                print(f"default: the file does not hold {key}; nothing to take out")
-            flat.pop(key, None)
-        else:
-            place(key, value, stated=typed)
+        place(key, value, stated=typed)
 
     # --- What the roles would run with ----------------------------------------
     entries = {key: entry for key, entry in below.items() if key.split(".")[0] in profiles.GROUPS}
@@ -816,7 +652,7 @@ def run(args: argparse.Namespace) -> int:
         for key, value in flat.items() if key.split(".")[0] in profiles.GROUPS
     })
     definitions = roles.definitions(where)
-    problems: list[str] = []
+    problems = []
     for definition in definitions:
         for state in states:
             try:
@@ -832,22 +668,24 @@ def run(args: argparse.Namespace) -> int:
             key.rsplit(".", 1)[1]: entry.value
             for key, entry in entries.items() if key.startswith(f"providers.{state.name}.role_models.")
         }
-        print()
-        print(f"{state.name}: the mapping")
+        say("")
+        say(f"{state.name}: the mapping")
         for line in state.table(role_models):
-            print(line)
+            say(line)
         for note in state.notes.values():
-            print(f"  note: {note}")
+            say(f"  note: {note}")
     for note in profiles.unmatched([definition.id for definition in definitions], sorted(dictionaries), entries):
-        print(f"note: {note}")
-    print()
-    print("settings:")
+        say(f"note: {note}")
+    say("")
+    say("settings:")
     for key, _, _, _ in _SETTINGS:
         if key in flat:
-            print(f"  {key} = {tomlio.format_value(flat[key])}  (in this file)")
+            say(f"  {key} = {tomlio.format_value(flat[key])}  (in this file)")
         else:
-            print(f"  {key} = {tomlio.format_value(below[key].value)}  ({below[key].layer}; not written)")
-    print()
+            say(f"  {key} = {tomlio.format_value(below[key].value)}  ({below[key].layer}; not written)")
+    if schema.INSTALL_KEY in flat:
+        say(f"  {schema.INSTALL_KEY} = {tomlio.format_value(flat[schema.INSTALL_KEY])}  (in this file)")
+    say("")
 
     # --- Plan -----------------------------------------------------------------
     write = existing is None or not _same_values(flat, existing)
@@ -856,70 +694,45 @@ def run(args: argparse.Namespace) -> int:
     text = _document(flat, scope)
     if write:
         plan.write_file(target, text, replace=fileops.ANY)
-    if scope == PROJECT:
-        plan.ignore()
     described = plan.describe()
     if not described.changed:
-        print(f"nothing to write: {target} already holds these settings")
-        print(_next_steps())
-        return 0
+        say(f"nothing to write: {target} already holds these settings")
+        return Prepared(target, lines, False, None)
 
     replaces = write and existing is not None
     if replaces:
-        print(f"changes to {target}:")
+        say(f"changes to {target}:")
         for line in _changes(existing or {}, flat, below):
-            print(line)
+            say(line)
         was = _read_text(target)
         if was is not None and was != _document(existing or {}, scope):
-            print("  the file was edited outside `init`: its keys are kept, its comments and layout are not")
+            say("  the file was edited outside setup: its keys are kept, its comments and layout are not")
     elif write:
-        print(f"{target}, as it {'would be' if args.dry_run else 'will be'} written:")
+        say(f"{target}, as it {'would be' if dry_run else 'will be'} written:")
         for line in text.splitlines():
-            print(f"    {line}".rstrip())
+            say(f"    {line}".rstrip())
     for line in described.lines:
-        print(line)
+        say(line)
     for note in described.notes:
-        print(f"note: {note}")
-    # A file `init` did not write in its present form: ``--yes`` alone does
+        say(f"note: {note}")
+    # A file setup did not write in its present form: ``--yes`` alone does
     # not confirm that its comments and layout go.
-    by_hand = replaces and not _written_by_init(roots, target)
-    needed = f"--yes {REWRITE_OPTION}" if by_hand else "--yes"
-    if args.dry_run:
+    by_hand = replaces and not _written_by_setup(roots, target)
+    if dry_run:
         if by_hand:
-            print(f"note: {target} was written or edited by hand; without a terminal the run itself needs {needed}")
-        print("dry run: nothing was written")
-        print(_next_steps())
-        return 0
-
-    if dialogue.yes and by_hand and not args.rewrite_settings:
+            say(f"note: {target} was written or edited by hand; a run that writes it needs --yes {REWRITE_OPTION}")
+    elif by_hand and not args.rewrite_settings:
         raise SetupError(
-            f"{target}: was written or edited by hand (its content is not what `init` wrote), and these answers "
-            "change it. `init` rewrites the file from its values: every key is kept, its comments and layout are "
+            f"{target}: was written or edited by hand (its content is not what setup wrote), and these flags "
+            "change it. Setup rewrites the file from its values: every key is kept, its comments and layout are "
             f"not, and --yes alone does not confirm that. Give {REWRITE_OPTION} with --yes to rewrite it; the file "
             f"as it is now is then copied to {roots.backups_dir_of(scope == PROJECT)} first, under the time of the "
-            "run. `uninstall` puts back a file that was there before the first `init`, and leaves in place, as "
-            "yours, one that `init` rewrote after you edited it. Nothing was written"
+            "run. `uninstall` puts back a file that was there before the first run, and leaves in place, as "
+            "yours, one that setup rewrote after you edited it. Nothing was written"
         )
-    if not dialogue.yes:
-        if not dialogue.interactive:
-            raise dialogue.unanswered("the confirmation to write", needed)
-        question = "Write these settings? [y/N] (--yes): "
-        if replaces:
-            question = (
-                f"{target} is rewritten from the values above: every key is kept, comments and layout "
-                "are not. The file as it is now is copied to the backup directory first.\n"
-                "Replace it? [y/N] (--yes): "
-            )
-        if dialogue.ask(question).lower() not in _TRUE:
-            print("nothing was written")
-            return EXIT_DECLINED
-    plan.apply()
-    if write:
-        print(f"written: {target}")
-    if replaces:
-        print(f"the file as it was is in {roots.backups_dir_of(scope == PROJECT) / plan.stamp}")
-    print(_next_steps())
-    return 0
+    return Prepared(
+        target, lines, True, tomllib.loads(text), plan, roots, replaces, scope == PROJECT,
+    )
 
 
 def _same(one: Any, other: Any) -> bool:
@@ -931,7 +744,7 @@ def _same_values(one: dict[str, Any], other: dict[str, Any]) -> bool:
     return one.keys() == other.keys() and all(_same(one[key], other[key]) for key in one)
 
 
-def _written_by_init(roots: Any, target: Path) -> bool:
+def _written_by_setup(roots: Any, target: Path) -> bool:
     """Whether the file at ``target`` holds exactly what setup wrote there
     last: the install record lists it as a file of setup's, with the hash
     of its present content."""

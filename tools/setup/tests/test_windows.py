@@ -309,7 +309,7 @@ class CloneCheckCase(HomesCase):
         standing = homes.clone_standing(found)
         self.assertIs(standing.shared, False)
         self.assertIn("inside WSL, reached over the network name; a junction cannot lead there", standing.why)
-        self.assertEqual(homes.clone_warning(found), homes.CLONE_WARNING)
+        self.assertIsNone(homes.clone_warning(found))
 
     def test_doctor_gives_the_same_verdict(self) -> None:
         def verdict(real: str) -> doctor.Finding:
@@ -322,8 +322,44 @@ class CloneCheckCase(HomesCase):
 
         self.assertEqual(verdict("q:\\work\\clone").severity, doctor.OK)
         found = verdict(WSL_SHARE + "\\clone")
-        self.assertEqual((found.severity, found.detail), (doctor.WARNING, homes.CLONE_WARNING))
+        self.assertEqual((found.severity, found.detail), (doctor.WARNING, homes.WINDOWS_CLONE_LINE))
         self.assertEqual(verdict("\\\\server\\share\\clone").severity, doctor.WARNING)
+
+
+class UnlinkableCloneCase(RenderCase):
+    """On Windows a clone off a local drive stops the run before anything is
+    written (R8.7), a scratch home and a dry run included."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.windows = homes.Host(homes.WINDOWS, {"PATH": ""}, ())
+
+    def stand(self, real: str) -> None:
+        standing = homes.CloneStanding(self.clone, Path(real), False, "not on a local drive")
+        patch = mock.patch.object(homes, "clone_standing", return_value=standing)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_render_stops_with_the_line_and_writes_nothing(self) -> None:
+        self.stand(WSL_SHARE + "\\clone")
+        held = tree(self.home)
+        for argv in ((), ("--dry-run",)):
+            code, out, err = self.render(*argv, host=self.windows)
+            self.assertEqual(code, 2, argv)
+            self.assertIn(homes.WINDOWS_CLONE_LINE, err)
+            self.assertNotIn(homes.CLONE_WARNING, err + out)
+            self.assertEqual(tree(self.home), held, argv)
+
+    def test_a_clone_on_a_local_drive_passes(self) -> None:
+        self.stand("q:\\work\\clone")
+        found = homes.resolve(Locations(home=self.home, clone=self.clone, real_home=False), self.windows)
+        homes.require_linkable_clone(found)
+
+    def test_wsl_and_linux_are_not_stopped(self) -> None:
+        self.stand("/home/someone/clone")
+        for side in (homes.WSL, homes.LINUX):
+            found = homes.resolve(Locations(home=self.home, clone=self.clone, real_home=False), homes.Host(side, {}, ()))
+            homes.require_linkable_clone(found)
 
 
 # --- The other side, seen from Windows ----------------------------------------
@@ -564,7 +600,7 @@ class ShortNameCase(RenderCase):
 
 @unittest.skipUnless(WINDOWS, "junctions are made on Windows")
 class JunctionInstallCase(UninstallCase):
-    """``init``, ``render`` and ``uninstall``, as the
+    """``setup.py``, ``render`` and ``uninstall``, as the
     user runs them: every link is a junction, and none is ever entered."""
 
     def links(self) -> list[Path]:
@@ -868,6 +904,10 @@ class LineEndingCase(UninstallCase):
     def child(self, script: Path, *argv: str, home: Path | None = None) -> subprocess.CompletedProcess:
         empty = self.root / "no-programs"
         empty.mkdir(exist_ok=True)
+        # No provider program on PATH; git is, for the project's .codex/config.toml (R6.4).
+        git = shutil.which("git")
+        if git and not (empty / Path(git).name).exists():
+            (empty / Path(git).name).symlink_to(git)
         environment = {**support.child_environment(), "PATH": str(empty)}
         return subprocess.run(
             [sys.executable, "-B", str(script), *argv, "--home", str(home or self.home)], env=environment,
@@ -896,7 +936,7 @@ class LineEndingCase(UninstallCase):
         before = self.files()
         project = ("--project", str(self.project))
         runs = [
-            (("init", "--user", "--yes", "--rewrite-settings"), 0), (("init", "--yes", "--rewrite-settings", *project), 0),
+            (("setup.py", "--yes", "--rewrite-settings"), 0), (("setup.py", "--yes", "--rewrite-settings", str(self.project)), 0),
             (("render", "--apply-codex-settings"), 0), (("render", *project), 0),
             (("render", "--json", "--dry-run", *project), 0),
             (("homes",), 0), (("homes", "--json"), 0), (("show",), 0), (("show", "--json", *project), 0),
@@ -907,7 +947,8 @@ class LineEndingCase(UninstallCase):
         ]
         printed = 0
         for argv, expected in runs:
-            done = self.child(script, *argv)
+            program = script.with_name("setup.py") if argv[0] == "setup.py" else script
+            done = self.child(program, *argv[(argv[0] == "setup.py"):])
             said = done.stdout + done.stderr
             if expected is not None:
                 self.assertEqual(done.returncode, expected, (argv, said.decode("utf-8", "replace")[-600:]))

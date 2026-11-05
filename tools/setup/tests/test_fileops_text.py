@@ -544,11 +544,13 @@ class IgnoreTests(OpsCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.file = self.project / ".gitignore"
+        # The repository's exclude file (R6.3), not there yet.
+        self.file = self.exclude_file
+        self.file.unlink()
 
     def ignore(self, **changes) -> fileops.Result:
         plan = self.plan()
-        plan.ignore(**changes)
+        plan.ignore(self.file, **changes)
         return plan.apply()
 
     def block(self, body: bytes) -> bytes:
@@ -623,14 +625,33 @@ class IgnoreTests(OpsCase):
     def test_what_is_not_an_entry_is_refused(self) -> None:
         for entry in ("", " x", "a\nb", "# comment", "!negated"):
             plan = self.plan()
-            plan.ignore(add=[entry])
+            plan.ignore(self.file, add=[entry])
             self.assertEqual(self.refused(plan).codes(), {fileops.BAD_ACTION})
 
     def test_without_a_project_there_is_no_ignore_block(self) -> None:
         plan = fileops.Plan(fileops.Roots(self.home, None, self.clone))
-        plan.ignore()
+        plan.ignore(self.file)
         with self.assertRaises(fileops.PlanError):
             plan.describe()
+
+    def test_the_block_is_kept_in_the_exclude_file_and_nowhere_else(self) -> None:
+        self.ignore(add=[".claude/agents/manager.md"])
+        self.assertEqual(self.file.read_bytes(), self.listed(".claude/agents/manager.md"))
+        self.assertIsNotNone(fileops.read_record(self.roots).get("git-info:exclude"))
+        self.assertFalse((self.project / ".gitignore").exists())
+        for elsewhere in (self.project / ".gitignore", self.file.parent / "info-other"):
+            plan = self.plan()
+            plan.ignore(elsewhere)
+            self.assertEqual(self.refused(plan).codes(), {fileops.BAD_ACTION}, elsewhere)
+        plan = fileops.Plan(fileops.Roots(self.home, self.project, self.clone), stamp=self.stamp())
+        plan.ignore(self.file)
+        self.assertEqual(self.refused(plan).codes(), {fileops.BAD_ACTION})   # no git-info root given
+
+    def test_a_created_codex_config_is_an_entry_setup_writes(self) -> None:
+        self.assertTrue(fileops.own_ignore_entry(".codex/config.toml"))
+        self.put(self.file, self.block(b".codex/config.toml\n"))
+        self.ignore()   # taken over: every line is setup's
+        self.assertEqual(self.file.read_bytes(), self.listed(".codex/config.toml"))
 
 
 class PureBlockTests(unittest.TestCase):

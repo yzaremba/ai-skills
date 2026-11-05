@@ -893,12 +893,15 @@ def check_other_clones(context: Context) -> list[Finding]:
 
 def check_clone(context: Context) -> list[Finding]:
     """Whether both sides of the machine can read the clone (R6.9). A clone
-    the Windows side cannot read is a warning with one line (R8.6)."""
+    the Windows side cannot read is a warning with one line (R8.6); on Windows,
+    a clone off a local drive is the same warning with its own line (R8.7)."""
     found = homes.clone_standing(context.homes)
     if found.shared is None:
         return [info(f"{found.real}: {found.why}")]
     if found.shared:
         return [fine(f"{found.real}: {found.why}")]
+    if context.homes.host.side == homes.WINDOWS:
+        return [warning(homes.WINDOWS_CLONE_LINE, found.real)]
     return [warning(homes.CLONE_WARNING, found.real)]
 
 
@@ -966,7 +969,7 @@ def check_models(context: Context) -> list[Finding]:
         for key, model in found.missing_mapped:
             findings.append(warning(
                 f"{name}: {key} = {show(model)}: the model is not in the provider's list; unless you mean to keep it, "
-                "map the key to a listed model (`init`, or the settings file)", key,
+                "map the key to a listed model (`--tier`, or the settings file)", key,
             ))
         for key, model in found.hidden_mapped:
             findings.append(warning(f"{name}: {key} = {show(model)}: the list holds the model as a hidden entry", key))

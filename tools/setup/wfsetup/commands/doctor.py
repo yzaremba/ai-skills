@@ -124,7 +124,7 @@ The checks, in the order they run:
                          A file that cannot be read is a warning that says
                          where the fault is, not what the line holds. Then,
                          as info:
-                         whether the blocks `render --apply-codex-settings`
+                         whether the blocks `setup.py --codex-settings`
                          writes are in the file and as setup wrote them, by
                          the install record; and what that command would do
                          now and would leave to you (a limit you set

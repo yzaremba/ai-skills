@@ -32,7 +32,7 @@ from typing import Callable
 from . import commands, fsio, paths
 from .errors import EXIT_ERROR, EXIT_INTERRUPT, EXIT_PIPE, SetupError
 
-PROG = "workflow_setup.py"
+PROG = "workflow_setup.py"   # setup.py's is ``program.PROG``
 DESCRIPTION = "Set up and inspect the workflow: settings, skills, roles and rules."
 
 
@@ -138,8 +138,18 @@ def _interrupted(exc: BaseException) -> int:
     return EXIT_INTERRUPT if number is None else 128 + number
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Run one command and return its exit code.
+def _commands(argv: list[str]) -> int:
+    """The runner of ``workflow_setup.py``: the command ``argv`` names."""
+    args = build_parser(argv).parse_args(argv)
+    return args.run(args)
+
+
+def main(argv: list[str] | None = None, runner: Callable[[list[str]], int] | None = None) -> int:
+    """Run ``runner`` on the arguments and return its exit code. The runner
+    is a function of the argument list that parses it and does the work;
+    without one it is the command ``argv`` names (``workflow_setup.py``).
+    ``setup.py`` gives its own (``program.main``), so both scripts share the
+    backstop below.
 
     A ``SetupError`` is printed to stderr, one ``error:`` line per problem,
     and gives ``EXIT_ERROR``. A usage error leaves through ``argparse``,
@@ -150,8 +160,7 @@ def main(argv: list[str] | None = None) -> int:
     """
     argv = sys.argv[1:] if argv is None else list(argv)
     try:
-        args = build_parser(argv).parse_args(argv)
-        return args.run(args)
+        return (runner or _commands)(argv)
     except KeyboardInterrupt as exc:
         return _interrupted(exc)
     except SetupError as exc:
@@ -214,8 +223,8 @@ def _take_signals() -> None:
             pass
 
 
-def run_from_command_line() -> int:
-    """``main`` for a real process.
+def run_from_command_line(runner: Callable[[list[str]], int] | None = None) -> int:
+    """``main`` for a real process, with the ``runner`` of ``main``.
 
     Output is UTF-8 with LF on every platform, whatever the console's own
     encoding is. Stdout is flushed here, inside the entry point, so that a
@@ -236,7 +245,7 @@ def run_from_command_line() -> int:
     try:
         _take_signals()
         try:
-            code = main()
+            code = main(runner=runner)
         except SystemExit as exc:
             # ``argparse`` leaves this way: ``--help`` (0) and a usage
             # error (2). What it printed is flushed here like any output.

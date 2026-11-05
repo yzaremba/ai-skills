@@ -127,10 +127,13 @@ The clone (R6.9)
     machine with two sides it must be readable by both: from WSL its real
     path is on a Windows drive; on Windows its real path is on a drive
     letter and not under a UNC name (``os.path.realpath`` turns a mapped
-    network drive into its UNC name). Anything else is a warning
+    network drive into its UNC name). From WSL anything else is a warning
     (``clone_warning``), never a refusal: one line, and the exit code does
-    not change. A scratch home, and a Linux with no Windows side, are not
-    checked.
+    not change. On Windows every link is a junction, which leads only to a
+    local drive, so a clone off one stops the run with exit code 2 before
+    anything is written, a scratch home and ``--dry-run`` included
+    (``require_linkable_clone``); ``clone_warning`` gives None there. A
+    scratch home on WSL, and a Linux with no Windows side, are not checked.
 
 Links
     ``fileops.Plan.create_link`` makes them, ``fsio`` knows how: a symlink
@@ -148,7 +151,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from . import fileops, fsio, paths
+from . import fileops, fsio, gitrepo, paths
 from .errors import SetupError
 from .locations import Locations
 from .manifest import Roots
@@ -386,6 +389,9 @@ class Homes:
     clone: Path
     project: Path | None
     providers: tuple[Provider, ...]
+    # Where the project's exclude file is, or why it has none (``gitrepo``):
+    # read once, when the run's homes are resolved.
+    repository: gitrepo.Found | None = None
 
     def provider(self, name: str) -> Provider:
         for provider in self.providers:
@@ -401,8 +407,10 @@ class Homes:
         return {provider.anchor: provider.home for provider in self.providers if provider.anchor is not None}
 
     def roots(self) -> Roots:
-        """The roots of the run, for ``fileops`` and the record."""
-        return Roots(self.home, self.project, self.clone, tuple(self.extra.items()))
+        """The roots of the run, for ``fileops`` and the record: with the
+        project's git directory (``git-info``) where ``gitrepo`` found it."""
+        info = None if self.project is None or self.repository is None else self.repository.info
+        return Roots(self.home, self.project, self.clone, tuple(self.extra.items()), info)
 
 
 def child_environment(homes: Homes) -> dict[str, str]:
@@ -505,7 +513,9 @@ def resolve(locations: Locations, host: Host | None = None) -> Homes:
     )
     clone = paths.absolute(locations.clone)
     project = None if locations.project is None else paths.absolute(locations.project)
-    return Homes(host=host, home=user_home, scratch=scratch, clone=clone, project=project, providers=providers)
+    repository = None if project is None else gitrepo.find(project)
+    return Homes(host=host, home=user_home, scratch=scratch, clone=clone, project=project, providers=providers,
+                 repository=repository)
 
 
 # --- Whose a path is ----------------------------------------------------------
@@ -706,10 +716,30 @@ def rule_directories(clone: Path) -> list[Path]:
     ]
 
 
+WINDOWS_CLONE_LINE = (
+    "Windows links to this clone with junctions, which lead only to a local drive; "
+    "install Windows from a clone on a Windows drive."
+)
+
+
 def clone_warning(homes: Homes) -> str | None:
-    """The one line for a clone the other side cannot read (R8.6), or None.
-    A warning only: nothing is refused and no exit code changes."""
+    """The one line for a clone the Windows side cannot read (R8.6), or None.
+    A warning only: nothing is refused and no exit code changes. On Windows
+    the clone is refused instead (``require_linkable_clone``): None."""
+    if homes.host.side == WINDOWS:
+        return None
     return CLONE_WARNING if clone_standing(homes).shared is False else None
+
+
+def require_linkable_clone(homes: Homes) -> None:
+    """On Windows, stop a run whose clone is not on a local drive, before
+    anything is written (R8.7): a junction leads only to a local drive. A
+    scratch home is not exempt. Elsewhere nothing."""
+    if homes.host.side != WINDOWS:
+        return
+    real = clone_standing(homes).real
+    if not fsio.local_drive_path(str(real)):
+        raise SetupError(f"{real}: {WINDOWS_CLONE_LINE}", "nothing was written")
 
 
 # --- The report ---------------------------------------------------------------

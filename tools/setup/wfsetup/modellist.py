@@ -1,7 +1,7 @@
 """A provider's own model list, read without a session, and how it compares
 with the provider's dictionary (gate G11).
 
-How ``init`` and ``doctor`` use it
+How ``settingsfile`` and ``doctor`` use it
 
     known = dictionary.load(where, "codex")
     environ = homes.child_environment(found)        # never the real home's for a scratch home
@@ -41,7 +41,7 @@ How the program is started
     environment given (or ``program_file`` is used, where ``homes`` found
     it), and the file found is started with the rest of the command as a
     fixed argument list: no shell, nothing from a settings file, standard
-    input closed. Its environment is the one given: ``init`` and ``doctor``
+    input closed. Its environment is the one given: ``settingsfile`` and ``doctor``
     give ``homes.child_environment``, which for a scratch home points the
     provider at that home and never at the real one. This module reads no
     credentials and passes none of its own. On a timeout

@@ -202,14 +202,17 @@ user-level settings, and DIR gets, from its own settings
       model and effort. Where the project's settings give a loaded role
       another profile the output says so, with both; "show roles --project
       DIR" prints the project's.
-    - The generated files are listed in setup's block of DIR/.gitignore,
-      with .agents/workflow.local.toml and the project's state directory,
+    - The generated files are listed in setup's block of the repository's
+      exclude file, info/exclude in its git directory (DIR/.git/info/exclude,
+      or the common one of a linked worktree), with
+      .agents/workflow.local.toml and the project's state directory,
       DIR/.agents/workflow-setup/ (its install record, its backups and its
-      lock). A block that is already there and holds a line setup does not
-      write is yours: it is kept and reported, with exit code 3, and
+      lock). A DIR that is no git repository's top gets no list, and a note
+      says why. A block that is already there and holds a line setup does
+      not write is yours: it is kept and reported, with exit code 3, and
       --overwrite-edited writes it. The key and the block are not
       listed: they are setup's part of files the project owns and may
-      commit.
+      commit. A .codex/config.toml that setup created is listed.
 
 Turning roles.manager_default off, removing an override, or taking `roles`
 out of the home's `install` makes what an earlier run wrote for it stale: the next
@@ -366,7 +369,8 @@ codex-settings" says, without writing, what this option would do now.
 A second run with the same inputs plans nothing and writes nothing, and says
 so. What was made is listed in ~/.agents/workflow-setup/manifest.json, and
 what was made in a project in DIR/.agents/workflow-setup/manifest.json, by
-anchor ("home:", "clone:", "project:") and not by this machine's paths.
+anchor ("home:", "clone:", "project:", and "git-info:exclude" for the
+repository's exclude file) and not by this machine's paths.
 
 The output: the clone, with the warning where the Windows side cannot read it;
 whether the roles are off, and why; for each provider its home, each place
@@ -376,7 +380,7 @@ line per change; and one line that sums it up. With --json it is one object
 with the same facts ("clone_warning", "roles", "providers", "definitions",
 "entry_points", "project", "stale", "plan", "errors", "counts", "summary",
 "exit_code"); "clone_warning" is null unless the Windows side cannot read the
-clone, and then is the line printed; "roles" holds "on" and "file"
+clone (on Windows a clone off a local drive stops the run instead), and then is the line printed; "roles" holds "on" and "file"
 (the settings file whose `install` decided it), and "project" has the same
 "roles" (it follows the home); "definitions"
 lists every role definition with its provider, file, bytes, model, effort,
@@ -419,8 +423,12 @@ from __future__ import annotations
 import argparse
 import json
 
-from .. import fileops, homes, locations, render, validate
+from .. import codexsettings, fileops, homes, locations, render, validate
 from ..errors import SetupError
+
+APPLY_OPTION = "--apply-codex-settings"
+REMOVE_OPTION = "--remove-codex-settings"
+DEFAULT_OPTION = "--default-codex-permissions"
 
 SUMMARY = (
     "link the clone's skills and rules into the providers' homes, generate the role definitions and the "
@@ -441,15 +449,56 @@ def configure(parser: argparse.ArgumentParser) -> None:
     fileops.add_arguments(parser)
     for part in render.PARTS:
         part.add_arguments(parser)
+    # The four options of the old command; they go with it (P6.4). Each is
+    # read as the item of setup.py's --codex-settings and --worktree-root.
+    parser.add_argument(
+        APPLY_OPTION, action="store_true",
+        help="write the Codex settings the framework needs into marked blocks of the user's Codex config.toml "
+        "(see the text above); the same as setup.py --codex-settings on",
+    )
+    parser.add_argument(
+        codexsettings.WORKTREE_OPTION, metavar="DIR",
+        help=f"with {APPLY_OPTION}: the directory your git worktrees are made under, made writable by the profile",
+    )
+    parser.add_argument(
+        DEFAULT_OPTION, action="store_true",
+        help=f"with {APPLY_OPTION}: also write and select the profile; the same as setup.py --codex-settings profile",
+    )
+    parser.add_argument(
+        REMOVE_OPTION, action="store_true",
+        help=f"take out the blocks {APPLY_OPTION} wrote, where they still hold what setup wrote; the same as "
+        "setup.py --codex-settings off",
+    )
+
+
+def _codex_item(args: argparse.Namespace) -> None:
+    """Say the old options as the item: ``codex_settings`` and
+    ``worktree_root`` on ``args``, which ``codexsettings.fill`` reads."""
+    apply, remove = args.apply_codex_settings, args.remove_codex_settings
+    wrong = []
+    if apply and remove:
+        wrong.append(f"{APPLY_OPTION} and {REMOVE_OPTION}: one or the other")
+    if not apply:
+        wrong += [
+            f"{option}: goes with {APPLY_OPTION}; nothing is written to the Codex config without it"
+            for option, given in ((codexsettings.WORKTREE_OPTION, args.worktree_root is not None),
+                                  (DEFAULT_OPTION, args.default_codex_permissions)) if given
+        ]
+    if wrong:
+        raise SetupError(*wrong)
+    args.codex_settings = "off" if remove else ("profile" if args.default_codex_permissions else "on") if apply else None
 
 
 def run(args: argparse.Namespace) -> int:
+    _codex_item(args)
     where = locations.from_args(args)
     sources = validate.require(where)
     found = homes.resolve(where)
+    homes.require_linkable_clone(found)
     outcome = render.execute(
         found, sources, args, dry_run=args.dry_run, follow=args.follow_config_symlinks,
         overwrite_edited=args.overwrite_edited, clone_warning=homes.clone_warning(found),
+        project_changed=True,   # the old command sets the project's keys on every run, as it always did
     )
     if args.json:
         print(json.dumps(outcome.report, indent=2, ensure_ascii=False))

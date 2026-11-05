@@ -22,7 +22,7 @@ from pathlib import Path
 import support
 from fileops_support import POSIX, SYMLINKS, OpsCase
 from fileops_support import snapshot as snapshot_of
-from wfsetup import fileops, fsio, lock
+from wfsetup import fileops, fsio, gitrepo, lock
 from wfsetup.errors import SetupError
 from wfsetup.manifest import Roots
 
@@ -154,13 +154,14 @@ class SyntaxTreeTests(unittest.TestCase):
             self.assertLess(first_admit, first_change, f"{name} changes the disk before it asks")
 
     def test_the_script_beside_the_package_changes_no_disk(self) -> None:
-        """The one script in ``tools/setup`` is read as well. The command
+        """The scripts in ``tools/setup`` are read as well. The command
         line changes no disk by itself."""
         scripts = sorted(support.SETUP.glob("*.py"))
-        self.assertEqual([path.name for path in scripts], [support.SCRIPT.name])
-        self.assertEqual(
-            [(what, inside) for _, what, inside in changes(ast.parse(support.SCRIPT.read_text(encoding="utf-8")))], []
-        )
+        self.assertEqual([path.name for path in scripts], sorted([support.SCRIPT.name, support.SETUP_SCRIPT.name]))
+        for script in scripts:
+            self.assertEqual(
+                [(what, inside) for _, what, inside in changes(ast.parse(script.read_text(encoding="utf-8")))], [], script
+            )
 
     def test_the_junction_maker_asks_too(self) -> None:
         tree = ast.parse((PACKAGE / "fsio.py").read_text(encoding="utf-8"))
@@ -171,7 +172,7 @@ class SyntaxTreeTests(unittest.TestCase):
         self.assertIsNotNone(first)
 
     def test_the_stop_variable_is_read_in_fsio_alone(self) -> None:
-        for path in [*modules(), support.SCRIPT]:
+        for path in [*modules(), support.SCRIPT, support.SETUP_SCRIPT]:
             if path.name == "fsio.py":
                 continue
             self.assertNotIn(fsio.STOP_VARIABLE, path.read_text(encoding="utf-8"), path.name)
@@ -355,8 +356,39 @@ class ScopeTests(AdmitCase):
         self.assertEqual(roots, [self.home])
         self.assertEqual(barred, [self.clone, self.project])
         roots, barred = self.roots.confinement(True)
-        self.assertEqual(roots, [self.project])
+        # The project, and the info directory of its git directory, where
+        # its exclude file is (R6.3); the home's bounds do not hold it.
+        self.assertEqual(roots, [self.project, self.project / ".git" / "info"])
         self.assertEqual(barred, [self.clone, self.roots.state_dir])
+        roots, _ = Roots(self.home, self.project, self.clone).confinement(True)
+        self.assertEqual(roots, [self.project])
+
+    def test_the_exclude_file_of_a_linked_worktree_is_the_projects_and_nothing_else_there(self) -> None:
+        repository, worktree = self.root / "repository", self.root / "worktree"
+        exclude = support.make_repository(repository)
+        support.make_worktree(repository, worktree)
+        info = gitrepo.find(worktree).info
+        self.assertEqual(info, exclude.parent)
+        roots = Roots(self.home, worktree, self.clone, git_info=info)
+        self.assertEqual(roots.key(exclude), "git-info:exclude")
+        with fsio.confined(*roots.confinement(True)):
+            self.assertIsNone(fsio.admits(exclude))
+            self.assertIsNotNone(fsio.admits(repository / "README.md"))
+        with fsio.confined(*roots.confinement(False)):
+            self.assertIsNotNone(fsio.admits(exclude))
+        plan = fileops.Plan(roots, stamp=self.stamp())
+        plan.ignore(exclude, add=[".claude/agents/manager.md"])
+        plan.apply()
+        self.assertIn(b".claude/agents/manager.md\n", exclude.read_bytes())
+        self.assertEqual(sorted(os.listdir(exclude.parent)), ["exclude"])
+        # Nothing else of the git directory: not beside the exclude file,
+        # not above it.
+        for elsewhere in (info / "attributes", repository / ".git" / "config"):
+            plan = fileops.Plan(roots, stamp=self.stamp())
+            plan.write_file(elsewhere, "x\n")
+            with self.assertRaises(fileops.PlanError):
+                plan.apply()
+            self.assertFalse(elsewhere.exists(), elsewhere)
 
     def test_a_home_inside_the_project_is_barred_to_the_project(self) -> None:
         inner = self.project / "home"

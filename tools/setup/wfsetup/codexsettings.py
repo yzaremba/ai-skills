@@ -6,8 +6,9 @@ How it is used
     render.PARTS      Part("codex-settings", codexsettings.fill, codexsettings.configure)
     doctor.CHECKS     Check("codex-settings", codexsettings.check, ..., configure=codexsettings.configure_check)
 
-    render --apply-codex-settings [--worktree-root DIR] [--default-codex-permissions]
-    render --remove-codex-settings
+    setup.py --codex-settings off|on|profile [--worktree-root DIR]
+    render --apply-codex-settings [--worktree-root DIR] [--default-codex-permissions]   (until it goes)
+    render --remove-codex-settings                                                       (until it goes)
     doctor --only codex-settings [--codex-probe]
 
 What the framework needs on Codex (docs/agent-roles-framework.md,
@@ -207,7 +208,7 @@ The profile
     value, a built-in among them, it loads (``codex features list`` on
     scratch homes, 2026-10-18). So:
 
-    ``--default-codex-permissions``      the profile in the end block, and
+    ``--codex-settings profile``         the profile in the end block, and
                                          ``default_permissions = "workflow"``
                                          in the head block
     the user's file sets                 the profile in the end block, not
@@ -230,19 +231,21 @@ The profile
     else: the install record holds the block's hash.
 
 What stays
-    The blocks are the user's explicit choice. A later ``render`` without
-    ``--apply-codex-settings`` leaves them as they are: the stale sweep of
-    ``render`` removes links and generated files only. They go with
-    ``render --remove-codex-settings``, and with the reversal of the record
-    (``uninstall``). A run with ``--apply-codex-settings`` writes what its
-    options say: without ``--worktree-root`` the profile has no worktree
-    root, and without ``--default-codex-permissions`` it is not selected,
-    and not written either unless the user's file sets
-    ``default_permissions``; what such a run takes out of an earlier block
-    is said in the output. A
-    block edited by hand is kept and reported (exit code 3), as every block
-    of setup's is. A block the record lists and the file no longer holds is
-    taken out of the record by the next ``render``.
+    The blocks are the user's explicit choice, and a run without the
+    options keeps them: the item (off, on, or on with the profile, and the
+    worktree root) is what the blocks of the file hold, passed on whole,
+    so a refresh rewrites them as they stand (the Manager's pin follows the
+    roles) and takes out nothing. An option changes only its own part:
+    ``--codex-settings on`` writes the blocks without the profile selected
+    (the worktree root stays), ``profile`` selects it, ``off`` takes the
+    blocks out where they still hold what setup wrote, and
+    ``--worktree-root`` sets the root of an item that is on. The stale
+    sweep of a run removes links and generated files only. They also go with
+    the reversal of the record (``uninstall``). What a run takes out of an
+    earlier block is said in the output. A block edited by hand is kept and
+    reported (exit code 3), as every block of setup's is. A block the record
+    lists and the file no longer holds is taken out of the record by the
+    next run.
 
 Reading the file
     The file is parsed, since TOML's rules decide what may be written. Of
@@ -298,10 +301,12 @@ PIN_KEYS = (MODEL_KEY, EFFORT_KEY)
 WORKSPACE_ROOTS = ":workspace_roots"
 PARENT = ":workspace"
 
-APPLY_OPTION = "--apply-codex-settings"
-REMOVE_OPTION = "--remove-codex-settings"
+CODEX_OPTION = "--codex-settings"
+APPLY_OPTION = f"{CODEX_OPTION} on"
+REMOVE_OPTION = f"{CODEX_OPTION} off"
+DEFAULT_OPTION = f"{CODEX_OPTION} profile"
 WORKTREE_OPTION = "--worktree-root"
-DEFAULT_OPTION = "--default-codex-permissions"
+MODES = ("off", "on", "profile")
 PROBE_OPTION = "--codex-probe"
 
 # How one launch selects a profile; the quoting holds in bash, PowerShell
@@ -349,35 +354,25 @@ _TOML_PLACE = re.compile(r"\(at (line \d+, column \d+|end of document)\)")
 # --- The options -----------------------------------------------------------------
 
 def configure(parser: Any) -> None:
-    """The options of the part of ``render``."""
+    """The options of the part, on ``setup.py``."""
     parser.add_argument(
-        APPLY_OPTION, action="store_true",
-        help="write the Codex settings the framework needs into marked blocks of the user's Codex config.toml: "
-        f"{THREADS_KEY} = {THREADS_NEEDED}; the wait floor {WAIT_MIN_KEY} = {WAIT_MIN_NEEDED} with "
-        f"{WAIT_DEFAULT} = {WAIT_DEFAULT_WANTED}, unless the file defines {WAIT_TABLE} itself; and, unless the "
-        f"file sets {SANDBOX_KEY}, the permission profile `{PROFILE}`, where {PERMISSIONS_KEY} is set after the "
-        f"run (by {DEFAULT_OPTION}, or by your file); and, where the Manager is installed for Codex as a loadable "
-        f"role, its model and effort as {MODEL_KEY} and {EFFORT_KEY}, which every plain codex session in that home "
-        "then starts on. A key the file already sets is reported and left alone. "
-        f"Once written, the blocks stay until {REMOVE_OPTION}",
+        CODEX_OPTION, choices=MODES, metavar="off|on|profile",
+        help="the Codex config item of this machine. on: write the settings the framework needs into marked "
+        f"blocks of the user's Codex config.toml: {THREADS_KEY} = {THREADS_NEEDED}; the wait floor "
+        f"{WAIT_MIN_KEY} = {WAIT_MIN_NEEDED} with {WAIT_DEFAULT} = {WAIT_DEFAULT_WANTED}, unless the file defines "
+        f"{WAIT_TABLE} itself; and, unless the file sets {SANDBOX_KEY}, the permission profile `{PROFILE}`, where "
+        f"{PERMISSIONS_KEY} is set after the run (by profile, or by your file); and, where the Manager is installed "
+        f"for Codex as a loadable role, its model and effort as {MODEL_KEY} and {EFFORT_KEY}. A key the file "
+        "already sets is reported and left alone. profile: also write and select the profile, with "
+        f"{PERMISSIONS_KEY} = \"{PROFILE}\". off: take the blocks out where they still hold what setup wrote. "
+        "Without the option the item is what the blocks hold, and a run keeps it",
     )
     parser.add_argument(
         WORKTREE_OPTION, metavar="DIR",
-        help=f"with {APPLY_OPTION}: the directory your git worktrees are made under, made writable by the "
-        "profile. An absolute path, written normalised (no . or .. left in it), or one that starts with ~/, "
+        help="the directory your git worktrees are made under, made writable by the profile; for an item that "
+        "is on. An absolute path, written normalised (no . or .. left in it), or one that starts with ~/, "
         "written with / between its parts. The filesystem root and the home directory itself are refused. "
         "It is your input: it goes into your config.toml and nowhere else",
-    )
-    parser.add_argument(
-        DEFAULT_OPTION, action="store_true",
-        help=f"with {APPLY_OPTION}: also write and select the profile, with {PERMISSIONS_KEY} = \"{PROFILE}\". "
-        f"Without it the profile is written, unselected, only where your file sets {PERMISSIONS_KEY} itself, "
-        f"and otherwise printed as text: Codex refuses a config that defines a profile and sets no "
-        f"{PERMISSIONS_KEY}",
-    )
-    parser.add_argument(
-        REMOVE_OPTION, action="store_true",
-        help=f"take out the blocks {APPLY_OPTION} wrote, where they still hold what setup wrote",
     )
 
 
@@ -389,6 +384,40 @@ def configure_check(parser: Any) -> None:
         f"Codex ignores a `-c {PERMISSIONS_KEY}=...` override while {SANDBOX_KEY} is set (gate G4). doctor "
         "itself starts no session",
     )
+
+
+ITEM_OFF = (
+    f"{WORKTREE_OPTION}: the Codex config item is off, so there is no profile to give a root; "
+    f"give {APPLY_OPTION} with it"
+)
+
+
+def preflight(found: Any, options: Any) -> None:
+    """Refuse, before the run writes anything, what the options of this part
+    get wrong by themselves: a root in a form the profile does not take, and a
+    root for an item that is off. A config file that cannot be read is left to
+    ``fill``, which says why."""
+    mode = getattr(options, "codex_settings", None)
+    root_text = getattr(options, "worktree_root", None)
+    if root_text is None:
+        return
+    worktree_root(str(root_text))
+    if mode in ("on", "profile"):
+        return
+    if mode is None:
+        provider = found.provider(homes.CODEX)
+        if not provider.installed or not any(place.name == homes.CONFIG for place in provider.places):
+            return   # nothing is written for Codex: fill says so
+        try:
+            seen = fsio.look(provider.place(homes.CONFIG).path)
+            if seen.kind == fsio.FILE:
+                if analyse(fsio.read_bytes(provider.place(homes.CONFIG).path)).held is not None:
+                    return
+            elif seen.kind != fsio.ABSENT:
+                return
+        except SetupError:
+            return
+    raise SetupError(ITEM_OFF)
 
 
 def worktree_root(text: str) -> str:
@@ -844,8 +873,8 @@ def decide(facts: Facts, want: Want) -> Decision:
             *[f"    {one}" for one in profile_lines(want.root, comments=False) if one],
             f"to use it you would, yourself: remove {SANDBOX_KEY}, and any [sandbox_workspace_write] table, "
             f"from every config Codex loads (this file, a project's .codex/config.toml, a profile file); run "
-            f"render {APPLY_OPTION} again, which then writes the profile; and select it with "
-            f"{PERMISSIONS_KEY} = \"{PROFILE}\" (render {DEFAULT_OPTION}) or for one launch with {PER_LAUNCH}",
+            f"setup.py {APPLY_OPTION} again, which then writes the profile; and select it with "
+            f"{PERMISSIONS_KEY} = \"{PROFILE}\" (setup.py {DEFAULT_OPTION}) or for one launch with {PER_LAUNCH}",
             UNCERTAIN,
         ]
         if want.root is None:
@@ -868,9 +897,9 @@ def decide(facts: Facts, want: Want) -> Decision:
         found.printed = [
             f"the permission profile `{PROFILE}`, as text; nothing of it was written:",
             *[f"    {one}" for one in profile_lines(want.root, comments=False) if one],
-            f"to use it: run render {APPLY_OPTION} {DEFAULT_OPTION}, which writes it and selects it with "
+            f"to use it: run setup.py {DEFAULT_OPTION}, which writes it and selects it with "
             f"{PERMISSIONS_KEY} = \"{PROFILE}\"; or set {PERMISSIONS_KEY} yourself (any value, a built-in such as "
-            f"\"{PARENT}\" among them) and run render {APPLY_OPTION} again, which then writes it unselected, for "
+            f"\"{PARENT}\" among them) and run setup.py {APPLY_OPTION} again, which then writes it unselected, for "
             f"one launch with {PER_LAUNCH}",
             UNCERTAIN,
         ]
@@ -1063,7 +1092,7 @@ def _decide_pin(found: Decision, facts: Facts, want: Want) -> list[str]:
         found.pin_line = (
             f"{MODEL_KEY}: the Manager's model is not pinned. Your file sets {' and '.join(theirs)} outside setup's "
             f"blocks, and {why}. Delete "
-            f"{'this line' if one else 'these lines'} yourself and run render {APPLY_OPTION} again: {quoted}. Until "
+            f"{'this line' if one else 'these lines'} yourself and run setup.py {APPLY_OPTION} again: {quoted}. Until "
             f"{'it is' if one else 'they are'} gone {_unpinned(want.model, want.effort)}"
         )
         found.lines.append(found.pin_line)
@@ -1099,9 +1128,9 @@ def _no_root() -> str:
 def _notice(where: str) -> list[str]:
     return [
         f"# Codex settings for the agent-roles workflow, written by workflow setup at your request",
-        f"# (render {APPLY_OPTION}), at {where} of this file. Setup changes nothing outside its markers and",
+        f"# (setup.py {APPLY_OPTION}), at {where} of this file. Setup changes nothing outside its markers and",
         f"# never touches {SANDBOX_KEY}. It reports an edit made between the markers and does not overwrite it.",
-        f"# To change the block, run render {APPLY_OPTION} again; to take it out, render {REMOVE_OPTION}.",
+        f"# To change the block, run setup.py with {CODEX_OPTION} again; to take it out, setup.py {REMOVE_OPTION}.",
     ]
 
 
@@ -1157,57 +1186,54 @@ def _mine(item: Any, provider: Any) -> Any:
 
 
 def fill(run: Any) -> None:
-    """The part of ``render``; see the module. Without an option of its
-    own it writes nothing and removes nothing: it only takes out of the
-    record a block that is no longer in the file."""
-    apply = bool(run.option("apply_codex_settings", False))
-    remove = bool(run.option("remove_codex_settings", False))
+    """The part of ``render``; see the module. Without an option of its own
+    it keeps the item as the blocks hold it (a run rewrites them as they
+    stand), and takes out of the record a block that is no longer in the
+    file."""
+    mode = run.option("codex_settings", None)
     root_text = run.option("worktree_root", None)
-    default = bool(run.option("default_codex_permissions", False))
+    asked = mode is not None or root_text is not None
 
-    wrong = []
-    if apply and remove:
-        wrong.append(f"{APPLY_OPTION} and {REMOVE_OPTION}: one or the other")
-    if not apply:
-        wrong += [
-            f"{option}: goes with {APPLY_OPTION}; nothing is written to the Codex config without it"
-            for option, given in ((WORKTREE_OPTION, root_text is not None), (DEFAULT_OPTION, default)) if given
-        ]
     root = None
-    if apply and root_text is not None:
+    if root_text is not None:
         try:
             root = worktree_root(str(root_text))
         except SetupError as exc:
-            wrong += exc.lines
-    if wrong:
-        run.fail(*wrong)
-        return
+            run.fail(*exc.lines)
+            return
 
     provider = run.homes.provider(homes.CODEX)
     if not provider.installed or not any(place.name == homes.CONFIG for place in provider.places):
-        if apply or remove:
+        if asked:
             run.notes.append("codex settings: Codex is not installed; nothing is written for it")
         return
     path = provider.place(homes.CONFIG).path
     key = run.roots.key(path)
 
-    if not apply and not remove:
-        _forget_gone(run, provider, path, key)
-        return
-
     status, says, data = _reach(run, path)
     if status is not None:
-        _item(run, provider, path, BLOCK, status, says)
+        if asked:
+            _item(run, provider, path, BLOCK, status, says)
         return
     facts = analyse(data)
     if facts.fault is not None:
-        run.fail(
-            f"{path}: {facts.fault}; setup writes nothing into a Codex config it cannot read. Repair the file "
-            f"and run render {APPLY_OPTION if apply else REMOVE_OPTION} again"
-        )
+        if asked:
+            run.fail(
+                f"{path}: {facts.fault}; setup writes nothing into a Codex config it cannot read. Repair the file "
+                f"and run setup.py {CODEX_OPTION} again"
+            )
         return
 
-    if remove:
+    held = facts.held
+    on = mode in ("on", "profile") or (mode is None and held is not None)
+    if root_text is not None and not on:
+        run.fail(ITEM_OFF)
+        return
+    if not on and mode is None:
+        _forget_gone(run, provider, path, key)   # a refresh with the item off
+        return
+
+    if mode == "off":
         dropped = [_mine(run.drop_block(path, name), provider) for name in BLOCK_NAMES]
         if not any(item is not None for item in dropped):
             run.notes.append(f"codex settings: the record lists no block of setup's in {path}; nothing to remove")
@@ -1220,6 +1246,10 @@ def fill(run: Any) -> None:
     except SetupError as exc:
         run.fail(*exc.lines)
         return
+    # The parts of the item no option names are what the blocks hold.
+    default = mode == "profile" if mode is not None else (held is not None and held.default)
+    if root is None and held is not None:
+        root = held.root
     want = Want(root, default, model=model, effort=effort)
     found = decide(facts, want)
     top = "" if found.top is None else found.top
@@ -1283,11 +1313,6 @@ def _absent_options(held: Want | None, want: Want, found: Decision) -> dict[str,
             f"the permission profile `{PROFILE}` is taken out, because {DEFAULT_OPTION} was not given to this run "
             f"and your file sets no {PERMISSIONS_KEY}"
         )
-    elif held.root is not None and want.root is None and found.profile == WRITTEN:
-        said[BLOCK] = (
-            f"the worktree root {held.root} is taken out of the profile, because {WORKTREE_OPTION} was not given "
-            "to this run"
-        )
     if held.default and not want.default:
         said[TOP_BLOCK] = f"{PERMISSIONS_KEY} is taken out, because {DEFAULT_OPTION} was not given to this run"
     return said
@@ -1303,11 +1328,6 @@ def _taken_out(held: Want | None, want: Want, found: Decision) -> list[str]:
             f"codex settings: the earlier block defined the permission profile `{PROFILE}`, and this run was given "
             f"no {DEFAULT_OPTION} while your file sets no {PERMISSIONS_KEY}, so the profile is taken out: "
             f"{REFUSES}. Give the option to keep it, selected"
-        )
-    elif BLOCK in said:
-        lines.append(
-            f"codex settings: the earlier block held the worktree root {held.root}, and this run was given no "
-            f"{WORKTREE_OPTION}, so the profile no longer has it; give the option again to keep it"
         )
     if TOP_BLOCK in said:
         lines.append(
@@ -1361,7 +1381,7 @@ def _bytes(path: Path) -> bytes | None:
 def check(context: Any) -> list[Any]:
     """The check ``codex-settings`` of ``doctor``: the three keys, as
     ``doctor.check_codex_settings`` reports them, then setup's blocks by the
-    record, and what ``render --apply-codex-settings`` would do now and
+    record, and what ``setup.py --codex-settings on`` would do now and
     would leave to the user. Nothing is written."""
     from . import doctor
 
@@ -1384,9 +1404,9 @@ def check(context: Any) -> list[Any]:
         # Written so by an earlier setup, which defined the profile unselected.
         findings.append(doctor.error(
             f"setup's block {BLOCK} defines the permission profile `{PROFILE}` and the file sets no "
-            f"{PERMISSIONS_KEY}: {REFUSES}, so Codex will not start. Fix it with render {APPLY_OPTION} "
-            f"{DEFAULT_OPTION}, which selects the profile, or with render {REMOVE_OPTION}, which takes setup's "
-            f"blocks out; render {APPLY_OPTION} alone takes the profile out of the block",
+            f"{PERMISSIONS_KEY}: {REFUSES}, so Codex will not start. Fix it with setup.py {DEFAULT_OPTION}, "
+            f"which selects the profile, or with setup.py {REMOVE_OPTION}, which takes setup's "
+            f"blocks out; setup.py {APPLY_OPTION} takes the profile out of the block",
             f"{path}: block {BLOCK}",
         ))
     held = facts.held or Want()
@@ -1397,11 +1417,9 @@ def check(context: Any) -> list[Any]:
     except SetupError:
         model, effort = held.model, held.effort  # the checks `sources` and `profiles` say why
     found = decide(facts, Want(held.root, held.default, held.profile, model, effort))
-    asked = f"render {APPLY_OPTION}"
+    asked = f"setup.py {DEFAULT_OPTION if held.default else APPLY_OPTION}"
     if held.root is not None:
         asked += f" {WORKTREE_OPTION} <the same directory>"
-    if held.default:
-        asked += f" {DEFAULT_OPTION}"
     whose = context.whose(path)
     # Where setup's blocks are there, a pin the user's own lines stop is a
     # warning of its own; it is not repeated among what a run would do.
@@ -1486,18 +1504,18 @@ def _block_findings(context: Any, path: Path, facts: Facts) -> tuple[list[Any], 
         if there is None and known is None:
             if name == BLOCK:
                 findings.append(doctor.info(
-                    f"setup has written no block into the file; render {APPLY_OPTION} writes one, and nothing "
+                    f"setup has written no block into the file; setup.py {APPLY_OPTION} writes one, and nothing "
                     "else does", subject,
                 ))
         elif there is None:
             findings.append(doctor.info(
-                f"setup's block {name}: the record lists it and it is no longer in the file; the next render "
+                f"setup's block {name}: the record lists it and it is no longer in the file; the next run "
                 "takes it out of the record", subject,
             ))
         elif known is None:
             findings.append(doctor.info(
                 f"setup's block {name}: its markers are in the file, and the record does not list it (written by "
-                f"another install, or the record was removed); render {APPLY_OPTION} takes it over where it "
+                f"another install, or the record was removed); setup.py {APPLY_OPTION} takes it over where it "
                 "holds exactly what setup writes, and otherwise keeps it and reports it", subject,
             ))
         elif wrote not in _either_ending(there):

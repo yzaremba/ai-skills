@@ -534,11 +534,15 @@ class CloneCase(HomesCase):
             "Windows can't read this clone; install Windows from its own clone or from one on a Windows drive.",
         )
 
-    def test_seen_from_windows_a_clone_off_a_local_drive_is_a_warning_too(self) -> None:
+    def test_seen_from_windows_a_clone_off_a_local_drive_is_a_stop_not_a_warning(self) -> None:
         windows = homes.Host(homes.WINDOWS, {}, ())
         standing = homes.CloneStanding(self.clone, self.clone, False, "not on a local drive")
         with mock.patch.object(homes, "clone_standing", return_value=standing):
-            self.assertEqual(homes.clone_warning(self.at(self.clone, windows)), homes.CLONE_WARNING)
+            found = self.at(self.clone, windows)
+            self.assertIsNone(homes.clone_warning(found))
+            with self.assertRaises(SetupError) as raised:
+                homes.require_linkable_clone(found)
+        self.assertEqual(raised.exception.lines[0], f"{self.clone}: {homes.WINDOWS_CLONE_LINE}")
 
     @unittest.skipUnless(POSIX, "the view from WSL: a POSIX path under a mount point")
     def test_a_clone_on_a_windows_drive_is_shared(self) -> None:
@@ -576,7 +580,9 @@ class CloneCase(HomesCase):
     def test_seen_as_windows_a_path_that_is_no_drive_path_is_not_shared(self) -> None:
         found = self.at(self.clone, self.host(homes.WINDOWS))
         self.assertIs(homes.clone_standing(found).shared, False)
-        self.assertEqual(homes.clone_warning(found), homes.CLONE_WARNING)
+        self.assertIsNone(homes.clone_warning(found))
+        with self.assertRaises(SetupError):
+            homes.require_linkable_clone(found)
 
     @unittest.skipUnless(WINDOWS, "needs Windows")
     def test_on_windows_a_clone_on_a_local_drive_is_shared(self) -> None:

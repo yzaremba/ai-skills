@@ -25,10 +25,14 @@ anchor's own directory:
     <name>:   a further directory a command names in ``Roots.extra``, for a
               provider home that an environment variable puts outside the
               user's home (P5.2)
+    git-info: the ``info`` directory of the project's common git directory
+              (``Roots.git_info``, found by ``gitrepo``), by its real path;
+              its one path is ``git-info:exclude``, the project's
+              exclude file (R6.3)
 
 A path belongs to the deepest anchor that holds it. What lies under
-``project:`` is recorded in the project's record, everything else in the
-user-level one. A link's target is stored the same way; the target of a
+``project:`` or ``git-info:`` is recorded in the project's record,
+everything else in the user-level one. A link's target is stored the same way; the target of a
 link the user made, which setup removed and must be able to put back, may
 point anywhere and is stored as ``raw:<the link's own text>``. That is the
 one place a machine's path form can appear, and it is the user's data, kept
@@ -120,7 +124,14 @@ A record is data from the disk, and setup acts on it
       not know is let through and left alone by every command.
     - The reach of a record. A project's record names only paths of the
       project: every entry, every listed backup and every pending change
-      has a ``project:`` path. A link's target is ``project:``, ``raw:``
+      has a ``project:`` path, with one exception: ``git-info:exclude``,
+      the repository's exclude file, where setup lists what it makes in
+      the project (R6.3). It lies in the git directory, which a linked
+      worktree has outside the project, and it is the one file there a
+      record may name: any other ``git-info:`` path is refused in every
+      record, and the user-level record names none. Its backup is the
+      project's, ``project:.agents/workflow-setup/backups/<stamp>/git-info/
+      exclude``, inside the project. A link's target is ``project:``, ``raw:``
       or a skill's directory in the clone, ``clone:<name>`` with one part
       that is not ``.``: the one thing of the clone a project links to
       (its rule is copied, not linked). No other anchor appears in it at
@@ -191,6 +202,9 @@ HOME = "home"
 PROJECT = "project"
 CLONE = "clone"
 RAW = "raw"
+# The project's exclude file, the one path of its own anchor (R6.3).
+GIT_INFO = "git-info"
+GIT_INFO_EXCLUDE = f"{GIT_INFO}:exclude"
 
 STATE_PARTS = (".agents", "workflow-setup")
 MANIFEST_NAME = "manifest.json"
@@ -205,7 +219,7 @@ PROJECT_BACKUPS_KEY = f"{PROJECT}:{STATE_RELATIVE}/{BACKUPS_NAME}"
 
 def scope_of(key: str) -> str:
     """Whose record lists the path ``key``: ``PROJECT`` or ``HOME``."""
-    return PROJECT if key.partition(":")[0] == PROJECT else HOME
+    return PROJECT if key.partition(":")[0] in (PROJECT, GIT_INFO) else HOME
 
 
 def backups_key(scope: str | None) -> str:
@@ -269,6 +283,12 @@ def _path_fault(key: Any, scope: str | None) -> str | None:
         return "a root itself, which setup never changes"
     if anchor == CLONE:
         return "a path in the clone, which setup never changes"
+    if anchor == GIT_INFO:
+        if paths.fold_key(key) != paths.fold_key(GIT_INFO_EXCLUDE):
+            return f"a path of the project's git directory other than its exclude file ({GIT_INFO_EXCLUDE})"
+        if scope == HOME:
+            return "the user-level record lists no path of a project's git directory"
+        return None
     if scope == PROJECT and anchor != PROJECT:
         return "a project's record lists only paths of the project"
     if scope == HOME and anchor == PROJECT:
@@ -290,6 +310,8 @@ def _target_fault(target: Any, scope: str | None = None) -> str | None:
     found = split_key(target)
     if found is None:
         return "its target is not a path a record may hold"
+    if found[0] == GIT_INFO:
+        return "its target is in a project's git directory, which no link of setup's leads to"
     if scope == PROJECT and found[0] == CLONE:
         # A skill's directory, the one thing of the clone a project links to.
         if found[1] == "." or "/" in found[1]:
@@ -544,15 +566,22 @@ class Roots:
     project: Path | None = None
     clone: Path | None = None
     extra: tuple[tuple[str, Path], ...] = ()
+    # The real path of the ``info`` directory of the project's common git
+    # directory (``gitrepo``), where the project's exclude file is: the
+    # anchor ``git-info``. A project's root, not one of the home's further
+    # roots: only a change of the project may be made there.
+    git_info: Path | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "home", _absolute(self.home))
-        for name in ("project", "clone"):
+        if self.git_info is not None and self.project is None:
+            raise SetupError("the git directory of a project was given without the project")
+        for name in ("project", "clone", "git_info"):
             if getattr(self, name) is not None:
                 object.__setattr__(self, name, _absolute(getattr(self, name)))
         extra = tuple((name, _absolute(path)) for name, path in dict(self.extra).items())
         for name, _ in extra:
-            if not _ANCHOR.fullmatch(name) or name in (HOME, PROJECT, CLONE, RAW):
+            if not _ANCHOR.fullmatch(name) or name in (HOME, PROJECT, CLONE, RAW, GIT_INFO):
                 raise SetupError(f"{name}: not a name for a further root")
         object.__setattr__(self, "extra", extra)
 
@@ -565,6 +594,8 @@ class Roots:
         found = [(HOME, self.home)]
         if self.project is not None:
             found.append((PROJECT, self.project))
+        if self.git_info is not None:
+            found.append((GIT_INFO, self.git_info))
         found.extend(self.extra)
         if self.clone is not None:
             found.append((CLONE, self.clone))
@@ -616,7 +647,7 @@ class Roots:
                 if scope == PROJECT and anchor == CLONE:
                     if relative != "." and "/" not in relative:
                         return key
-                elif scope is None or (scope == PROJECT) == (anchor == PROJECT):
+                elif anchor != GIT_INFO and (scope is None or (scope == PROJECT) == (anchor == PROJECT)):
                     return key
         return f"{RAW}:{text}"
 
@@ -692,7 +723,11 @@ class Roots:
             barred.append(self.state_dir)
             if _relative(self.home, self.project) is not None:
                 barred.append(self.home)
-            return [self.project], barred
+            # The exclude file of a linked worktree lies in the common git
+            # directory, outside the project: its ``info`` directory is the
+            # project's too, and the record names nothing there but the
+            # exclude file.
+            return [self.project, *([] if self.git_info is None else [self.git_info])], barred
         if self.project is not None:
             barred.append(self.project)
         return [self.home, *[path for _, path in self.extra]], barred
@@ -910,7 +945,7 @@ class Record:
         return [self.home] if self.project is None else [self.home, self.project]
 
     def manifest_for(self, key: str) -> Manifest:
-        if key.partition(":")[0] == PROJECT and self.project is not None:
+        if scope_of(key) == PROJECT and self.project is not None:
             return self.project
         return self.home
 

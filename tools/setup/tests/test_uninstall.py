@@ -138,6 +138,8 @@ class UninstallCase(EntryCase):
     def cli(self, *argv: str, host: homes.Host | None = None) -> tuple[int, str, str]:
         host = host or self.host
         with mock.patch.object(homes.Host, "current", classmethod(lambda cls: host)):
+            if argv[0] == "settings":   # the settings file of ``setup.py`` alone, with no install
+                return support.write_settings(*argv[1:])
             return support.run(*argv)
 
     def done(self, *argv: str, code: int = 0, **how) -> str:
@@ -152,6 +154,10 @@ class UninstallCase(EntryCase):
     @property
     def in_project(self) -> tuple[str, str]:
         return ("--project", str(self.project))
+
+    @property
+    def project_dir(self) -> tuple[str]:
+        return (str(self.project),)
 
     def uninstall(self, *argv: str, code: int = 0, project: bool = False, **how) -> dict:
         places = [*self.at_home, *(self.in_project if project else ())]
@@ -326,9 +332,9 @@ class UninstallCase(EntryCase):
         an earlier setup did (``earlier_setup``, when the fixture has the
         files). ``render`` goes to every run of it, ``codex`` with
         --apply-codex-settings."""
-        self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home)
+        self.done("settings", "--rewrite-settings", *self.at_home)
         if project:
-            self.done("init", "--yes", "--rewrite-settings", *self.at_home, *self.in_project)
+            self.done("settings", "--rewrite-settings", *self.at_home, *self.project_dir)
         if earlier:
             self.earlier_setup()
         self.done("render", "--apply-codex-settings", *codex, *render, *self.at_home)
@@ -420,7 +426,7 @@ class RoundTripCase(UninstallCase):
         self.take_back()
         self.assertAsAtTheStart(before)
         self.assertEqual(sorted(os.listdir(self.home)), [".claude", ".codex"])
-        self.assertEqual(os.listdir(self.project), [])
+        self.assertEqual(os.listdir(self.project), [".git"])
 
     def test_a_user_level_settings_file_that_was_there_before_init_comes_back_exactly(self) -> None:
         self.data(self.user_file, USER_SETTINGS)
@@ -435,7 +441,7 @@ class RoundTripCase(UninstallCase):
 
     def test_a_project_alone(self) -> None:
         before = self.start()
-        self.done("init", "--yes", "--rewrite-settings", "--high-stakes", *self.at_home, *self.in_project)
+        self.done("settings", "--rewrite-settings", "--high-stakes", *self.at_home, *self.project_dir)
         # The record and the backups of the project's files are in the
         # project, and the run left nothing of setup's in the home.
         self.assertTrue(self.project_record.is_file())
@@ -453,7 +459,9 @@ class RoundTripCase(UninstallCase):
         home = picture(self.home)
         # Each state holds the backups of its own files and no other's.
         self.assertTrue(any(name.startswith("backups/") and "/project/" in name for name in self.backups(self.project_state)))
-        self.assertTrue(all("/project/" in name for name in self.backups(self.project_state)))
+        # The repository's exclude file is the project's (R6.3).
+        self.assertTrue(all("/project/" in name or name.endswith("/git-info/exclude")
+                            for name in self.backups(self.project_state)))
         self.assertTrue(any(name.endswith("/home/.claude/CLAUDE.md") for name in self.backups(self.state)))
         self.assertTrue(all("/home/" in name for name in self.backups(self.state)))
         report = self.uninstall(project=True)
@@ -584,15 +592,16 @@ class OrderCase(UninstallCase):
     @unittest.skipUnless(POSIX and SYMLINKS, "the path form of a Windows drive in WSL")
     def test_a_project_on_the_other_sides_drive_is_the_projects_all_the_same(self) -> None:
         drive = self.root / "drive"
-        self.project.rmdir()
+        shutil.rmtree(self.project)
         self.project = drive / "work" / "project"
         self.project.mkdir(parents=True)
+        self.exclude_file = support.make_repository(self.project)
         self.project_state = self.project / ".agents" / "workflow-setup"
         self.project_record = self.project_state / "manifest.json"
         self.project_arg = ("--project", str(self.project))
         wsl = homes.Host(homes.WSL, {"PATH": ""}, (str(drive),))
         before = self.start(earlier=False)
-        self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home, host=wsl)
+        self.done("settings", "--rewrite-settings", *self.at_home, host=wsl)
         self.done("render", *self.at_home, *self.in_project, host=wsl)
         self.assertTrue(self.project_record.is_file())
         self.assertEqual(self.uninstall(project=True, host=wsl)["kept"], [])
@@ -723,12 +732,13 @@ class OrderCase(UninstallCase):
         environment = {**support.child_environment(), "PATH": str(empty)}
 
         def child(*argv: str) -> subprocess.CompletedProcess:
+            program = script.with_name("setup.py") if argv[0] == "setup.py" else script
             return subprocess.run(
-                [sys.executable, "-B", str(script), *argv, *self.at_home], env=environment, cwd=str(self.root),
+                [sys.executable, "-B", str(program), *argv[(argv[0] == "setup.py"):], *self.at_home], env=environment, cwd=str(self.root),
                 stdin=subprocess.DEVNULL, capture_output=True, timeout=120, check=False,
             )
 
-        for argv in (("init", "--user", "--yes", "--rewrite-settings"), ("render",)):
+        for argv in (("setup.py", "--yes", "--rewrite-settings"), ("render",)):
             done = child(*argv)
             self.assertEqual((done.returncode, done.stderr), (0, b""), done.stdout.decode("utf-8", "replace")[-800:])
         self.assertLinked(self.claude_skills / "alpha", self.clone / "alpha")
@@ -934,7 +944,7 @@ class KeptCase(UninstallCase):
         report = self.uninstall()
         self.assertEqual(report["kept"], [])
         self.assertEqual([item["key"] for item in report["left"]], ["home:.agents/workflow.toml"])
-        self.assertIn("it was edited since `init` wrote it", report["left"][0]["why"])
+        self.assertIn("it was edited since setup wrote it", report["left"][0]["why"])
         self.assertIn("is yours", report["left"][0]["why"])
         self.assertEqual(self.user_file.read_bytes(), edited)
         self.assertNoState()
@@ -949,7 +959,7 @@ class KeptCase(UninstallCase):
         self.assertNoState()
         self.assertTheRestIsUndone(".agents/workflow.toml")
         # It is the user's now: a later init and uninstall bring it back to this.
-        self.done("init", "--user", "--yes", "--rewrite-settings", "--docs-dir", "sprints", *self.at_home)
+        self.done("settings", "--rewrite-settings", "--docs-dir", "sprints", *self.at_home)
         self.assertNotEqual(self.user_file.read_bytes(), wrote)
         self.uninstall()
         self.assertEqual(self.user_file.read_bytes(), wrote)
@@ -977,9 +987,9 @@ class ProjectInstallCase(UninstallCase):
     def setUp(self) -> None:
         super().setUp()
         self.before = self.start(earlier=False)
-        self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home)
+        self.done("settings", "--rewrite-settings", *self.at_home)
         self.data(self.user_file, self.NO_HOME + USER_SETTINGS)
-        self.done("init", "--yes", "--rewrite-settings", *self.at_home, *self.in_project)
+        self.done("settings", "--rewrite-settings", *self.at_home, *self.project_dir)
         self.data(self.project / ".agents" / "workflow.toml", self.LIST + PROJECT_SETTINGS)
         self.skills = self.project / ".claude" / "skills"
         self.copy = self.project / ".claude" / "rules" / "sample" / "sample.md"
@@ -1287,7 +1297,7 @@ class PlacesCase(UninstallCase):
         fsio.make_link(str(theirs), link, True)
         before = self.pictures()
         wsl = homes.Host(homes.WSL, {"PATH": ""}, (str(drive),))
-        self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home, host=wsl)
+        self.done("settings", "--rewrite-settings", *self.at_home, host=wsl)
         self.earlier_setup()
         self.done("render", *self.at_home, host=wsl)
         entry = fileops.read_record(self.roots()).entries["home:.claude/skills/csv-tools"]
@@ -1307,7 +1317,7 @@ class PlacesCase(UninstallCase):
         self.codex_home()
         wsl = homes.Host(homes.WSL, {"PATH": ""}, (str(drive),))
         before, drive_before = self.pictures(), picture(drive)
-        self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home, host=wsl)
+        self.done("settings", "--rewrite-settings", *self.at_home, host=wsl)
         self.done("render", *self.at_home, host=wsl)
         self.assertEqual(picture(drive), drive_before)
         report = self.uninstall(host=wsl)
@@ -1351,7 +1361,7 @@ class UnlistedBackupsCase(UninstallCase):
         self.assertEqual(picture(self.home), held)
         # A dry run says the same, and no other command removes the file either.
         self.assertEqual(self.uninstall("--dry-run", code=3)["state"]["unlisted_backups"], [str(mine)])
-        self.done("init", "--user", "--yes", "--rewrite-settings", *self.at_home)
+        self.done("settings", "--rewrite-settings", *self.at_home)
         self.earlier_setup()
         self.done("render", *self.at_home)
         self.assertEqual(mine.read_bytes(), b"the only copy\n")
@@ -1500,11 +1510,12 @@ class RandomCase(UninstallCase):
 
     def commands(self, rng: random.Random) -> list[list[str]]:
         home, project = list(self.at_home), list(self.in_project)
+        project_dir = [str(self.project)]
         choices = [
-            ["init", "--user", "--yes", "--rewrite-settings", *home],
-            ["init", "--user", "--yes", "--rewrite-settings", "--docs-dir", "sprints", "--high-stakes", *home],
-            ["init", "--yes", "--rewrite-settings", *home, *project],
-            ["init", "--yes", "--rewrite-settings", "--max-parallel-coders", "5", *home, *project],
+            ["settings", "--rewrite-settings", *home],
+            ["settings", "--rewrite-settings", "--docs-dir", "sprints", "--high-stakes", *home],
+            ["settings", "--rewrite-settings", *home, *project_dir],
+            ["settings", "--rewrite-settings", "--max-parallel-coders", "5", *home, *project_dir],
             ["render", *home],
             ["roles-off"],
             ["roles-on"],

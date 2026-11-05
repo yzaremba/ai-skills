@@ -28,7 +28,7 @@ import provider_stub
 import support
 from fileops_support import POSIX, SYMLINKS
 from test_validate import TreeCase
-from wfsetup import fileops, fsio, homes, locations, render
+from wfsetup import blocks, fileops, fsio, gitrepo, homes, locations, paths, render
 from wfsetup.locations import Locations
 
 WINDOWS = os.name == "nt"
@@ -869,7 +869,6 @@ class UnsharedCloneWarningCase(RenderCase):
     def test_the_help_of_each_command_names_the_settings(self) -> None:
         for command, words in (
             ("render", ("The roles are an item of `install`", "Put `roles` back in `install`")),
-            ("init", ("--manager-default",)),
         ):
             code, out, _ = support.run(command, "--help")
             self.assertEqual(code, 0)
@@ -977,7 +976,7 @@ class ProjectCase(RenderCase):
         self.arg = ("--project", str(self.project))
 
     def ignored(self) -> list[str]:
-        text = (self.project / ".gitignore").read_text(encoding="utf-8")
+        text = self.exclude_file.read_text(encoding="utf-8")
         return [line for line in text.splitlines() if "skills/" in line]
 
     def wsl(self, *drives: Path) -> homes.Host:
@@ -1026,7 +1025,7 @@ class ProjectLinksCase(ProjectCase):
                                       ("codex", ".agents/skills/alpha")})
         for item in items.values():
             self.assertEqual((item["status"], item["says"]), (render.SKIPPED, "the home has it"))
-        self.assertFalse(self.project.joinpath(".gitignore").is_file() and self.ignored())
+        self.assertFalse(self.ignored())
 
     def test_a_skill_that_is_needed_comes_with_it_and_is_said(self) -> None:
         self.put("roles/dependencies.toml", 'schema_version = 1\n\n[needs]\nalpha = ["beta"]\n')
@@ -1043,14 +1042,14 @@ class ProjectLinksCase(ProjectCase):
         self.write(self.user_file, self.ONLY_BETA)
         self.write(self.project_file, self.LIST)
         self.assertEqual(self.render(*self.arg)[0], 0)
-        gitignore = (self.project / ".gitignore").read_bytes()
+        exclude = self.exclude_file.read_bytes()
         shutil.rmtree(self.project / ".agents" / "workflow-setup")
         for name in ("alpha", "solo"):
             (self.project_claude / name).unlink()
         (self.project_agents / "alpha").unlink()
         code, out, err = self.render(*self.arg)
         self.assertEqual((code, err), (0, ""), out)
-        self.assertEqual((self.project / ".gitignore").read_bytes(), gitignore)
+        self.assertEqual(self.exclude_file.read_bytes(), exclude)
 
     def test_a_project_without_the_group_gets_nothing(self) -> None:
         self.write(self.project_file, "[roles]\nmanager_default = false\n")
@@ -1335,7 +1334,7 @@ class ProjectRuleCopyCase(ProjectCase):
         self.write(self.project_file, self.RULE_LIST)
 
     def ignored_rules(self) -> list[str]:
-        text = (self.project / ".gitignore").read_text(encoding="utf-8")
+        text = self.exclude_file.read_text(encoding="utf-8")
         return [line for line in text.splitlines() if "rules/" in line]
 
     def test_the_copy_is_made_and_listed(self) -> None:
@@ -1402,12 +1401,12 @@ class ProjectRuleCopyCase(ProjectCase):
 
     def test_the_block_that_lists_a_copy_is_taken_over_without_a_record(self) -> None:
         self.assertEqual(self.render(*self.arg)[0], 0)
-        gitignore = (self.project / ".gitignore").read_bytes()
+        exclude = self.exclude_file.read_bytes()
         shutil.rmtree(self.project / ".agents" / "workflow-setup")
         shutil.rmtree(self.copy.parent)
         code, out, err = self.render(*self.arg)
         self.assertEqual((code, err), (0, ""), out)
-        self.assertEqual((self.project / ".gitignore").read_bytes(), gitignore)
+        self.assertEqual(self.exclude_file.read_bytes(), exclude)
 
     def test_the_copy_of_the_other_side_is_kept_while_claude_code_is_not_here(self) -> None:
         self.assertEqual(self.render(*self.arg)[0], 0)
@@ -1424,6 +1423,174 @@ class ProjectRuleCopyCase(ProjectCase):
         code, out, _ = support.run("render", "--help")
         self.assertEqual(code, 0)
         self.assertIn("are copied, not", out)
+
+
+class ExcludeFileCase(ProjectCase):
+    """The project's ignore block is in the repository's exclude file,
+    ``info/exclude`` in its common git directory (R6.3), never in
+    ``.gitignore``; a project that is no repository gets no list."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write(self.user_file, self.ONLY_BETA)
+        self.write(self.project_file, self.LIST)
+        self.links = [".agents/skills/alpha", ".claude/skills/alpha", ".claude/skills/solo"]
+
+    def listed(self, exclude: Path) -> list[str]:
+        return [line for line in blocks.content_of(exclude.read_bytes(), blocks.GITIGNORE) or [] if "skills/" in line]
+
+    def record(self, project: Path) -> dict:
+        return json.loads((project / ".agents" / "workflow-setup" / "manifest.json").read_text(encoding="utf-8"))
+
+    def worktree(self) -> tuple[Path, Path]:
+        """A linked worktree of a repository beside it, with the project's
+        settings; its exclude file is in the common directory, outside it."""
+        repository, worktree = self.root / "repository", self.root / "worktree"
+        exclude = support.make_repository(repository)
+        support.make_worktree(repository, worktree)
+        self.write(worktree / ".agents" / "workflow.toml", self.LIST)
+        return worktree, exclude
+
+    def uninstall(self, project: Path) -> tuple[int, str, str]:
+        with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
+            return support.run("uninstall", "--home", str(self.home), "--project", str(project))
+
+    def test_the_block_lands_in_the_exclude_file(self) -> None:
+        code, out, err = self.render(*self.arg)
+        self.assertEqual((code, err), (0, ""), out)
+        data = self.exclude_file.read_bytes()
+        self.assertTrue(data.startswith(support.GIT_EXCLUDE + b"\n# workflow-setup:start\n"), data)
+        self.assertEqual(self.listed(self.exclude_file), self.links)
+        self.assertEqual(blocks.content_of(data, blocks.GITIGNORE), sorted([*fileops.IGNORE_ALWAYS, *self.links]))
+        self.assertNothingAt(self.project / ".gitignore")
+        entry = self.record(self.project)["entries"]["git-info:exclude"]
+        self.assertEqual((entry["kind"], entry["created"]), ("text", False))
+        self.assertIn("edit file git-info:exclude (backup)", out)
+
+    def test_a_linked_worktree_lists_in_the_common_directory_and_the_way_back_takes_it_out(self) -> None:
+        worktree, exclude = self.worktree()
+        code, out, err = self.render("--project", str(worktree))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(self.listed(exclude), self.links)
+        self.assertNothingAt(worktree / ".gitignore")
+        self.assertIn("git-info:exclude", self.record(worktree)["entries"])
+        # Its backup is the project's, inside the project.
+        backups = [item for item in self.record(worktree)["backups"] if item["path"] == "git-info:exclude"]
+        self.assertEqual(len(backups), 1)
+        self.assertTrue(backups[0]["backup"].startswith("project:.agents/workflow-setup/backups/"), backups)
+        self.assertEqual(self.render("--project", str(worktree))[0], 0)
+        self.assertEqual(self.listed(exclude), self.links)
+        code, out, err = self.uninstall(worktree)
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(exclude.read_bytes(), support.GIT_EXCLUDE)
+
+    def test_a_gitfile_whose_back_pointer_names_another_checkout_gives_no_list(self) -> None:
+        worktree, exclude = self.worktree()
+        admin = self.root / "repository" / ".git" / "worktrees" / "wt"
+        (admin / "gitdir").write_bytes(str(self.root / "elsewhere" / ".git").encode("utf-8") + b"\n")
+        code, out, err = self.render("--project", str(worktree))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertIn("does not name this project's .git file back; setup lists nothing in an exclude file", out)
+        self.assertEqual(exclude.read_bytes(), support.GIT_EXCLUDE)
+        self.assertNothingAt(worktree / ".gitignore")
+        self.assertLinked(worktree / ".claude" / "skills" / "alpha", self.clone / "alpha")
+        self.assertNotIn("git-info:exclude", self.record(worktree)["entries"])
+
+    def test_a_gitfile_the_other_side_wrote_or_with_no_commondir_gives_no_list(self) -> None:
+        worktree, exclude = self.worktree()
+        admin = self.root / "repository" / ".git" / "worktrees" / "wt"
+        (worktree / ".git").write_bytes(b"gitdir: Q:/work/repository/.git/worktrees/wt\n")
+        found = gitrepo.find(worktree)
+        self.assertIsNone(found.info)
+        self.assertIn("which this side of the machine cannot read", found.note)
+        (worktree / ".git").write_bytes(b"gitdir: " + str(admin).encode("utf-8") + b"\n")
+        self.assertEqual(gitrepo.find(worktree).info, exclude.parent)
+        (admin / "commondir").unlink()   # a submodule's or a separate git directory's
+        self.assertIn("no commondir", gitrepo.find(worktree).note)
+
+    def test_no_repository_no_list_and_a_recorded_block_is_left_as_it_is(self) -> None:
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        listed = self.exclude_file.read_bytes()
+        shutil.move(self.project / ".git", self.root / "moved-git")
+        code, out, err = self.render(*self.arg)
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(sum("not a git repository's top (no .git)" in line for line in out.splitlines()), 1, out)
+        self.assertIn("the block the record lists in git-info:exclude is left as it is", out)
+        self.assertIn("git-info:exclude", self.record(self.project)["entries"])
+        self.assertEqual((self.root / "moved-git" / "info" / "exclude").read_bytes(), listed)
+        self.assertNothingAt(self.project / ".gitignore")
+        # A project that never was one: no list, and no .gitignore either.
+        fresh = self.root / "fresh"
+        self.write(fresh / ".agents" / "workflow.toml", self.LIST)
+        code, out, err = self.render("--project", str(fresh))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertIn("not a git repository's top (no .git)", out)
+        self.assertNotIn("left as it is", out)
+        self.assertEqual(sorted(os.listdir(fresh)), [".agents", ".claude"])
+
+    OLD_BLOCK = b"# workflow-setup:start\n.agents/workflow.local.toml\n.claude/skills/alpha\n# workflow-setup:end\n"
+
+    def old_block_recorded(self) -> bytes:
+        """A project as an earlier setup left it: its ignore block in
+        ``.gitignore`` and the record entry for it."""
+        gitignore = b"build/\n" + self.OLD_BLOCK + b"dist/\n"
+        (self.project / ".gitignore").write_bytes(gitignore)
+        manifest = self.project / ".agents" / "workflow-setup" / "manifest.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["entries"]["project:.gitignore"] = {
+            "kind": "text", "sha256": fsio.sha256(gitignore), "created": False, "original": None,
+            "syntax": "gitignore", "removed_lines": [],
+            "blocks": {"": {"sha256": fsio.sha256(self.OLD_BLOCK), "joint": {}}},
+        }
+        manifest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        return gitignore
+
+    def test_a_recorded_old_block_in_gitignore_is_named_and_forgotten(self) -> None:
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        gitignore = self.old_block_recorded()
+        self.assertIn("project:.gitignore", self.record(self.project)["entries"])
+        code, out, err = self.render(*self.arg)
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertIn(f"{self.project / '.gitignore'}: lines 2-5 are setup's old ignore block", out)
+        self.assertIn("remove those lines", out)
+        self.assertEqual((self.project / ".gitignore").read_bytes(), gitignore)
+        self.assertNotIn("project:.gitignore", self.record(self.project)["entries"])
+        self.assertEqual(self.listed(self.exclude_file), self.links)
+        # Named again while it is there; nothing left in the record to change.
+        code, out, err = self.render(*self.arg)
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertIn("lines 2-5 are setup's old ignore block", out)
+        self.assertEqual((self.project / ".gitignore").read_bytes(), gitignore)
+
+    def test_a_checkout_without_a_record_gets_the_line_too(self) -> None:
+        gitignore = b"# workflow-setup:start\n.claude/skills/alpha\n# workflow-setup:end\n"
+        (self.project / ".gitignore").write_bytes(gitignore)
+        code, out, err = self.render(*self.arg)
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertIn("lines 1-3 are setup's old ignore block", out)
+        self.assertEqual((self.project / ".gitignore").read_bytes(), gitignore)
+        self.assertNotIn("project:.gitignore", self.record(self.project)["entries"])
+        # A .gitignore without setup's markers is not named.
+        (self.project / ".gitignore").write_bytes(b"build/\n")
+        code, out, err = self.render(*self.arg)
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertNotIn("old ignore block", out)
+
+    def test_the_backup_of_an_edited_exclude_file_is_inside_the_project(self) -> None:
+        self.assertEqual(self.render(*self.arg)[0], 0)
+        with self.exclude_file.open("ab") as stream:
+            stream.write(b"build/\n")
+        edited = self.exclude_file.read_bytes()
+        self.write(self.project_file, 'install = ["alpha"]\n')
+        code, out, err = self.render(*self.arg)
+        self.assertEqual((code, err), (0, ""), out)
+        backups = [item for item in self.record(self.project)["backups"] if item["path"] == "git-info:exclude"]
+        self.assertEqual(len(backups), 2)
+        last = self.project.joinpath(*backups[-1]["backup"].partition(":")[2].split("/"))
+        self.assertEqual(last.read_bytes(), edited)
+        self.assertTrue(paths.inside(last, self.project / ".agents" / "workflow-setup" / "backups"))
+        self.assertEqual(self.listed(self.exclude_file), [".agents/skills/alpha", ".claude/skills/alpha"])
+        self.assertTrue(self.exclude_file.read_bytes().endswith(b"build/\n"))
 
 
 if __name__ == "__main__":

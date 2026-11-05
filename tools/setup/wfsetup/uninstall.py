@@ -40,7 +40,7 @@ What is left (``report["left"]``; the user's from now on, no entry stays)
       ``render`` takes the file up again and writes setup's keys before
       what it holds. A profile setup's part is no longer in at all is
       left as it is;
-    - the settings file ``init`` wrote, once it holds anything its owner
+    - the settings file setup wrote, once it holds anything its owner
       put there, and with ``keep_settings`` in every case; see below.
 
 The state
@@ -64,9 +64,9 @@ The state
     code is ``EXIT_KEPT``: the uninstall is not finished while the
     directory is there.
 
-The settings file ``init`` wrote
+The settings file setup wrote
     Removed, or replaced by the file that was there before the first
-    ``init``, only while it holds exactly what ``init`` wrote and ``init``
+    setup, only while it holds exactly what setup wrote and setup
     never wrote it over a version its owner had edited
     (``fileops.REWRITTEN``). In every other case it holds values its owner
     set: it is left as it is (``report["left"]``), with ``keep_settings``
@@ -182,19 +182,19 @@ def _settings_file(found: homes.Homes, project: bool) -> Path | None:
 
 
 def _settings_yours(path: Path, entry: dict[str, Any], keep_settings: bool, follow: bool) -> str | None:
-    """Why the settings file ``init`` wrote is left where it is, as the
+    """Why the settings file setup wrote is left where it is, as the
     user's, or None where it is undone like any file setup wrote.
 
     It is undone (removed, or replaced by the file that was there before
-    the first ``init``) only while it holds exactly what ``init`` wrote and
-    ``init`` never wrote it over a version its owner had edited. In every
+    the first run of setup) only while it holds exactly what setup wrote and
+    setup never wrote it over a version its owner had edited. In every
     other case it holds something its owner put there, and no hash says
     which part: it stays, whole."""
     if keep_settings:
         return f"the settings file stays as it is, and is yours, as {KEEP_SETTINGS_OPTION} says"
     if entry.get(fileops.REWRITTEN) is True:
         return (
-            "`init` rewrote it from a version you had edited, so it holds values you set; the settings file stays "
+            "setup rewrote it from a version you had edited, so it holds values you set; the settings file stays "
             "as it is, and is yours"
         )
     try:
@@ -207,7 +207,7 @@ def _settings_yours(path: Path, entry: dict[str, Any], keep_settings: bool, foll
     original = entry.get("original")
     if digest == entry.get("sha256") or (isinstance(original, dict) and digest == original.get("sha256")):
         return None
-    return "it was edited since `init` wrote it, so it holds what you put there; the settings file stays as it is, and is yours"
+    return "it was edited since setup wrote it, so it holds what you put there; the settings file stays as it is, and is yours"
 
 
 def _backup_of(roots: Roots, entry: dict[str, Any] | None) -> str | None:
@@ -480,7 +480,7 @@ def execute(found: homes.Homes, *, project: bool = False, dry_run: bool = False,
         if dry_run and settings_key is not None:
             # Before it goes, the one file of the plan the user may have
             # meant to keep is said to be keepable.
-            hint = f"  (the settings file `init` wrote; {KEEP_SETTINGS_OPTION} leaves it as it is, as yours)"
+            hint = f"  (the settings file setup wrote; {KEEP_SETTINGS_OPTION} leaves it as it is, as yours)"
             removed, restored = (
                 [line + hint if _names(line, settings_key) else line for line in lines]
                 for lines in (removed, restored)

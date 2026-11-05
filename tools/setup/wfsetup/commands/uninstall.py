@@ -28,7 +28,7 @@ What is undone
         its backup, a link with its own text and form (one into the clone is
         put back below where the clone is now), a directory;
       - a directory setup created is removed once it is empty;
-      - the settings file `init` wrote (see "The settings file" below).
+      - the settings file setup wrote (see "The settings file" below).
 
     A project's skill links (relative ones included, as one side or the
     other made them) and its rule copy are removed with the rest of its
@@ -40,20 +40,20 @@ What is undone
 
     Nothing else is removed: not the collaboration skill's links, not a
     settings file you wrote yourself, not a project's own settings file
-    that `init` found and did not change.
+    that setup found and did not change.
 
 The settings file
     No value you set in a settings file is removed by `uninstall`. The file
-    `init` wrote (~/.agents/workflow.toml, or with --project
+    setup wrote (~/.agents/workflow.toml, or with --project
     DIR/.agents/workflow.toml) is
 
-      - removed, when `init` created it and it holds exactly what `init`
+      - removed, when setup created it and it holds exactly what setup
         wrote from its own answers, with nothing else in it;
       - replaced, byte for byte, by the file that was there before the
-        first `init`, when nothing but `init` has written it since;
+        first run of setup, when nothing but setup has written it since;
       - left as it is, and yours from then on, in every other case: you
-        edited it since `init` wrote it, or `init` rewrote a version you
-        had edited (`init --rewrite-settings`, or the same confirmed at
+        edited it since setup wrote it, or setup rewrote a version you
+        had edited (`--rewrite-settings`, or the same confirmed at
         the prompt), so that it holds values you set. The backups of its
         earlier versions go with the record, as all backups do: copy one
         first if you want its comments back.
@@ -94,7 +94,7 @@ What is kept
 
     Left to you, and no longer setup's to answer for: a directory setup
     created that holds something of yours, a key of a settings file whose
-    value you changed since setup set it, and the settings file of `init`
+    value you changed since setup set it, and the settings file of setup
     once it holds values you set (above). None of them keeps the uninstall
     from finishing.
 
@@ -198,9 +198,9 @@ def configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         uninstall.KEEP_SETTINGS_OPTION,
         action="store_true",
-        help="leave the settings file `init` wrote as it is, in every case; it is yours from then on. Without "
-        "it the file is removed, or replaced by the one that was there before `init`, only while it holds "
-        "exactly what `init` wrote and `init` never rewrote a version you had edited; else it is left as well",
+        help="leave the settings file setup wrote as it is, in every case; it is yours from then on. Without "
+        "it the file is removed, or replaced by the one that was there before setup, only while it holds "
+        "exactly what setup wrote and setup never rewrote a version you had edited; else it is left as well",
     )
     parser.add_argument(
         uninstall.DISCARD_OPTION,
