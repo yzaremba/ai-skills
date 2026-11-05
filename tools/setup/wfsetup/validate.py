@@ -297,9 +297,10 @@ RESERVED_IDS = frozenset(CODEX_AGENTS_KEYS + CODEX_AGENTS_KEYS_UNVERIFIED)
 BUILT_IN_NAME = "BUILT_IN"
 LAUNCHER = "settings.py"
 # A script of a skill that carries a copy of shipped defaults, and the
-# groups of tools/setup/defaults.toml its copy must equal.
+# groups of tools/setup/defaults.toml its copy must equal; a dotted entry
+# names one key of a group.
 BUILT_IN_GROUPS: dict[str, tuple[str, ...]] = {
-    LAUNCHER: ("process", "memory", "roles"),
+    LAUNCHER: ("process", "memory", "roles.max_parallel_coders"),
     "check.py": ("process",),
 }
 
@@ -1724,7 +1725,10 @@ def _check_built_in(run: _Run, file: Path, groups: tuple[str, ...]) -> None:
                                            "running the script")
         return
     shipped = dict(
-        leaf for group in groups if group in run.defaults for leaf in schema.flatten(run.defaults[group], (group,))
+        leaf
+        for group in {name.split(".")[0] for name in groups} if group in run.defaults
+        for leaf in schema.flatten(run.defaults[group], (group,))
+        if group in groups or leaf[0] in groups
     )
     source = run.rel(run.where.defaults_file)
     differences: list[str] = []

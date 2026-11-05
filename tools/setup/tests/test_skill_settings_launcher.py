@@ -31,16 +31,18 @@ LAUNCHER = LAUNCHERS[0]
 GROUPS = ("process", "memory")
 ROLES = "roles"
 KNOWN = b"not a setting a skill reads; known groups: process, memory, roles\n"
+# The keys a skill reads, in the order they are printed.
+KEYS = {
+    "process": ("docs_dir", "questions", "recommend", "density"),
+    "memory": ("dir",),
+    "roles": ("max_parallel_coders",),
+}
 
 
 def shipped_defaults(groups: tuple[str, ...] = GROUPS) -> dict[str, object]:
-    """These groups of defaults.toml, by dotted key: the values, not the
-    tables of a role's own profile."""
+    """The skill's keys of these groups of defaults.toml, by dotted key."""
     data = tomllib.loads(support.DEFAULTS.read_text(encoding="utf-8"))
-    return {
-        f"{group}.{key}": value for group in groups for key, value in data[group].items()
-        if not isinstance(value, dict)
-    }
+    return {f"{group}.{key}": data[group][key] for group in groups for key in KEYS[group]}
 
 
 class LauncherCase(support.ScratchCase):
@@ -55,9 +57,6 @@ class LauncherCase(support.ScratchCase):
     def launcher(self, *argv: str, script: Path = LAUNCHER) -> subprocess.CompletedProcess:
         return self.child(script, *argv, "--home", str(self.home))
 
-    def tool(self, *argv: str) -> subprocess.CompletedProcess:
-        return self.child(support.SCRIPT, "show", *argv, "--home", str(self.home))
-
     def settings(self, done: subprocess.CompletedProcess) -> dict:
         self.assertEqual((done.returncode, done.stderr), (0, b""))
         return json.loads(done.stdout.decode("utf-8"))["settings"]
@@ -67,6 +66,20 @@ class LauncherCase(support.ScratchCase):
         target = self.root / "lone" / "skills" / skill
         shutil.copytree(CLONE / skill, target, ignore=shutil.ignore_patterns("__pycache__"))
         return target / "scripts" / "settings.py"
+
+    def values(self, *argv: str, script: Path = LAUNCHER) -> dict:
+        """The key -> (value, layer, file) of a run that must succeed."""
+        found = self.settings(self.launcher(*argv, script=script))
+        return {key: (entry["value"], entry["layer"], entry["file"]) for key, entry in found.items()}
+
+    def stopped(self, done: subprocess.CompletedProcess, *parts: str) -> None:
+        self.assertEqual((done.returncode, done.stdout), (2, b""), done.stderr)
+        text = done.stderr.decode("utf-8")
+        self.assertTrue(text.startswith("error: "), text)
+        self.assertEqual(len(text.splitlines()), 1, text)
+        for part in parts:
+            self.assertIn(part, text)
+        self.assertNotIn("Traceback", text)
 
 
 class TheCopies(unittest.TestCase):
@@ -91,75 +104,94 @@ class TheCopies(unittest.TestCase):
     def test_it_imports_only_the_standard_library(self) -> None:
         imports = re.findall(r"^(?:from|import) +([\w.]+)", LAUNCHER.read_text(encoding="utf-8"), re.MULTILINE)
         self.assertEqual(
-            sorted(set(imports)), ["__future__", "argparse", "json", "pathlib", "subprocess", "sys"]
+            sorted(set(imports)), ["__future__", "argparse", "json", "os", "pathlib", "stat", "sys", "tomllib"]
         )
 
 
-class InTheClone(LauncherCase):
-    def test_a_group_gives_what_show_gives(self) -> None:
-        self.write(self.user_file, '[process]\nquestions = "all-together"\n')
-        for script in LAUNCHERS:
-            for group in GROUPS:
-                with self.subTest(script=script.parent.parent.name, group=group):
-                    ours = self.launcher(group, "--json", script=script)
-                    theirs = self.tool(group, "--json")
-                    self.assertEqual(self.settings(ours), self.settings(theirs))
-                    self.assertEqual(ours.stdout, theirs.stdout)
-        self.assertEqual(self.settings(self.launcher("process", "--json"))["process.questions"]["layer"], "user")
+class Layers(LauncherCase):
+    """The settings files are read by the script itself, from scratch layers."""
 
-    def test_text_output_is_what_show_prints(self) -> None:
-        ours, theirs = self.launcher("process"), self.tool("process")
-        self.assertEqual((ours.returncode, ours.stderr), (0, b""))
-        self.assertEqual(ours.stdout, theirs.stdout)
-        self.assertIn(b'process.docs_dir = "docs"  (shipped)\n', ours.stdout)
+    def test_without_files_every_key_is_built_in(self) -> None:
+        found = self.values("--json")
+        self.assertEqual(list(found), list(shipped_defaults()))
+        for key, (value, layer, file) in found.items():
+            self.assertEqual((value, layer, file), (shipped_defaults()[key], "built-in", None))
+
+    def test_text_output_has_the_layer(self) -> None:
+        self.write(self.user_file, '[process]\nquestions = "one-at-a-time"\n')
+        done = self.launcher("process")
+        self.assertEqual((done.returncode, done.stderr), (0, b""))
+        self.assertEqual(done.stdout, (
+            b'process.docs_dir = "docs"  (built-in)\n'
+            b'process.questions = "one-at-a-time"  (user)\n'
+            b"process.recommend = true  (built-in)\n"
+            b'process.density = "brief"  (built-in)\n'
+        ))
 
     def test_without_a_key_both_groups_and_no_other(self) -> None:
         found = self.settings(self.launcher("--json"))
-        expected = {**self.settings(self.tool("process", "--json")), **self.settings(self.tool("memory", "--json"))}
-        self.assertEqual(found, expected)
         self.assertEqual(list(found), list(shipped_defaults()))
-        text = self.launcher()
-        self.assertEqual(text.stdout, self.tool("process").stdout + self.tool("memory").stdout)
+        self.assertEqual(self.launcher().stdout.count(b"\n"), len(shipped_defaults()))
 
     def test_one_dotted_key(self) -> None:
-        found = self.settings(self.launcher("memory.dir", "--json"))
-        self.assertEqual(found, {
-            "memory.dir": {"value": "docs/memory", "layer": "shipped", "file": str(support.DEFAULTS)},
+        self.assertEqual(self.settings(self.launcher("memory.dir", "--json")), {
+            "memory.dir": {"value": "docs/memory", "layer": "built-in", "file": None},
         })
 
-    def test_a_project_override_is_honoured_with_project(self) -> None:
+    def test_the_user_file_wins_over_built_in(self) -> None:
+        self.write(self.user_file, '[process]\nquestions = "one-at-a-time"\ndensity = "full"\n')
+        for script in LAUNCHERS:
+            with self.subTest(script=script.parent.parent.name):
+                found = self.values("--json", script=script)
+                self.assertEqual(found["process.questions"], ("one-at-a-time", "user", str(self.user_file)))
+                self.assertEqual(found["process.density"], ("full", "user", str(self.user_file)))
+                self.assertEqual(found["process.docs_dir"], ("docs", "built-in", None))
+
+    def test_the_project_files_are_read_only_with_project(self) -> None:
         self.write(self.project_file, '[process]\ndocs_dir = "planning/docs"\n\n[memory]\ndir = "lessons"\n')
-        without = self.settings(self.launcher("--json"))
-        self.assertEqual(without["process.docs_dir"]["value"], "docs")
-        found = self.settings(self.launcher("--json", "--project", str(self.project)))
-        self.assertEqual(found["process.docs_dir"], {
-            "value": "planning/docs", "layer": "project", "file": str(self.project_file),
-        })
-        self.assertEqual(found["memory.dir"]["value"], "lessons")
+        self.assertEqual(self.values("--json")["process.docs_dir"], ("docs", "built-in", None))
+        found = self.values("--json", "--project", str(self.project))
+        self.assertEqual(found["process.docs_dir"], ("planning/docs", "project", str(self.project_file)))
+        self.assertEqual(found["memory.dir"][0], "lessons")
+        self.assertEqual(found["process.questions"][1], "built-in")
         # The memory skill reads its one setting as its text says.
         memory = self.launcher("memory", "--project", str(self.project), script=LAUNCHERS[2])
         self.assertEqual((memory.returncode, memory.stdout), (0, b'memory.dir = "lessons"  (project)\n'))
-        self.assertEqual(found["process.questions"]["layer"], "shipped")
+
+    def test_later_layers_win_key_by_key(self) -> None:
+        self.write(self.user_file, '[process]\ndocs_dir = "u"\nquestions = "one-at-a-time"\ndensity = "full"\n')
+        self.write(self.project_file, '[process]\ndocs_dir = "p"\nquestions = "all-together"\n')
+        self.write(self.local_file, '[process]\ndocs_dir = "l"\n')
+        found = self.values("process", "--json", "--project", str(self.project))
+        self.assertEqual(found["process.docs_dir"], ("l", "local", str(self.local_file)))
+        self.assertEqual(found["process.questions"], ("all-together", "project", str(self.project_file)))
+        self.assertEqual(found["process.density"], ("full", "user", str(self.user_file)))
+        self.assertEqual(found["process.recommend"], (True, "built-in", None))
+
+    def test_recommend_takes_true_false_or_accept(self) -> None:
+        for text, value in (("true", True), ("false", False), ('"accept"', "accept")):
+            with self.subTest(text=text):
+                self.write(self.user_file, f"[process]\nrecommend = {text}\n")
+                self.assertEqual(self.values("process.recommend", "--json")["process.recommend"][0], value)
+
+    def test_the_roles_group_prints_the_one_key(self) -> None:
+        self.write(self.user_file, "[roles]\nmax_parallel_coders = 2\n")
+        for script in LAUNCHERS:
+            with self.subTest(script=script.parent.parent.name):
+                one = self.launcher("roles.max_parallel_coders", script=script)
+                self.assertEqual((one.returncode, one.stderr), (0, b""))
+                self.assertEqual(one.stdout, b"roles.max_parallel_coders = 2  (user)\n")
+                group = self.launcher(ROLES, script=script)
+                self.assertEqual(group.stdout, one.stdout)
+                self.assertEqual(list(self.settings(self.launcher(ROLES, "--json", script=script))),
+                                 list(shipped_defaults((ROLES,))))
+
+    def test_a_project_sets_a_roles_key(self) -> None:
+        self.write(self.project_file, "[roles]\nmax_parallel_coders = 5\n")
+        found = self.settings(self.launcher("roles.max_parallel_coders", "--json", "--project", str(self.project)))
         self.assertEqual(found, {
-            **self.settings(self.tool("process", "--json", "--project", str(self.project))),
-            **self.settings(self.tool("memory", "--json", "--project", str(self.project))),
+            "roles.max_parallel_coders": {"value": 5, "layer": "project", "file": str(self.project_file)},
         })
-
-    def test_a_fault_in_another_group_does_not_get_in_the_way(self) -> None:
-        self.write(self.user_file, "[roles]\nmax_parallel_coders = 0\n")
-        self.assertEqual(self.settings(self.launcher("--json"))["process.docs_dir"]["value"], "docs")
-
-    def test_the_tools_error_and_exit_code_come_through(self) -> None:
-        self.write(self.user_file, "[process]\ndocs_dir = 1\n")
-        done = self.launcher("process", "--json")
-        self.assertEqual((done.returncode, done.stdout), (2, b""))
-        self.assertEqual(
-            done.stderr.decode("utf-8"),
-            f"error: {self.user_file}: process.docs_dir: expected a string, got an integer\n",
-        )
-        unknown = self.launcher("process.nope")
-        self.assertEqual((unknown.returncode, unknown.stdout), (2, b""))
-        self.assertIn(b"process.nope: no such setting", unknown.stderr)
 
     def test_a_key_outside_the_groups_is_refused(self) -> None:
         for key in ("providers", "providers.codex.tiers.fast", "schema_version", "", "x", "role", "roles2.x"):
@@ -169,32 +201,12 @@ class InTheClone(LauncherCase):
                 self.assertIn(KNOWN, done.stderr)
                 self.assertNotIn(b"Traceback", done.stderr)
 
-    def test_the_roles_group_is_served_when_asked_for(self) -> None:
-        self.write(self.user_file, "[roles]\nmax_parallel_coders = 2\n")
-        for script in LAUNCHERS:
-            with self.subTest(script=script.parent.parent.name):
-                one = self.launcher("roles.max_parallel_coders", script=script)
-                self.assertEqual((one.returncode, one.stderr), (0, b""))
-                self.assertEqual(one.stdout, b"roles.max_parallel_coders = 2  (user)\n")
-                self.assertEqual(one.stdout, self.tool("roles.max_parallel_coders").stdout)
-                ours = self.settings(self.launcher(ROLES, "--json", script=script))
-                self.assertEqual(ours, self.settings(self.tool(ROLES, "--json")))
-                self.assertEqual(list(ours), list(shipped_defaults((ROLES,))))
-                self.assertEqual(self.launcher(ROLES, script=script).stdout, self.tool(ROLES).stdout)
-
-    def test_a_project_sets_a_roles_key(self) -> None:
-        self.write(self.project_file, "[roles]\nmax_parallel_coders = 5\n")
-        found = self.settings(self.launcher("roles.max_parallel_coders", "--json", "--project", str(self.project)))
-        self.assertEqual(found, {
-            "roles.max_parallel_coders": {"value": 5, "layer": "project", "file": str(self.project_file)},
-        })
-
-    def test_a_fault_in_the_roles_group_is_reported_when_it_is_read(self) -> None:
-        self.write(self.user_file, "[roles]\nmax_parallel_coders = 0\n")
-        done = self.launcher("roles.max_parallel_coders")
-        self.assertEqual((done.returncode, done.stdout), (2, b""))
-        self.assertIn(b"roles.max_parallel_coders", done.stderr)
-        self.assertNotIn(b"Traceback", done.stderr)
+    def test_a_key_it_does_not_have_is_refused(self) -> None:
+        for key in ("process.nope", "memory.dir.x", "roles.enabled", "roles.manager_default", "roles.high_stakes",
+                    "roles.coder.tier", "roles.nope"):
+            with self.subTest(key=key):
+                done = self.launcher(key)
+                self.stopped(done, f"{key}: no such setting; known: ")
 
     def test_the_launcher_writes_nothing(self) -> None:
         self.write(self.user_file, "[roles]\nmax_parallel_coders = 2\n")
@@ -226,6 +238,76 @@ class InTheClone(LauncherCase):
         self.assertNotIn(b"\r", refused.stderr)
 
 
+class BadFiles(LauncherCase):
+    """A bad value of a key that is read, or a file that cannot be read,
+    stops with exit 2 naming the file and the key; anything else is not judged."""
+
+    def test_a_bad_value_names_the_file_and_the_key(self) -> None:
+        cases = (
+            ("process.docs_dir", "[process]\ndocs_dir = 1\n", "expected a string, got an integer"),
+            ("process.docs_dir", '[process]\ndocs_dir = ""\n', "must not be empty"),
+            ("process.docs_dir", '[process]\ndocs_dir = "  "\n', "must not be blank"),
+            ("memory.dir", '[memory]\ndir = " "\n', "must not be blank"),
+            ("process.questions", '[process]\nquestions = "both"\n', '"both" is not allowed; allowed values: one-at-a-time, all-together'),
+            ("process.density", '[process]\ndensity = "huge"\n', "is not allowed"),
+            ("process.recommend", '[process]\nrecommend = "yes"\n', '"yes" is not allowed; allowed values: true, false, accept'),
+            ("process.recommend", "[process]\nrecommend = 1\n", "1 is not allowed"),
+            ("roles.max_parallel_coders", "[roles]\nmax_parallel_coders = 0\n", "0 is too small; the least allowed is 1"),
+            ("roles.max_parallel_coders", '[roles]\nmax_parallel_coders = "2"\n', "expected an integer, got a string"),
+            ("roles.max_parallel_coders", "[roles]\nmax_parallel_coders = true\n", "expected an integer, got a boolean"),
+        )
+        for key, text, message in cases:
+            for file in (self.user_file, self.project_file, self.local_file):
+                with self.subTest(key=key, file=file.name, text=text):
+                    self.write(file, text)
+                    done = self.launcher(key, "--project", str(self.project))
+                    self.stopped(done, f"{file}: {key}: ", message)
+                    file.unlink()
+
+    def test_a_later_layer_does_not_hide_a_bad_value(self) -> None:
+        self.write(self.user_file, "[process]\ndocs_dir = 1\n")
+        self.write(self.project_file, '[process]\ndocs_dir = "ok"\n')
+        self.stopped(self.launcher("process.docs_dir", "--project", str(self.project)),
+                     str(self.user_file), "process.docs_dir")
+
+    def test_a_group_that_is_not_a_table_is_a_fault_when_it_is_read(self) -> None:
+        self.write(self.user_file, "process = 3\n")
+        self.stopped(self.launcher("process"), f"{self.user_file}: process: expected a table, got an integer")
+
+    def test_a_fault_in_a_group_not_asked_for_does_not_get_in_the_way(self) -> None:
+        self.write(self.user_file, "[roles]\nmax_parallel_coders = 0\n")
+        self.assertEqual(self.values("--json")["process.docs_dir"][0], "docs")
+        self.stopped(self.launcher("roles.max_parallel_coders"), "roles.max_parallel_coders")
+
+    def test_a_file_that_is_not_toml_or_not_utf8(self) -> None:
+        self.write(self.user_file, "[process\ndocs_dir = \n")
+        self.stopped(self.launcher("process"), f"{self.user_file}: not valid TOML")
+        self.user_file.write_bytes(b'[process]\ndocs_dir = "\xff\xfe"\n')
+        self.stopped(self.launcher("process"), f"{self.user_file}: not UTF-8")
+        self.write(self.local_file, "= 1\n")
+        self.user_file.unlink()
+        self.stopped(self.launcher("process", "--project", str(self.project)), f"{self.local_file}: not valid TOML")
+
+    def test_a_dot_agents_that_is_not_a_directory(self) -> None:
+        (self.home / ".agents").write_text("x\n", encoding="utf-8")
+        self.stopped(self.launcher("process"), f"{self.home / '.agents'}: not a directory")
+        (self.project / ".agents").write_text("x\n", encoding="utf-8")
+        (self.home / ".agents").unlink()
+        self.stopped(self.launcher("process", "--project", str(self.project)),
+                     f"{self.project / '.agents'}: not a directory")
+
+    def test_other_keys_are_not_judged(self) -> None:
+        self.write(self.user_file, (
+            "schema_version = 99\nunknown = 1\ninstall = 5\n"
+            "[roles]\nenabled = \"maybe\"\nmanager_default = 3\nhigh_stakes = []\nmax_parallel_coders = 4\n"
+            '[process]\nold = {a = 1}\n[providers.x]\ny = 1\n[setup]\nenabled = 7\n'
+        ))
+        self.write(self.project_file, 'install = ["a"]\n[project]\nenabled = 1\n[memory]\nother = 1\n')
+        found = self.values("--json", "--project", str(self.project))
+        self.assertEqual(found["process.docs_dir"], ("docs", "built-in", None))
+        self.assertEqual(self.values("roles.max_parallel_coders", "--json")["roles.max_parallel_coders"][0], 4)
+
+
 class PlacesAndOptions(LauncherCase):
     """``--project`` and ``--home``: an empty value is never "not given"."""
 
@@ -236,21 +318,20 @@ class PlacesAndOptions(LauncherCase):
         self.assertIn(message, done.stderr)
         self.assertNotIn(b"Traceback", done.stderr)
 
-    def test_in_the_clone_an_empty_value_reaches_the_tool_and_is_refused(self) -> None:
+    def test_in_the_clone_an_empty_value_is_refused(self) -> None:
         self.write(self.project_file, '[process]\ndocs_dir = "planning"\n')
         for script in LAUNCHERS:
             for empty in ("", "  "):
                 with self.subTest(script=script.parent.parent.name, empty=empty):
                     done = self.launcher("process.docs_dir", "--project", empty, script=script)
                     self.refused(done, b"error: --project" + self.EMPTY)
-                    self.assertEqual(done.stderr, self.tool("process.docs_dir", "--project", empty).stderr)
                     # --home is not added here: an empty one must not mean the real home.
                     done = self.child(script, "process.docs_dir", "--home", empty)
                     self.refused(done, b"error: --home" + self.EMPTY)
                     done = self.child(script, "--json", "--home", empty, "--project", str(self.project))
                     self.refused(done, b"error: --home" + self.EMPTY)
 
-    def test_in_the_clone_a_place_that_is_not_a_directory_is_refused_by_the_tool(self) -> None:
+    def test_in_the_clone_a_place_that_is_not_a_directory_is_refused(self) -> None:
         missing = str(self.root / "none")
         self.refused(self.launcher("process", "--project", missing), f"--project: {missing}: not a directory\n".encode())
         self.refused(self.child(LAUNCHER, "process", "--home", missing), f"--home: {missing}: not a directory\n".encode())
@@ -306,20 +387,14 @@ class PlacesAndOptions(LauncherCase):
 
 
 class ThroughALink(LauncherCase):
-    """The skill reached through a link elsewhere still finds the clone."""
+    """The skill reached through a link elsewhere reads the same files."""
 
-    def check(self, linked: Path, clone: Path = CLONE) -> None:
+    def check(self, linked: Path) -> None:
         script = linked / "scripts" / "settings.py"
         self.assertTrue(script.is_file())
-        self.assertFalse((linked.parent.parent / "tools").exists())
-        defaults = (clone / "tools" / "setup" / "defaults.toml").resolve()
-        found = self.settings(self.launcher("--json", script=script))
-        self.assertEqual(
-            {key: entry["value"] for key, entry in found.items()},
-            {key: entry["value"] for key, entry in self.settings(self.launcher("--json")).items()},
-        )
-        for entry in found.values():
-            self.assertEqual((entry["layer"], Path(entry["file"])), ("shipped", defaults))
+        self.write(self.user_file, '[process]\ndensity = "full"\n')
+        self.assertEqual(self.values("--json", script=script), self.values("--json"))
+        self.assertEqual(self.values("process.density", "--json", script=script)["process.density"][1], "user")
 
     def test_through_a_symlinked_skill_directory(self) -> None:
         linked = self.root / "provider-home" / "skills" / "prd-implementation"
@@ -335,30 +410,28 @@ class ThroughALink(LauncherCase):
         import _winapi
 
         # A junction reaches only a local volume, and the clone under test
-        # may be on a network path: the skill and the setup tool are copied
-        # to the scratch directory, and the junction points at that copy.
-        clone = self.root / "clone"
-        skip = shutil.ignore_patterns("__pycache__", "tests")
-        shutil.copytree(CLONE / "prd-implementation", clone / "prd-implementation", ignore=skip)
-        shutil.copytree(support.SETUP, clone / "tools" / "setup", ignore=skip)
+        # may be on a network path: the skill is copied to the scratch
+        # directory, and the junction points at that copy.
+        copy = self.root / "clone" / "prd-implementation"
+        shutil.copytree(CLONE / "prd-implementation", copy, ignore=shutil.ignore_patterns("__pycache__", "tests"))
         linked = self.root / "provider-home" / "skills" / "prd-implementation"
         linked.parent.mkdir(parents=True)
         try:
-            _winapi.CreateJunction(str(clone / "prd-implementation"), str(linked))
+            _winapi.CreateJunction(str(copy), str(linked))
         except OSError as exc:
             self.skipTest(f"no junction can be made here: {exc}")
         self.addCleanup(os.rmdir, linked)
-        self.check(linked, clone)
+        self.check(linked)
 
 
 class CopiedOnItsOwn(LauncherCase):
-    """A skill directory with no clone around it prints its built-in defaults."""
+    """A skill directory with no clone around it reads the same files."""
 
     def test_the_built_in_defaults_equal_the_shipped_ones(self) -> None:
         for skill in SKILLS:
             with self.subTest(skill=skill):
                 done = self.launcher("--json", script=self.lone_copy(skill))
-                self.assertEqual(done.returncode, 0)
+                self.assertEqual((done.returncode, done.stderr), (0, b""))
                 report = json.loads(done.stdout.decode("utf-8"))
                 self.assertEqual(report["schema_version"], 1)
                 self.assertEqual(
@@ -367,57 +440,47 @@ class CopiedOnItsOwn(LauncherCase):
                 self.assertEqual(list(report["settings"]), list(shipped_defaults()))
                 for entry in report["settings"].values():
                     self.assertEqual((entry["layer"], entry["file"]), ("built-in", None))
-                self.assertIn(b"built-in defaults", done.stderr)
-                self.assertNotIn(b"\r", done.stdout + done.stderr)
+                self.assertNotIn(b"\r", done.stdout)
 
-    def test_the_text_has_the_tools_form(self) -> None:
-        done = self.launcher(script=self.lone_copy("prd-implementation"))
-        self.assertEqual(done.returncode, 0)
-        shipped = self.tool("process").stdout + self.tool("memory").stdout
-        self.assertEqual(done.stdout, shipped.replace(b"(shipped)", b"(built-in)"))
-
-    def test_a_group_and_a_key(self) -> None:
-        script = self.lone_copy("prd-implementation")
-        group = json.loads(self.launcher("memory", "--json", script=script).stdout.decode("utf-8"))
-        self.assertEqual(list(group["settings"]), ["memory.dir"])
-        key = self.launcher("process.questions", script=script)
-        self.assertEqual(key.stdout, b'process.questions = "all-together"  (built-in)\n')
-
-    def test_the_memory_skill_on_its_own_gives_the_memory_directory(self) -> None:
-        script = self.lone_copy("project-memory")
-        done = self.launcher("memory", "--project", str(self.project), script=script)
-        self.assertEqual((done.returncode, done.stdout), (0, b'memory.dir = "docs/memory"  (built-in)\n'))
-
-    def test_no_settings_file_is_read_and_the_note_says_so(self) -> None:
-        self.write(self.project_file, '[process]\ndocs_dir = "planning"\n')
-        done = self.launcher("process.docs_dir", "--project", str(self.project),
-                             script=self.lone_copy("prd-implementation"))
-        self.assertEqual(done.stdout, b'process.docs_dir = "docs"  (built-in)\n')
-        self.assertIn(b"no settings file was read", done.stderr)
-
-    def test_keys_it_does_not_have_are_refused(self) -> None:
-        script = self.lone_copy("epic-implementation")
-        for key in ("providers.codex", "process.nope", "memory.dir.x", "processes", "roles.coder.tier", "roles.nope"):
-            with self.subTest(key=key):
-                done = self.launcher(key, script=script)
-                self.assertEqual((done.returncode, done.stdout), (2, b""))
-                self.assertTrue(done.stderr.startswith(b"error: "))
-                self.assertNotIn(b"Traceback", done.stderr)
-
-    def test_the_roles_group_has_built_in_defaults_too(self) -> None:
+    def test_the_built_in_roles_key_equals_the_shipped_one(self) -> None:
         for skill in SKILLS:
             with self.subTest(skill=skill):
                 script = self.lone_copy(skill)
-                done = self.launcher(ROLES, "--json", script=script)
-                self.assertEqual(done.returncode, 0)
-                report = json.loads(done.stdout.decode("utf-8"))
+                report = json.loads(self.launcher(ROLES, "--json", script=script).stdout.decode("utf-8"))
                 self.assertEqual(
                     {key: entry["value"] for key, entry in report["settings"].items()}, shipped_defaults((ROLES,))
                 )
-                for entry in report["settings"].values():
-                    self.assertEqual((entry["layer"], entry["file"]), ("built-in", None))
                 one = self.launcher("roles.max_parallel_coders", script=script)
                 self.assertEqual(one.stdout, b"roles.max_parallel_coders = 3  (built-in)\n")
+
+    def test_a_copy_outside_the_clone_reads_the_files(self) -> None:
+        self.write(self.user_file, '[process]\nquestions = "one-at-a-time"\n')
+        self.write(self.project_file, '[process]\ndocs_dir = "planning"\n')
+        self.write(self.local_file, '[memory]\ndir = "mine"\n')
+        for skill in SKILLS:
+            with self.subTest(skill=skill):
+                script = self.lone_copy(skill)
+                self.assertFalse((script.parents[2] / "tools").exists())
+                done = self.launcher("--project", str(self.project), "--json", script=script)
+                self.assertEqual((done.returncode, done.stderr), (0, b""))
+                found = json.loads(done.stdout.decode("utf-8"))["settings"]
+                self.assertEqual(found["process.questions"],
+                                 {"value": "one-at-a-time", "layer": "user", "file": str(self.user_file)})
+                self.assertEqual(found["process.docs_dir"],
+                                 {"value": "planning", "layer": "project", "file": str(self.project_file)})
+                self.assertEqual(found["memory.dir"],
+                                 {"value": "mine", "layer": "local", "file": str(self.local_file)})
+
+    def test_a_bad_value_stops_a_copy_outside_the_clone(self) -> None:
+        self.write(self.project_file, "[process]\nrecommend = 5\n")
+        done = self.launcher("process", "--project", str(self.project), script=self.lone_copy("project-memory"))
+        self.stopped(done, f"{self.project_file}: process.recommend: ")
+
+    def test_the_text_and_no_note(self) -> None:
+        done = self.launcher(script=self.lone_copy("prd-implementation"))
+        self.assertEqual((done.returncode, done.stderr), (0, b""))
+        self.assertIn(b'process.docs_dir = "docs"  (built-in)\n', done.stdout)
+        self.assertIn(b'memory.dir = "docs/memory"  (built-in)\n', done.stdout)
 
 
 if __name__ == "__main__":

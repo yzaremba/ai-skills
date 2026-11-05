@@ -92,9 +92,6 @@ class Case(unittest.TestCase):
         self.home = self.root / "home"
         self.docs.mkdir(parents=True)
         self.home.mkdir()
-        lone = mock.patch.object(check, "SETUP_DIR", self.root / "no-clone" / "tools" / "setup")
-        lone.start()
-        self.addCleanup(lone.stop)
 
     def write(self, name: str, text: str, where: Path | None = None) -> Path:
         path = (where or self.docs) / name
@@ -1859,33 +1856,26 @@ class Command(Case):
         self.assertEqual(Path(report["project"]).resolve(), self.project.resolve())
 
 
-DEFAULTS = 'schema_version = 1\n[process]\ndocs_dir = "docs"\nquestions = "all-together"\nrecommend = true\ndensity = "brief"\n' \
-           '[roles]\nmanager_default = false\n[memory]\ndir = "docs/memory"\n'
 PROCESS_KEYS = ["process.docs_dir", "process.questions", "process.recommend", "process.density"]
+BUILT_IN_VALUES = {
+    "process.docs_dir": ("docs", "built-in"), "process.questions": ("all-together", "built-in"),
+    "process.recommend": (True, "built-in"), "process.density": ("brief", "built-in"),
+}
 
 
 class Settings(Case):
-    """The process group, in a clone and in a skill copied on its own."""
+    """The process group, read from the files by a skill copied on its own."""
 
     def setUp(self):
         super().setUp()
-        self.clone = self.root / "clone"
-        self.setup_dir = self.clone / "tools" / "setup"
-        self.write("workflow_setup.py", "raise SystemExit('the setup tool must not be run')\n", self.setup_dir)
-        self.write("defaults.toml", DEFAULTS, self.setup_dir)
-        self.script = self.clone / "prd-implementation" / "scripts" / "check.py"
-        self.script.parent.mkdir(parents=True)
-        shutil.copyfile(CHECK_PY, self.script)
-        in_clone = mock.patch.object(check, "SETUP_DIR", self.setup_dir)
-        in_clone.start()
-        self.addCleanup(in_clone.stop)
+        self.script = self.lone_script  # a copy of check.py alone: no clone, no setup tool around it
         self.write(PLAN, "")
         self.write(PLAN, LONG + "\n", self.project / "planning")
         self.write(TASKS, LONG_TASK + "\n", self.project / "local-docs")
         self.project_file = self.project / ".agents" / "workflow.toml"
 
     def both(self, *extra: str) -> dict:
-        """The report, in process and from the copy in the scratch clone."""
+        """The report, in process and from the copy of the script on its own."""
         code, report = self.run_check(*extra)
         child_code, out, err = self.child(*self.arguments("--json", *extra), script=self.script, runner=True)
         self.assertEqual((child_code, json.loads(out) if out else err), (code, report))
@@ -1902,22 +1892,20 @@ class Settings(Case):
         self.assertEqual(len(err.splitlines()), 1)
         return err
 
-    def test_the_shipped_default(self):
+    def test_the_built_in_default(self):
         report = self.both()
         self.assertEqual(report["violations"], [])
         self.assertEqual(report["docs_from"], "process.docs_dir")
         self.assertEqual(Path(report["docs"]), self.docs)
         self.assertEqual(list(report["settings"]), PROCESS_KEYS)  # the process group, and no other
-        self.assertEqual({key: (entry["value"], entry["layer"]) for key, entry in report["settings"].items()}, {
-            "process.docs_dir": ("docs", "shipped"), "process.questions": ("all-together", "shipped"),
-            "process.recommend": (True, "shipped"), "process.density": ("brief", "shipped"),
-        })
+        self.assertEqual({key: (entry["value"], entry["layer"]) for key, entry in report["settings"].items()},
+                         BUILT_IN_VALUES)
         for entry in report["settings"].values():
-            self.assertEqual(Path(entry["file"]), self.setup_dir / "defaults.toml")
+            self.assertIsNone(entry["file"])
         text = check.run(self.arguments())[1]
-        self.assertIn('process.density = "brief"  (shipped)\n'
-                      'process.docs_dir = "docs"  (shipped)\nprocess.questions = "all-together"  (shipped)\n'
-                      "process.recommend = true  (shipped)\n", text)
+        self.assertIn('process.density = "brief"  (built-in)\n'
+                      'process.docs_dir = "docs"  (built-in)\nprocess.questions = "all-together"  (built-in)\n'
+                      "process.recommend = true  (built-in)\n", text)
         self.assertNotIn("memory", text)
 
     def test_the_project_file_is_honoured(self):
@@ -1929,8 +1917,8 @@ class Settings(Case):
         setting = report["settings"]["process.docs_dir"]
         self.assertEqual((setting["value"], setting["layer"]), ("planning", "project"))
         self.assertEqual(Path(setting["file"]), self.project_file)
-        self.assertEqual(report["settings"]["process.questions"]["value"], "all-together")
-        self.assertEqual(report["settings"]["process.recommend"]["layer"], "shipped")
+        self.assertEqual(report["settings"]["process.questions"]["layer"], "project")
+        self.assertEqual(report["settings"]["process.recommend"]["layer"], "built-in")
         self.assertEqual(list(report["settings"]), PROCESS_KEYS)
         self.assertIn('process.docs_dir = "planning"  (project)\n', check.run(self.arguments())[1])
 
@@ -1938,7 +1926,7 @@ class Settings(Case):
         self.write("workflow.toml", '[process]\ndocs_dir = "user-docs"\nrecommend = false\n', self.home / ".agents")
         self.write("workflow.toml", '[process]\ndocs_dir = "planning"\n', self.project / ".agents")
         self.assertEqual(self.both()["settings"]["process.docs_dir"]["layer"], "project")
-        self.write("workflow.local.toml", '\ufeff[process]\ndocs_dir = "local-docs"\n', self.project / ".agents")
+        self.write("workflow.local.toml", '[process]\ndocs_dir = "local-docs"\n', self.project / ".agents")
         report = self.both()
         self.assertEqual([v["file"] for v in report["violations"]], [TASKS])
         self.assertEqual(report["settings"]["process.docs_dir"]["layer"], "local")
@@ -1965,6 +1953,7 @@ class Settings(Case):
         cases = {
             "[process\n": "is not valid TOML",
             "\xff": "is not UTF-8 text (byte 0)",
+            "﻿[process]\n": "is not valid TOML",
             "[process]\ndocs_dir = 3\n": "process.docs_dir: expected a string, got an integer",
             '[process]\ndocs_dir = ["docs"]\n': "process.docs_dir: expected a string, got an array",
             '[process]\ndocs_dir = "  "\n': "process.docs_dir: must not be blank; it holds only white space",
@@ -1977,30 +1966,30 @@ class Settings(Case):
             "[process]\nrecommend = 1\n": "process.recommend: 1 is not allowed; allowed values: true, false, accept",
             '[process]\nrecommend = "Accept"\n': 'process.recommend: "Accept" is not allowed; allowed values: true, false, accept',
             '[process]\ndensity = "terse"\n': 'process.density: "terse" is not allowed; allowed values: brief, full',
-            '[process]\ndocs = "docs"\n': "process.docs: unknown key; known here: docs_dir, questions, recommend, density",
-            '[process]\n"odd key" = 1\n': 'process."odd key": unknown key; known here: docs_dir, questions, recommend, density',
             "[process.docs_dir]\nx = 1\n": "process.docs_dir: expected a string, got a table",
-            'docs_dir = "docs"\n': "docs_dir: unknown key; known here: schema_version, process, roles, memory, providers, setup",
-            "[proces]\n": "proces: unknown key; known here: schema_version, process, roles, memory, providers, setup",
-            "schema_version = 2\n": "schema_version: 2 is newer than this command reads (1)",
-            'schema_version = "1"\n': "schema_version: expected an integer, got a string",
-            "schema_version = true\n": "schema_version: expected an integer, got a boolean",
-            "schema_version = 0\n": "schema_version: 0 is not a schema version; the first is 1",
-            "schema_version = 1.0\n": "schema_version: expected an integer, got a float",
-            "schema_version = 2026-10-05\n": "schema_version: expected an integer, got a date",
             "[process]\ndocs_dir = 2026-10-05T10:00:00\n": "process.docs_dir: expected a string, got a datetime",
             "[process]\ndocs_dir = 10:00:00\n": "process.docs_dir: expected a string, got a time",
         }
         for content, expected in cases.items():
             with self.subTest(content):
                 self.project_file.parent.mkdir(exist_ok=True)
-                self.project_file.write_bytes(content.encode("latin-1"))
+                self.project_file.write_bytes(content.encode("utf-8") if content != "\xff" else b"\xff")
                 err = self.refused()
                 self.assertTrue(err.startswith(f"error: {self.project_file}: {expected}"), err)
 
+    def test_a_key_that_is_not_read_is_not_judged(self):
+        # An unknown key in [process], an unknown group or top-level key, any schema_version, and the old keys.
+        self.write("workflow.toml",
+                   'top = 1\nschema_version = 9\n[proces]\nx = 1\n[process]\ndocs = "docs"\n"odd key" = 1\n'
+                   '[roles]\nenabled = ["coder"]\n[install]\nroles = 3\n', self.project / ".agents")
+        self.write("workflow.toml", 'schema_version = "one"\n', self.home / ".agents")
+        report = self.both()
+        self.assertEqual(report["violations"], [])
+        self.assertEqual({key: (e["value"], e["layer"]) for key, e in report["settings"].items()}, BUILT_IN_VALUES)
+
     def test_every_layer_is_checked(self):
         for file in (self.home / ".agents" / "workflow.toml", self.project_file,
-                     self.project / ".agents" / "workflow.local.toml", self.setup_dir / "defaults.toml"):
+                     self.project / ".agents" / "workflow.local.toml"):
             with self.subTest(file.name):
                 before = file.read_bytes() if file.is_file() else None
                 self.write(file.name, '[process]\nquestions = "never"\n', file.parent)
@@ -2015,21 +2004,9 @@ class Settings(Case):
         # And with --docs: the settings are read, and checked, all the same.
         self.assertIn("process.docs_dir", self.refused(*self.arguments("--docs", str(self.docs))))
 
-    def test_several_faults_are_one_line(self):
-        self.write("workflow.toml", '[process]\ndocs_dir = 3\nnope = 1\n', self.home / ".agents")
-        self.write("workflow.toml", "top = 1\n", self.project / ".agents")
-        err = self.refused()
-        self.assertIn("process.docs_dir: expected a string, got an integer (and 2 more in the settings files)\n", err)
-
-    def test_a_file_of_a_newer_schema_is_not_looked_into(self):
-        self.write("workflow.toml", 'schema_version = 9\nnew_group = 1\n[process]\nnew_key = 1\n', self.project / ".agents")
-        err = self.refused()
-        self.assertIn("schema_version: 9 is newer than this command reads (1)", err)
-        self.assertNotIn("more in the settings files", err)
-
     def test_other_groups_are_not_looked_at(self):
         self.write("workflow.toml",
-                   '[roles]\nmanager_default = "perhaps"\nnope = 1\n[providers.x]\ntiers = 1\n[memory]\ndir = []\nx = 1\n',
+                   '[roles]\nmax_parallel_coders = 0\nnope = 1\n[providers.x]\ntiers = 1\n[memory]\ndir = []\nx = 1\n',
                    self.project / ".agents")
         self.write("workflow.toml", 'memory = "nowhere"\nroles = 3\nproviders = []\n', self.home / ".agents")
         report = self.both()
@@ -2044,21 +2021,13 @@ class Settings(Case):
         self.project_file.mkdir(parents=True)
         self.assertEqual(self.refused(), f"error: {self.project_file}: is not a file\n")
 
-    def test_shipped_defaults_that_are_missing(self):
-        (self.setup_dir / "defaults.toml").unlink()
-        self.assertIn("defaults.toml: the shipped defaults are missing; the clone is incomplete\n", self.refused())
-        self.write("defaults.toml", "schema_version = 1\n", self.setup_dir)
-        self.assertIn("process.docs_dir: set in no settings file; name the sprint docs directory with --docs DIR\n",
-                      self.refused())
-        self.assertEqual(self.both("--docs", str(self.docs))["settings"], {})
-
-    def test_a_link_with_no_target_in_place_of_a_settings_file(self):
+    def test_a_link_with_no_target_in_place_of_a_settings_file_holds_no_settings(self):
         self.project_file.parent.mkdir()
         try:
             self.project_file.symlink_to(self.root / "gone.toml")
         except (OSError, NotImplementedError) as exc:
             self.skipTest(f"no symbolic links here: {exc}")
-        self.assertEqual(self.refused(), f"error: link target missing: {self.project_file}\n")
+        self.assertEqual(self.both()["violations"], [])
 
     def locked(self, directory: Path) -> None:
         if os.name != "posix" or os.geteuid() == 0:
@@ -2097,43 +2066,35 @@ class Settings(Case):
             with self.assertRaises(check.CheckError) as raised:
                 check.run(["--project", str(self.project), "--today", TODAY])
             self.assertEqual(str(raised.exception), "the user's home directory cannot be found; name one with --home DIR")
-            # Named, it is not looked for; and a skill copied on its own needs none.
+            # Named, it is not looked for.
             self.assertEqual(check.run(self.arguments())[0], 0)
-            with mock.patch.object(check, "SETUP_DIR", self.root / "no-clone"):
-                self.assertEqual(check.run(["--project", str(self.project), "--today", TODAY])[0], 0)
 
-    def test_a_skill_copied_on_its_own_uses_the_built_in_defaults(self):
+    def test_a_skill_copied_on_its_own_reads_the_settings_files(self):
         lone = self.root / "lone" / "prd-implementation"
         shutil.copytree(SKILL, lone, ignore=shutil.ignore_patterns("__pycache__"))
+        self.assertFalse((lone.parent / "tools").exists())  # no setup tool, no defaults.toml around it
         self.write("workflow.toml", '[process]\ndocs_dir = "planning"\n', self.project / ".agents")
-        self.write("workflow.toml", "not TOML at all [", self.home / ".agents")
-        self.write(TASKS, LONG_TASK + "\n")
+        self.write("workflow.local.toml", '[process]\ndensity = "full"\n', self.project / ".agents")
+        self.write("workflow.toml", '[process]\nrecommend = "accept"\n', self.home / ".agents")
         code, out, err = self.child(*self.arguments("--json"), script=lone / "scripts" / "check.py", runner=True)
         self.assertEqual(code, 1, err)
         report = json.loads(out)
-        self.assertEqual(Path(report["docs"]), self.docs)
-        self.assertEqual(report["settings"], {
-            "process.docs_dir": {"value": "docs", "layer": "built-in", "file": None},
-            "process.questions": {"value": "all-together", "layer": "built-in", "file": None},
-            "process.recommend": {"value": True, "layer": "built-in", "file": None},
-            "process.density": {"value": "brief", "layer": "built-in", "file": None},
+        self.assertEqual(Path(report["docs"]), self.project / "planning")
+        self.assertEqual({key: (e["value"], e["layer"]) for key, e in report["settings"].items()}, {
+            "process.docs_dir": ("planning", "project"), "process.questions": ("all-together", "built-in"),
+            "process.recommend": ("accept", "user"), "process.density": ("full", "local"),
         })
-        self.assertEqual([v["file"] for v in report["violations"]], [TASKS])
+        self.assertEqual(report["settings"]["process.questions"]["file"], None)
+        self.assertEqual([v["file"] for v in report["violations"]], [PLAN])
 
-    def test_the_built_in_defaults_are_those_of_the_settings_launcher_and_the_shipped_ones(self):
+    def test_the_built_in_defaults_are_those_of_the_settings_launcher(self):
         import settings
-        import tomllib
         of_the_launcher = {key: value for key, value in settings.BUILT_IN.items() if key.startswith("process.")}
         self.assertEqual(check.BUILT_IN, of_the_launcher)
         self.assertEqual(list(check.BUILT_IN), list(of_the_launcher))
-        self.assertEqual(list(check.BUILT_IN), [f"process.{key}" for key in check.PROCESS_KEYS])
         self.assertEqual(check.BUILT_IN_LAYER, settings.BUILT_IN_LAYER)
-        self.assertEqual(check.SETTINGS_SCHEMA_VERSION, settings.SCHEMA_VERSION)
-        shipped = SKILL.parent / "tools" / "setup" / "defaults.toml"
-        if shipped.is_file():
-            data = tomllib.loads(shipped.read_text(encoding="utf-8"))
-            self.assertEqual({f"process.{key}": value for key, value in data["process"].items()}, check.BUILT_IN)
-            self.assertEqual(data["schema_version"], check.SETTINGS_SCHEMA_VERSION)
+        self.assertEqual(check.CHOICES, {k: v for k, v in settings.CHOICES.items() if k.startswith("process.")})
+        self.assertEqual(check.RECOMMEND_WORDS, settings.RECOMMEND_WORDS)
 
     def test_no_file_holds_the_path_of_one_machine(self):
         import re

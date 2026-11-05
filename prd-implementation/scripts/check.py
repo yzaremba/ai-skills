@@ -118,17 +118,17 @@ that need no action, such as a BACKLOG.md or a DEFERRED.md still in the
 old form, or item documents at their earlier place. A note is not a
 violation and has no effect on the exit code.
 
-Settings. The process group is read here, and no other group: from the
-same files, in the same order and under the same rules as the setup tool's
-"show process", but without starting the tool: tools/setup/defaults.toml
-of the clone this skill belongs to, ~/.agents/workflow.toml, and the
-project's .agents/workflow.toml and .agents/workflow.local.toml; later
-files win. Of each file the version and the top-level key names are
-checked, then the whole [process] table: an unknown key, a value of the
-wrong type, a value that is not one of those allowed, and an empty or
-blank string are errors. What another group holds is not looked at. A
-skill copied on its own has no setup tool beside it: the built-in defaults
-are used and no settings file is read, as settings.py does.
+Settings. The process group is read here, and no other group: process.docs_dir,
+process.questions, process.recommend and process.density, as scripts/settings.py
+reads them, from the same files and under the same rules, over the built-in
+defaults below: ~/.agents/workflow.toml (--home in place of ~), then the
+project's .agents/workflow.toml and .agents/workflow.local.toml; later files
+win, key by key. No setup tool is needed, so a skill copied on its own reads
+them too. A bad value of one of those keys (the wrong type, a value not
+allowed, an empty or blank string), a file that is not UTF-8 or not TOML, and
+a .agents that is not a directory are errors, naming the file and the key.
+Every other key, an unknown one in [process] and schema_version among them,
+is not judged here: the setup tool's --check reports it.
 
 Exit code: 0 when nothing needs action; 1 when an item is past its date,
 an item's state cannot be told, or a violation is found; 2 on an error of
@@ -158,23 +158,9 @@ EXIT_OK = 0
 EXIT_ACTION = 1
 EXIT_ERROR = 2
 
-# What the setup tool's schema says of a settings file, as far as this
-# command reads one: the top-level keys, and the whole process group. The
-# two must stay equal; tools/setup/tests holds a test that they agree.
-SETTINGS_SCHEMA_VERSION = 1
-VERSION_KEY = "schema_version"
-SETTINGS_GROUPS = ("process", "roles", "memory", "providers", "setup", "project")
 GROUP = "process"
-# Each key of the group: its type, and the values allowed when not every one is.
-PROCESS_KEYS = {
-    "docs_dir": ("string", ()),
-    "questions": ("string", ("one-at-a-time", "all-together")),
-    "recommend": ("boolean", ("accept",)),
-    "density": ("string", ("brief", "full")),
-}
-DOCS_DIR = "process.docs_dir"
-
-# The process group of scripts/settings.py and of tools/setup/defaults.toml.
+# The process group of scripts/settings.py: the keys read, with their built-in
+# values. tools/setup/tests holds a test that the two readers agree.
 BUILT_IN = {
     "process.docs_dir": "docs",
     "process.questions": "all-together",
@@ -182,16 +168,18 @@ BUILT_IN = {
     "process.density": "brief",
 }
 BUILT_IN_LAYER = "built-in"
+# The values a key is limited to; process.recommend also takes these words.
+CHOICES = {
+    "process.questions": ("one-at-a-time", "all-together"),
+    "process.density": ("brief", "full"),
+}
+RECOMMEND_WORDS = ("accept",)
+DOCS_DIR = "process.docs_dir"
 
 ABSENT = "absent"
 FILE = "file"
 DIRECTORY = "directory"
 OTHER = "other"  # a FIFO, a socket, a device
-
-# This file is <clone>/<skill>/scripts/check.py; the path is made real first,
-# as in settings.py, so a link to the skill does not change where the clone is.
-_HERE = Path(__file__).resolve()
-SETUP_DIR = _HERE.parents[2] / "tools" / "setup"
 
 ANNOTATION_LIMIT = 300
 TASKS_LIMIT = 150
@@ -303,7 +291,6 @@ D_STATUS = re.compile(rf"^(?:open|(?:resolved|dropped) ({DATE}): \S.*)$")
 
 # A carriage return that is not directly before a newline.
 LONE_CR = re.compile(r"\r(?!\n)")
-BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
 
 # The categories of the characters that would let text from a file change
 # how a report looks on a terminal, or hide in it: controls (escape
@@ -351,7 +338,7 @@ def _present(path: Path) -> bool:
         return True
 
 
-def _kind(path: Path) -> str:
+def _kind(path: Path, dangling_ok: bool = False) -> str:
     """``ABSENT``, ``FILE``, ``DIRECTORY`` or ``OTHER``; a link counts as what
     it leads to. What cannot be looked at, and a link that leads nowhere,
     are errors that name the path: the answers of the setup tool."""
@@ -367,6 +354,8 @@ def _kind(path: Path) -> str:
         except PermissionError as exc:
             raise CheckError(f"{path}: cannot be read: {_reason(exc)}") from None
         except (OSError, ValueError):
+            if dangling_ok:
+                return ABSENT  # a settings file that is a link to nowhere holds none, as settings.py has it
             raise CheckError(f"link target missing: {path}") from None
     if stat.S_ISREG(found.st_mode):
         return FILE
@@ -457,20 +446,15 @@ def _article(noun: str) -> str:
     return f"an {noun}" if noun[:1] in "aeiou" else f"a {noun}"
 
 
-def _key(key: str) -> str:
-    """A key as TOML writes it: bare where it can be, quoted otherwise."""
-    return key if BARE_KEY.fullmatch(key) else json.dumps(key, ensure_ascii=False)
-
-
 def _load_if_present(file: Path) -> dict | None:
     """A settings file parsed, or None when nothing is at its place."""
-    found = _kind(file)
+    found = _kind(file, dangling_ok=True)
     if found == ABSENT:
         return None
     if found != FILE:
         raise CheckError(f"{file}: is not a file")
     try:
-        text = file.read_bytes().decode("utf-8-sig")
+        text = file.read_bytes().decode("utf-8")
     except OSError as exc:
         raise CheckError(f"{file}: cannot be read: {_reason(exc)}") from None
     except UnicodeDecodeError as exc:
@@ -497,105 +481,60 @@ def _load_layer(file: Path) -> dict | None:
     return _load_if_present(file)
 
 
-def _check_document(data: dict, file: Path, problems: list[str]) -> bool:
-    """What holds for a settings file as a whole: its version, and the names
-    of its top-level keys. Returns False for a file of a newer schema, in
-    which nothing else is worth checking."""
-    version = data.get(VERSION_KEY, SETTINGS_SCHEMA_VERSION)
-    if _type_name(version) != "integer":
-        problems.append(f"{file}: {VERSION_KEY}: expected an integer, got {_article(_type_name(version))}")
-    elif version > SETTINGS_SCHEMA_VERSION:
-        problems.append(
-            f"{file}: {VERSION_KEY}: {version} is newer than this command reads ({SETTINGS_SCHEMA_VERSION}); "
-            "update the clone the skill runs from, or bring the file back to the older schema"
-        )
-        return False
-    elif version < 1:
-        problems.append(f"{file}: {VERSION_KEY}: {version} is not a schema version; the first is 1")
-    for key in data:
-        if key != VERSION_KEY and key not in SETTINGS_GROUPS:
-            problems.append(
-                f"{file}: {_key(key)}: unknown key; known here: {VERSION_KEY}, {', '.join(SETTINGS_GROUPS)}"
-            )
-    return True
-
-
-def _check_process(table: object, file: Path, problems: list[str]) -> None:
-    """Check the whole process group of one file."""
+def _check_process(table: object, file: Path) -> dict[str, object]:
+    """The values of the keys read that ``file``'s [process] table holds. A
+    bad value stops with the file and the key; any other key is not judged."""
     if not isinstance(table, dict):
-        problems.append(f"{file}: {GROUP}: expected a table, got {_article(_type_name(table))}")
-        return
-    for key, value in table.items():
-        where = f"{file}: {GROUP}.{_key(key)}"
-        if key not in PROCESS_KEYS:
-            problems.append(f"{where}: unknown key; known here: {', '.join(PROCESS_KEYS)}")
+        raise CheckError(f"{file}: {GROUP}: expected a table, got {_article(_type_name(table))}")
+    found: dict[str, object] = {}
+    for key, built_in in BUILT_IN.items():
+        name = key.split(".", 1)[1]
+        if name not in table:
             continue
-        wanted, choices = PROCESS_KEYS[key]
-        actual = _type_name(value)
-        if wanted == "boolean" and choices:
-            # A boolean that also takes the named strings.
-            if actual != "boolean" and value not in choices:
+        value = table[name]
+        actual, wanted = _type_name(value), _type_name(built_in)
+        if key == "process.recommend":
+            if actual != "boolean" and value not in RECOMMEND_WORDS:
                 shown = json.dumps(value, ensure_ascii=False) if actual in ("string", "integer") else _article(actual)
-                problems.append(f"{where}: {shown} is not allowed; allowed values: true, false, {', '.join(choices)}")
+                problem = f"{shown} is not allowed; allowed values: true, false, {', '.join(RECOMMEND_WORDS)}"
+            else:
+                problem = None
         elif actual != wanted:
-            problems.append(f"{where}: expected {_article(wanted)}, got {_article(actual)}")
-        elif choices and value not in choices:
-            problems.append(
-                f"{where}: {json.dumps(value, ensure_ascii=False)} is not allowed; allowed values: {', '.join(choices)}"
-            )
-        elif wanted == "string" and not value:
-            problems.append(f"{where}: must not be empty")
-        elif wanted == "string" and not value.strip():
-            problems.append(f"{where}: must not be blank; it holds only white space")
-
-
-def setup_tool_is_beside() -> bool:
-    """Whether this skill is in a clone, with the setup tool beside it."""
-    try:
-        return (SETUP_DIR / "workflow_setup.py").is_file()
-    except (OSError, ValueError):
-        return False
+            problem = f"expected {_article(wanted)}, got {_article(actual)}"
+        elif key in CHOICES and value not in CHOICES[key]:
+            problem = f"{json.dumps(value, ensure_ascii=False)} is not allowed; allowed values: {', '.join(CHOICES[key])}"
+        elif not value:
+            problem = "must not be empty"
+        elif not value.strip():
+            problem = "must not be blank; it holds only white space"
+        else:
+            problem = None
+        if problem is not None:
+            raise CheckError(f"{file}: {key}: {problem}")
+        found[key] = value
+    return found
 
 
 def read_settings(project: Path, home: Path | None) -> dict[str, dict]:
     """The process group: the value, layer and file of each key, in the
-    schema's order. ``home`` is None when no ``--home`` was given."""
-    if not setup_tool_is_beside():
-        # A skill copied on its own: no settings file is read.
-        return {key: {"value": value, "layer": BUILT_IN_LAYER, "file": None} for key, value in BUILT_IN.items()}
+    built-in order. ``home`` is None when no ``--home`` was given."""
     if home is None:
         try:
             home = Path.home()
         except (RuntimeError, KeyError, OSError):
             raise CheckError("the user's home directory cannot be found; name one with --home DIR") from None
-    shipped = SETUP_DIR / "defaults.toml"
-    data = _load_if_present(shipped)
-    if data is None:
-        raise CheckError(f"{shipped}: the shipped defaults are missing; the clone is incomplete")
-    documents: list[tuple[str, Path, dict]] = [("shipped", shipped, data)]
+    resolved = {key: {"value": value, "layer": BUILT_IN_LAYER, "file": None} for key, value in BUILT_IN.items()}
     for layer, file in (
         ("user", home / ".agents" / "workflow.toml"),
         ("project", project / ".agents" / "workflow.toml"),
         ("local", project / ".agents" / "workflow.local.toml"),
     ):
         data = _load_layer(file)
-        if data is not None:
-            documents.append((layer, file, data))
-    problems: list[str] = []
-    merged: dict[str, dict] = {}
-    for layer, file, data in documents:
-        if not _check_document(data, file, problems) or GROUP not in data:
+        if data is None or GROUP not in data:
             continue
-        before = len(problems)
-        _check_process(data[GROUP], file, problems)
-        if len(problems) > before:
-            continue
-        for key, value in data[GROUP].items():
-            merged[f"{GROUP}.{key}"] = {"value": value, "layer": layer, "file": str(file)}
-    if problems:
-        more = len(problems) - 1
-        raise CheckError(problems[0] + (f" (and {more} more in the settings files)" if more else ""))
-    return {f"{GROUP}.{key}": merged[f"{GROUP}.{key}"] for key in PROCESS_KEYS if f"{GROUP}.{key}" in merged}
+        for key, value in _check_process(data[GROUP], file).items():
+            resolved[key] = {"value": value, "layer": layer, "file": str(file)}
+    return resolved
 
 
 # --- PLAN and TASKS -----------------------------------------------------------
@@ -1892,8 +1831,6 @@ def run(argv: list[str] | None = None) -> tuple[int, str]:
         if not args.docs.strip():
             raise CheckError("--docs: an empty value is not a directory")
         docs, docs_from = Path(args.docs), "--docs"
-    elif DOCS_DIR not in settings:
-        raise CheckError(f"{DOCS_DIR}: set in no settings file; name the sprint docs directory with --docs DIR")
     else:
         docs, docs_from = project / settings[DOCS_DIR]["value"], DOCS_DIR
     try:

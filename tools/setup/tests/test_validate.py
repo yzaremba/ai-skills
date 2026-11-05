@@ -57,9 +57,6 @@ BUILT_IN = {
     "process.recommend": True,
     "process.density": "brief",
     "memory.dir": "docs/memory",
-    "roles.enabled": True,
-    "roles.manager_default": False,
-    "roles.high_stakes": False,
     "roles.max_parallel_coders": 3,
 }
 '''

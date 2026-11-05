@@ -1,14 +1,14 @@
-"""``check.py`` of the sprint skill reads the process group as ``show`` does.
+"""``check.py`` of the sprint skill reads the process group as ``settings.py`` does.
 
-``prd-implementation/scripts/check.py`` must start no process, so it cannot
-ask the setup tool: it reads the settings files itself. This test holds the
-two readers together. Over a table of scratch homes and projects, valid and
-not, it runs ``workflow_setup.py show process --json`` and ``check.py
---json`` as child processes and asserts the same values, layers and files,
-and the same success or failure.
+``prd-implementation/scripts/check.py`` and ``prd-implementation/scripts/
+settings.py`` each read the settings files themselves, with ``tomllib``, in the
+layers of R4 over their own built-in defaults. This test holds the two readers
+together. Over a table of scratch homes and projects, valid and not, it runs
+``settings.py process --json`` and ``check.py --json`` as child processes and
+asserts the same values, layers and files, and the same success or failure.
 
-Both run on the repository itself (its shipped defaults), with a scratch
-home and a scratch project; nothing of the real home is read.
+Both run with a scratch home and a scratch project; nothing of the real home is
+read, and neither reads ``defaults.toml`` or starts the setup tool.
 """
 from __future__ import annotations
 
@@ -25,10 +25,10 @@ import unittest
 from pathlib import Path
 
 import support
-from wfsetup import schema
 
 CLONE = support.REPOSITORY
 CHECK_PY = CLONE / "prd-implementation" / "scripts" / "check.py"
+SETTINGS_PY = CLONE / "prd-implementation" / "scripts" / "settings.py"
 TODAY = "2026-10-05"
 
 USER, PROJECT, LOCAL = "user", "project", "local"
@@ -52,10 +52,10 @@ class Case:
 
 
 SHIPPED = {
-    "process.docs_dir": ("docs", "shipped"),
-    "process.questions": ("all-together", "shipped"),
-    "process.recommend": (True, "shipped"),
-    "process.density": ("brief", "shipped"),
+    "process.docs_dir": ("docs", "built-in"),
+    "process.questions": ("all-together", "built-in"),
+    "process.recommend": (True, "built-in"),
+    "process.density": ("brief", "built-in"),
 }
 
 TABLE = [
@@ -76,12 +76,10 @@ TABLE = [
         PROJECT: '[process]\ndocs_dir = "p"\nrecommend = true\n',
         LOCAL: '[process]\ndocs_dir = "l"\n',
     }, expect={"process.docs_dir": ("l", "local"), "process.questions": ("all-together", "user"),
-               "process.recommend": (True, "project"), "process.density": ("brief", "shipped")}),
+               "process.recommend": (True, "project"), "process.density": ("brief", "built-in")}),
     Case("a later layer that sets the shipped value again", {PROJECT: '[process]\ndocs_dir = "docs"\n'},
          expect={**SHIPPED, "process.docs_dir": ("docs", "project")}),
     Case("an empty process table", {USER: "[process]\n", PROJECT: "schema_version = 1\n", LOCAL: ""}, expect=SHIPPED),
-    Case("a byte order mark", {PROJECT: '\ufeff[process]\ndocs_dir = "bom"\n'},
-         expect={**SHIPPED, "process.docs_dir": ("bom", "project")}),
     Case("a value that is not ASCII, and an absolute one", {
         USER: '[process]\ndocs_dir = "café/中"\n', LOCAL: '[process]\ndocs_dir = "/srv/elsewhere/docs"\n',
     }, expect={**SHIPPED, "process.docs_dir": ("/srv/elsewhere/docs", "local")}),
@@ -97,18 +95,17 @@ TABLE = [
     Case("a fault in [providers]", {
         USER: "[providers.codex]\ntiers = 1\n", PROJECT: 'providers = "none"\n', LOCAL: "[providers.x.efforts]\nlow = 3\n",
     }, expect=SHIPPED),
+    # A key that is not read is not judged: the setup tool's --check reports it.
+    Case("an unknown key under [process]", {PROJECT: '[process]\ndocs = "docs"\n"docs dir" = 1\n'}, expect=SHIPPED),
+    Case("an unknown top-level key and table", {LOCAL: 'docs_dir = "docs"\n[proces]\nx = 1\n'}, expect=SHIPPED),
+    Case("schema_version of any kind", {USER: "schema_version = 2\n", PROJECT: 'schema_version = "1"\n', LOCAL: "schema_version = 0\n"},
+         expect=SHIPPED),
+    Case("an old key and install", {USER: '[roles]\nenabled = ["coder"]\n[install]\nroles = 3\n'}, expect=SHIPPED),
     # --- not valid -------------------------------------------------------------
     Case("a bad enumeration value", {USER: '[process]\nquestions = "sometimes"\n'}, USER,
          ("process.questions", '"sometimes" is not allowed', "allowed values: one-at-a-time, all-together")),
     Case("an enumeration value of another case", {LOCAL: '[process]\nquestions = "All-Together"\n'}, LOCAL,
          ("process.questions", "is not allowed")),
-    Case("an unknown key under [process]", {PROJECT: '[process]\ndocs = "docs"\n'}, PROJECT,
-         ("process.docs", "unknown key; known here: docs_dir, questions, recommend, density")),
-    Case("an unknown quoted key under [process]", {PROJECT: '[process]\n"docs dir" = "docs"\n'}, PROJECT,
-         ('process."docs dir"', "unknown key")),
-    Case("an unknown top-level key", {LOCAL: 'docs_dir = "docs"\n'}, LOCAL,
-         ("docs_dir: unknown key; known here: schema_version, process, roles, memory, providers, setup",)),
-    Case("an unknown top-level table", {USER: '[proces]\ndocs_dir = "docs"\n'}, USER, ("proces: unknown key",)),
     Case("a wrong type: an integer for a string", {PROJECT: "[process]\ndocs_dir = 3\n"}, PROJECT,
          ("process.docs_dir: expected a string, got an integer",)),
     Case("a wrong type: a string for a boolean", {USER: '[process]\nrecommend = "yes"\n'}, USER,
@@ -136,24 +133,15 @@ TABLE = [
     Case("a blank string", {PROJECT: '[process]\ndocs_dir = "  \\t"\n'}, PROJECT,
          ("process.docs_dir: must not be blank",)),
     Case("an empty string", {USER: '[process]\ndocs_dir = ""\n'}, USER, ("process.docs_dir: must not be empty",)),
-    Case("a newer schema_version", {USER: "schema_version = 2\n"}, USER, ("schema_version: 2 is newer than",)),
-    Case("a newer schema_version in a file that sets nothing else wrong", {
-        PROJECT: 'schema_version = 99\n[process]\ndocs_dir = "later"\n',
-    }, PROJECT, ("schema_version: 99 is newer than",)),
-    Case("a schema_version below the first", {LOCAL: "schema_version = 0\n"}, LOCAL,
-         ("schema_version: 0 is not a schema version",)),
-    Case("a schema_version that is a string", {LOCAL: 'schema_version = "1"\n'}, LOCAL,
-         ("schema_version: expected an integer, got a string",)),
-    Case("a schema_version that is a boolean", {USER: "schema_version = true\n"}, USER,
-         ("schema_version: expected an integer, got a boolean",)),
     Case("a fault in a layer that a later layer overrides", {
         USER: "[process]\ndocs_dir = 3\n", PROJECT: '[process]\ndocs_dir = "p"\n',
     }, USER, ("process.docs_dir: expected a string, got an integer",)),
     Case("a fault in [process] beside faults in other groups", {
         PROJECT: '[memory]\ndir = []\n[roles]\nnope = 1\n[process]\nquestions = "x"\n',
     }, PROJECT, ("process.questions",)),
-    Case("a file that is not TOML", {PROJECT: "[process\n"}, PROJECT, ("is not valid TOML",)),
-    Case("a file that is not UTF-8", {USER: b"[process]\ndocs_dir = \"caf\xe9\"\n"}, USER, ("is not UTF-8 text (byte ",)),
+    Case("a file that is not TOML", {PROJECT: "[process\n"}, PROJECT, ("not valid TOML",)),
+    Case("a byte order mark", {PROJECT: '\ufeff[process]\ndocs_dir = "bom"\n'}, PROJECT, ("not valid TOML",)),
+    Case("a file that is not UTF-8", {USER: b"[process]\ndocs_dir = \"caf\xe9\"\n"}, USER, ("not UTF-8",)),
 ]
 
 
@@ -174,7 +162,7 @@ class Agreement(support.ScratchCase):
     def both(self, project: str | None = None, home: str | None = None) -> tuple[subprocess.CompletedProcess, ...]:
         places = ["--project", str(self.project) if project is None else project,
                   "--home", str(self.home) if home is None else home]
-        tool = self.child(str(support.SCRIPT), "show", "process", "--json", *places)
+        tool = self.child(str(SETTINGS_PY), "process", "--json", *places)
         # --docs keeps the directory the setting names out of the comparison.
         check = self.child(str(CHECK_PY), "--json", "--docs", str(self.docs), "--today", TODAY, *places)
         return tool, check
@@ -211,8 +199,7 @@ class Agreement(support.ScratchCase):
                     self.assertIsNotNone(settings, (tool.stderr, check.stderr))
                     found = {key: (entry["value"], entry["layer"]) for key, entry in settings.items()}
                     self.assertEqual(found, case.expect)
-                    layer_files = {**{layer: str(file) for layer, file in self.files.items()},
-                                   "shipped": str(support.DEFAULTS)}
+                    layer_files = {**{layer: str(file) for layer, file in self.files.items()}, "built-in": None}
                     for entry in settings.values():
                         self.assertEqual(entry["file"], layer_files[entry["layer"]])
                 else:
@@ -222,10 +209,10 @@ class Agreement(support.ScratchCase):
                         for name in case.names:  # and the key, with the fault
                             self.assertIn(name, stderr)
 
-    def test_a_validation_error_is_worded_as_the_tool_words_it(self) -> None:
+    def test_a_bad_value_is_worded_as_settings_py_words_it(self) -> None:
         for case in TABLE:
-            if case.error is None or any("newer than" in name for name in case.names):
-                continue  # each names itself there: "this tool", "this command"
+            if case.error is None or not case.names[0].startswith("process"):
+                continue  # a file that cannot be read has the wording of each reader
             with self.subTest(case.name):
                 for file in self.files.values():
                     file.unlink(missing_ok=True)
@@ -251,7 +238,7 @@ class Agreement(support.ScratchCase):
                     self.assertEqual(settings, expected)
         # ``~`` alone is the scratch root, which has no settings: the shipped values.
         alone = self.agree(*self.both(project="~", home="~"))
-        self.assertEqual({entry["layer"] for entry in alone.values()}, {"shipped"})
+        self.assertEqual({entry["layer"] for entry in alone.values()}, {"built-in"})
         for places in ({"project": "~/none"}, {"home": "~/none"}, {"project": "~no-such-user-here/project"}):
             with self.subTest(places):
                 self.assertIsNone(self.agree(*self.both(**places)))
@@ -275,12 +262,12 @@ class Agreement(support.ScratchCase):
                 self.write(directory, "a file\n")
                 tool, check = self.both()
                 self.assertIsNone(self.agree(tool, check))
-                self.assertEqual(tool.stderr, check.stderr)
+                self.assertEqual(tool.stderr.split(b': ')[0], check.stderr.split(b': ')[0])  # the same path; each words the fault
                 directory.unlink()
         self.project_file.mkdir(parents=True)
         tool, check = self.both()
         self.assertIsNone(self.agree(tool, check))
-        self.assertEqual(tool.stderr, check.stderr)
+        self.assertEqual(tool.stderr.split(b': ')[0], check.stderr.split(b': ')[0])  # the same path; each words the fault
 
     def test_a_link_with_no_target(self) -> None:
         self.project_file.parent.mkdir()
@@ -288,9 +275,41 @@ class Agreement(support.ScratchCase):
             os.symlink(self.root / "gone.toml", self.project_file)
         except (OSError, NotImplementedError) as exc:
             self.skipTest(f"symlinks are not permitted here: {exc}")
-        tool, check = self.both()
-        self.assertIsNone(self.agree(tool, check))
-        self.assertEqual(tool.stderr, check.stderr)
+        # A link that leads nowhere holds no settings, to either reader.
+        self.assertEqual(self.agree(*self.both()), {key: {"value": value, "layer": layer, "file": None}
+                                                    for key, (value, layer) in SHIPPED.items()})
+
+    def test_a_settings_directory_that_is_a_broken_link_or_a_loop(self) -> None:
+        for name in ("nowhere", "loop"):
+            with self.subTest(name):
+                link = self.project_file.parent
+                try:
+                    os.symlink(link if name == "loop" else self.root / "gone", link)
+                except (OSError, NotImplementedError) as exc:
+                    self.skipTest(f"symlinks are not permitted here: {exc}")
+                tool, check = self.both()
+                self.assertIsNone(self.agree(tool, check))
+                for stderr in (tool.stderr, check.stderr):
+                    self.assertIn(str(link).encode(), stderr)
+                link.unlink()
+
+    def test_a_settings_file_that_cannot_be_parsed_or_opened(self) -> None:
+        for name, text in (("nested", "x = " + "[" * 3000 + "]" * 3000 + "\n"), ("digits", "x = " + "1" * 5000 + "\n")):
+            with self.subTest(name):
+                self.write(self.project_file, text)
+                tool, check = self.both()
+                self.assertIsNone(self.agree(tool, check))
+                for stderr in (tool.stderr, check.stderr):
+                    self.assertIn(b"not valid TOML", stderr)
+        if not hasattr(os, "mkfifo"):
+            return
+        with self.subTest("fifo"):
+            self.project_file.unlink()
+            os.mkfifo(self.project_file)
+            tool, check = self.both()  # a read of a FIFO would block: the timeout fails the test
+            self.assertIsNone(self.agree(tool, check))
+            for stderr in (tool.stderr, check.stderr):
+                self.assertIn(b"is not a file", stderr)
 
     @unittest.skipUnless(support.can_lock_directories(), "permissions do not keep this process out")
     def test_places_that_cannot_be_read(self) -> None:
@@ -304,45 +323,33 @@ class Agreement(support.ScratchCase):
                 finally:
                     os.chmod(locked, 0o700)
                 self.assertIsNone(self.agree(tool, check))
-                self.assertEqual(tool.stderr, check.stderr)
-                self.assertIn(b"cannot be read: Permission denied", check.stderr)
+                for stderr in (tool.stderr, check.stderr):  # each names the place it cannot read
+                    self.assertIn(b"cannot be read: Permission denied", stderr)
 
 
-class TheSameSchema(unittest.TestCase):
-    """What ``check.py`` holds of the schema, against the schema itself."""
+class TheSameDefaults(unittest.TestCase):
+    """What ``check.py`` holds of the defaults, against ``settings.py``."""
 
     @classmethod
     def setUpClass(cls) -> None:
         sys.path.insert(0, str(CHECK_PY.parent))
         try:
             import check
+            import settings
         finally:
             sys.path.remove(str(CHECK_PY.parent))
-        cls.check = check
+        cls.check, cls.settings = check, settings
 
-    def test_the_version_and_the_top_level_keys(self) -> None:
-        self.assertEqual(self.check.SETTINGS_SCHEMA_VERSION, schema.SCHEMA_VERSION)
-        self.assertEqual(self.check.VERSION_KEY, schema.VERSION_KEY)
-        self.assertEqual(self.check.SETTINGS_GROUPS, schema.GROUPS)
-
-    def test_the_process_group(self) -> None:
-        group = schema.SCHEMA[self.check.GROUP]
-        self.assertIsNone(group.each)  # fixed keys only: check.py knows no named entries
-        self.assertEqual(list(self.check.PROCESS_KEYS), list(group.keys))
-        for key, node in group.keys.items():
-            with self.subTest(key):
-                self.assertIsInstance(node, schema.Value)
-                self.assertIsNone(node.minimum)  # check.py knows no least value
-                self.assertEqual(self.check.PROCESS_KEYS[key], (node.type, tuple(node.choices)))
-
-    def test_the_built_in_defaults_are_the_shipped_ones(self) -> None:
-        import tomllib
-        shipped = tomllib.loads(support.DEFAULTS.read_text(encoding="utf-8"))
-        self.assertEqual(self.check.BUILT_IN, {f"process.{key}": value for key, value in shipped["process"].items()})
+    def test_the_built_in_defaults(self) -> None:
+        process = {key: value for key, value in self.settings.BUILT_IN.items() if key.startswith("process.")}
+        self.assertEqual(list(self.check.BUILT_IN.items()), list(process.items()))
+        self.assertEqual(self.check.BUILT_IN_LAYER, self.settings.BUILT_IN_LAYER)
+        self.assertEqual(self.check.CHOICES, {k: v for k, v in self.settings.CHOICES.items() if k.startswith("process.")})
+        self.assertEqual(self.check.RECOMMEND_WORDS, self.settings.RECOMMEND_WORDS)
 
     def test_check_py_does_not_import_the_tool(self) -> None:
         source = CHECK_PY.read_text(encoding="utf-8")
-        for word in ("wfsetup", "workflow_setup import", "import subprocess", "import os"):
+        for word in ("wfsetup", "workflow_setup", "import subprocess", "import os", "defaults.toml"):
             self.assertNotIn(word, source)
 
 
