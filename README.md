@@ -38,137 +38,35 @@ the tag `v1.0`; [Moving from v1](#moving-from-v1) says how to get from there to 
 
 ## Installation
 
-There are two installers. The collaboration skill, `multiagent-collab`, has its own,
-described after the quick start; the setup tool leaves that skill alone, whatever is at its path.
-Everything else (the other seven skills, the rule and the roles) is installed by the setup
-tool, each skill and the rule as the setting `setup.enabled` lists them (`csv-tools`,
-`json-tools`, `usage-cost` and the rule are off by default; see Settings):
-[Quick start](#quick-start) gives the steps for each kind of machine, and
-[Skills](#skills) below says what each command does. The two may use one clone or two:
-`doctor` reports a collaboration skill linked from another clone as information, not as a
-fault.
+One program installs the skills, the rule and the roles: `tools/setup/setup.py`. Run alone
+it shows every option with its value now; Enter accepts them all and shows the plan, and
+"Apply? [Y/n]" applies it. `--yes` applies what the screen would show with no question,
+`--dry-run` shows the plan and writes nothing, `--check` checks an install and writes
+nothing, `--uninstall` takes it back, and `setup.py --help` lists the rest. A second run
+with nothing to change plans nothing. `multiagent-collab` has its own installer, in the
+next section; setup leaves that skill alone.
 
 ### Quick start
 
 You need git, Python 3.11 or later, and at least one provider: Claude Code, the Codex CLI
-or both. Setup installs for each provider it finds installed (its program is on `PATH`, or
-its home exists). It uses the Python standard library alone, so there is nothing to
-`pip install`. A dry run writes nothing, a second run with nothing to change plans nothing,
-and `uninstall` takes an install back. `multiagent-collab` is optional and has its own
-installer, in the next section.
+or both. Setup installs for each provider it finds (its program is on `PATH`, or its home
+exists). It uses the Python standard library alone, so there is nothing to `pip install`.
 
 | Your machine | Steps |
 |--------------|-------|
-| Linux, macOS, or WSL used on its own (nothing on the Windows side uses these skills) | [Linux, macOS, or WSL alone](#linux-macos-or-wsl-alone) |
-| Windows, with the providers installed in Windows and no WSL in use | [Windows](#windows) |
-| Windows and WSL on one machine, the providers used from both | [Windows and WSL together](#windows-and-wsl-together) |
-
-Then, on any machine: install [the process alone, without roles](#the-process-alone-without-roles),
-or the roles as well, now or [later](#adding-roles-later). The steps below install the
-roles.
+| Linux, macOS, or WSL used on its own | [Linux, macOS, or WSL alone](#linux-macos-or-wsl-alone) |
+| Windows, with no WSL in use | [Windows](#windows) |
+| Windows and WSL, the providers used from both | [Windows and WSL together](#windows-and-wsl-together) |
 
 #### Linux, macOS, or WSL alone
 
-On WSL with the clone inside WSL's own file system, allow that clone once, before
-`render`: see "WSL used alone" below the commands.
-
 ```bash
 git clone https://github.com/yzaremba/ai-skills.git ~/workspace/ai-skills
-cd ~/workspace/ai-skills
-python3 --version                                     # 3.11 or later
-python3 tools/setup/workflow_setup.py homes           # reads only: the homes it would handle
-python3 tools/setup/workflow_setup.py render --dry-run
-python3 tools/setup/workflow_setup.py render
-python3 tools/setup/workflow_setup.py doctor
+python3 ~/workspace/ai-skills/tools/setup/setup.py
 ```
 
-- **Where to clone.** `~/workspace/ai-skills` is the recommended place, and the one the
-  `multiagent-collab` section uses, so that one clone serves both installers. Any other
-  directory that stays works too. Every link setup makes leads into the clone, so moving
-  or deleting the clone breaks the install
-  (`uninstall --help` says how to take back an install whose clone moved, with
-  `--clone-was`).
-- **What `render` does.** It links each enabled skill into `~/.claude/skills` and, for Codex,
-  `~/.agents/skills`; links the rule, when enabled, into `~/.claude/rules`; and generates the role
-  definitions and the entry points of a session, which its output lists under "entry
-  points". `doctor` checks all of it and writes nothing; exit code 1 means an error. It
-  starts the providers' programs (`--version`, Codex's model list), which may write state
-  of their own into their homes. `render` too starts Codex's model list (`codex debug
-  models`), also with `--dry-run`, where it renders the Codex home, and ends its output with a
-  note on any model the list offers and the dictionary lacks; a list it cannot read is one
-  line, and neither changes the exit code. `--no-model-list` leaves it out.
-- **WSL used alone.** Setup sees WSL as one side of a Windows machine and, by default,
-  refuses a clone that the Windows side cannot read, which is any clone inside WSL's own
-  file system. Where nothing on the Windows side uses these skills, allow it once: `init`
-  asks, on such a clone, and `--allow-unshared-clone` answers. It writes
-  `setup.allow_unshared_clone = true` in `~/.agents/workflow.toml` (the line can also be
-  written by hand, under `[setup]`), and `render` and `doctor` then accept the clone on
-  every run; `render` says which setting allowed it, and `doctor` reports the clone as
-  information, not as an error:
-
-  ```bash
-  python3 tools/setup/workflow_setup.py init --allow-unshared-clone --dry-run
-  python3 tools/setup/workflow_setup.py init --allow-unshared-clone
-  python3 tools/setup/workflow_setup.py render --dry-run
-  python3 tools/setup/workflow_setup.py render
-  python3 tools/setup/workflow_setup.py doctor
-  ```
-
-  `init` asks its other questions as well; away from a terminal add `--yes`, which accepts
-  what it proposes for them. For a single run instead, give `--allow-unshared-clone` to
-  `render` or `doctor` (`doctor` then reports a warning). A clone on a Windows drive
-  (`/mnt/c/...`) needs neither: that is
-  [Windows and WSL together](#windows-and-wsl-together).
-- **macOS is not tested.** The setup tool has no code of its own for macOS: it takes it
-  as any POSIX system, with symbolic links and the homes `~/.claude`, `~/.codex` and
-  `~/.agents`. No test run or gate recorded here was made on a Mac. Read the dry run and
-  the `doctor` output before relying on it.
-- **Settings, optional.** Without a settings file, the model each role runs on and the
-  process settings are the shipped ones, and the model of each tier follows the shipped
-  provider dictionaries: a `git pull` followed by `render` can change it. `init` writes
-  `~/.agents/workflow.toml`: it asks which model each tier means for each installed
-  provider, and the process, roles and memory settings, shows what it will write, and
-  keeps the models you confirmed until you run it again. Run `render` after it:
-
-  ```bash
-  python3 tools/setup/workflow_setup.py init --dry-run
-  python3 tools/setup/workflow_setup.py init
-  python3 tools/setup/workflow_setup.py render
-  ```
-
-  It asks on a terminal only. Elsewhere (an agent session, a pipe) give `--yes`, which
-  accepts what is proposed, or the answer flags `init --help` lists.
-- **On Codex: `render --apply-codex-settings`.** Codex's default sandbox keeps `.git`
-  read-only, so a commit or a worktree needs approval command by command; and with no
-  limit set Codex was seen to allow four agents, the main session counted, which is fewer
-  than the Manager, the Implementation Manager and three parallel Coders; and an agent that
-  waits with a short timeout wakes again and again, each time reading its whole context.
-  With this option `render` writes, in marked blocks of your Codex `config.toml`,
-  `agents.max_concurrent_threads_per_session = 8`; a wait floor,
-  `[features.multi_agent_v2]` with `min_wait_timeout_ms = 300000` and
-  `default_wait_timeout_ms = 3600000`, so that Codex raises a shorter wait to five minutes;
-  and a permission profile, `workflow`
-  (permission profiles are beta in Codex), that makes `.git` writable. `--worktree-root DIR`
-  also makes the directory your worktrees are made under writable, and
-  `--default-codex-permissions` writes the profile and selects it. Codex 0.163.0 refuses to
-  load a config that defines a profile and sets no `default_permissions`, so without the
-  option the profile is written, unselected, only where your file sets
-  `default_permissions` itself, and is otherwise printed as text. While the file sets
-  `sandbox_mode` no profile is written, and a file that defines `features.multi_agent_v2`
-  itself gets no floor: its values are reported and the lines to add are printed. Where
-  the Manager is a loaded role on Codex, it also pins the Manager's model and effort as
-  `model` and `model_reasoning_effort` in the block at the head of the file, so every plain
-  `codex` session in that home starts on them, the Manager's or not: that cost is accepted.
-  Where your file sets either key itself, neither is written, and `render` and `doctor` name
-  the lines to delete. It helps
-  the process alone too: its sprint worktree and commits meet
-  the same sandbox ("The sprint worktree" in `prd-implementation/references/codex.md`).
-  `doctor --only codex-settings` says what the option would do, and
-  `render --remove-codex-settings` takes it out; more under "Git on Codex" in
-  [Limits known so far](#limits-known-so-far).
-- **A project.** Nothing is written into a project unless it is named.
-  `render --project DIR` writes there what the project's settings ask for, such as the
-  Manager as the default of every session: "A project" under [Using it](#using-it).
+Every link setup makes leads into the clone, so keep it where it is. macOS is not tested:
+setup takes it as any POSIX system.
 
 #### Windows
 
@@ -176,185 +74,78 @@ In PowerShell:
 
 ```powershell
 git clone https://github.com/yzaremba/ai-skills.git $HOME\workspace\ai-skills
-cd $HOME\workspace\ai-skills
-py -3 --version                                       # 3.11 or later
-py -3 tools/setup/workflow_setup.py homes
-py -3 tools/setup/workflow_setup.py render --dry-run
-py -3 tools/setup/workflow_setup.py render
-py -3 tools/setup/workflow_setup.py doctor
+py -3 $HOME\workspace\ai-skills\tools\setup\setup.py
 ```
 
-- **The interpreter.** `py -3` is the Python launcher; `python` does as well where it runs
-  Python 3.11 or later.
-- **Links are directory junctions.** On Windows setup links each skill and the rule as a
-  directory junction, which needs neither Developer Mode nor an administrator; a symbolic
-  link would need one of the two.
-- **The clone is on a local drive.** A junction leads only to a directory on a local
-  drive, so `render` refuses a clone on a network drive or under a UNC path. Your user
-  profile, as in the example, is on a local drive.
-- **The homes** are `.claude`, `.codex` and `.agents` in your user profile, or where
-  `CLAUDE_CONFIG_DIR` and `CODEX_HOME` point.
-- **What was checked.** The setup tool's tests pass under a Windows Python. Run natively
-  on Windows, `doctor --prove-discovery` showed Claude Code and Codex reading every skill
-  through the junctions: "Native Windows" under [Limits known so far](#limits-known-so-far).
-- Settings, a project and, on Codex, `render --apply-codex-settings` work as in the Linux
-  steps, with `py -3` for `python3`.
+Setup links each skill as a directory junction, which needs neither Developer Mode nor an
+administrator. The clone must be on a local drive.
 
 #### Windows and WSL together
 
-Where Claude Code or Codex is used both from Windows and from inside WSL, each side has its
-own homes (`.claude` in your Windows user profile, `~/.claude` in WSL, and so on), and each
-side's homes are installed from that side. By default both link to one clone on a Windows
-drive, so that one `git pull` reaches both: the clone of the Windows steps,
-`$HOME\workspace\ai-skills`, which WSL reads through its mount as
-`/mnt/c/Users/<you>/workspace/ai-skills`. A Windows install made by those steps therefore
-needs no new clone when WSL is added. Clone, and install the Windows side, in PowerShell:
-
-```powershell
-git clone https://github.com/yzaremba/ai-skills.git $HOME\workspace\ai-skills
-cd $HOME\workspace\ai-skills
-py -3 tools/setup/workflow_setup.py render --dry-run
-py -3 tools/setup/workflow_setup.py render
-py -3 tools/setup/workflow_setup.py doctor
-```
-
-Then the WSL side, from the same clone, in a WSL shell:
+Each side has its own homes and is installed from that side, from one clone on a Windows
+drive, so that one `git pull` reaches both. Clone and install in PowerShell as above, then
+run in a WSL shell the command setup prints at the end of its run:
 
 ```bash
-cd /mnt/c/Users/<you>/workspace/ai-skills
-python3 tools/setup/workflow_setup.py render --dry-run
-python3 tools/setup/workflow_setup.py render
-python3 tools/setup/workflow_setup.py doctor
+python3 /mnt/c/Users/<you>/workspace/ai-skills/tools/setup/setup.py
 ```
 
-- **Each side writes its own places.** `homes`, on either side, prints which places that
-  side writes. A place whose real path is on the other side (a WSL home that links its
-  `CLAUDE.md` into the Windows home, for example) is skipped there and written by the run
-  on the other side. So `render` runs on both sides, the first time and after a pull.
-- **Order.** Either side first, unless a v1 install is present: then Windows first and WSL
-  straight after, as [Moving from v1](#moving-from-v1) says.
-- **Settings.** Each side has its own `~/.agents/workflow.toml`: run `init` on each side
-  where you want one.
-- **Pull that clone with Windows git.** Git run from WSL on a clone under `/mnt/c` can
-  show every file as modified.
-- **Any other location** on a local Windows drive works the same way, read from WSL under
-  `/mnt/<drive>/`.
-- **Two clones instead.** `--allow-unshared-clone` installs a side from a clone that only
-  that side can read, such as a clone inside WSL's file system. Without it, as
-  `render --help` puts it, "every home links to one shared clone". With two clones each
-  side links to its own: a pull in one does not reach the other, keeping both at the same
-  commit is yours to do, and the side whose clone the other cannot read allows it once,
-  with `init --allow-unshared-clone` on that side (or the option on each run), as in
-  "WSL used alone" above.
+Pull that clone with Windows git: git run from WSL on a clone under `/mnt/c` can show every
+file as modified.
+
+#### A project
+
+```bash
+python3 ~/workspace/ai-skills/tools/setup/setup.py /path/to/project
+```
+
+The screen then also offers the project's own list of items, and whether every Claude Code
+session in it starts as the Manager. Setup writes in the project `.agents/workflow.toml` and
+`.claude/settings.json` at most, as files to commit (it commits nothing, and prints the
+`git add` and `git commit` lines), and lists everything else it makes there in the
+repository's exclude file. Add `--manager-default` for the Manager as the default.
+
+#### After a `git pull`
+
+Run the same command again: Enter twice on the screen, or `--yes`. What is generated is
+generated again from the clone.
+
+```bash
+python3 ~/workspace/ai-skills/tools/setup/setup.py --yes
+```
 
 #### The process alone, without roles
 
-`prd-implementation` needs no role, nor do `epic-implementation` and `project-memory`. To
-install the skills and the rule and no role, say so once, then render (with `py -3` on
-Windows, and with the clone allowed where your case above needs it):
+`prd-implementation`, `epic-implementation` and `project-memory` need no role. On the screen
+open the items line and untick `roles`; or give the list without it:
 
 ```bash
-python3 tools/setup/workflow_setup.py init --no-roles --dry-run
-python3 tools/setup/workflow_setup.py init --no-roles
-python3 tools/setup/workflow_setup.py render --dry-run
-python3 tools/setup/workflow_setup.py render
-python3 tools/setup/workflow_setup.py doctor
+python3 ~/workspace/ai-skills/tools/setup/setup.py --yes --install prd-implementation epic-implementation project-memory self-reflection
 ```
 
-- **What you get.** Every enabled skill linked for each provider it names, and the rule on
-  Claude Code when it is enabled, as above. `csv-tools`, `json-tools`, `usage-cost` and the
-  rule are disabled by default; `setup.enabled` under Settings turns them on. `init --no-roles` writes
-  `roles.enabled = false` in `~/.agents/workflow.toml` (or write that line yourself, under
-  `[roles]`), and every later `render` installs the process alone: no role definition and
-  no entry point, in a home or a project. Its output says the roles are off and which file
-  turned them off. A run removes the roles an earlier run generated, and keeps one that
-  was edited by hand. `init` asks its other questions as well; away from a terminal add
-  `--yes`.
-- **A project rendered with roles before.** A `render` without `--project` writes nothing
-  in a project, and setup keeps no list of the projects it rendered. Such a project keeps
-  its starting role (`"agent"` in `.claude/settings.json` and setup's block in
-  `.codex/config.toml`), which names a definition the home no longer has: run
-  `render --project DIR` for each one to take it out. `render` and `doctor` say so while
-  the roles are off.
-- **For a single run.** `render --no-roles` does the same for that run alone, whatever
-  the setting says; the next `render` without it follows the setting again.
-- **How you use it.** In any session in the project, the skill loads when a request
-  matches its description ("start a sprint", "write the PRD", "implement P1.2") or a sprint
-  doc is read or edited, or when it is named: `/prd-implementation` on Claude Code,
-  `$prd-implementation` on Codex. One session runs every stage and stops at every gate for
-  your word. In implementation it is the build lead: by default it hands each step to a
-  separate agent it starts (or implements inline, if you say so or none can be
-  started) and has the code reviewed by an agent that did not write it, at the cadence you
-  choose; `prd-implementation/references/claude-code.md` and `codex.md` say how on each
-  provider.
-  The settings still apply: `process.docs_dir` (where the sprint docs live, `docs` by
-  default), `process.questions`, `process.recommend` (`true`, `false` or `"accept"`),
-  `process.density` and `memory.dir`. `init` (or `init --project DIR` for one project) writes
-  all but `process.density` and the `"accept"` value, which it does not ask for: set those in
-  a settings file.
-- **What you give up.** What the roles add: a model and effort pinned to each kind of work
-  (the shipped profiles put the reviewers on the frontier tier, a Coder on the standard
-  one); a reviewer other than the author for the PRD and the PLAN (alone, the session that
-  writes the PRD makes its critical pass itself, while the code is reviewed by a fresh
-  agent either way); the limits a definition enforces on Claude Code, such as a reviewer
-  or a Manager with no editing tool (the Manager keeps a shell, so writing no file through
-  it is an instruction); a Manager that routes each request and holds the gates; and a
-  fresh context for each document. With one session, its model and its context serve
-  every stage.
-- **Without the setup tool.** The process skills work without it: a skill reaches no path
-  outside its own directory except the setup tool beside it, and works where that is
-  missing. A skill directory can be linked by hand into each provider's skills directory:
+One session then runs every stage and stops at every gate for your word. Without roles you
+give up what they add: a model and effort pinned to each kind of work, a reviewer other than
+the author for the PRD and the PLAN, and a Manager that routes each request. Tick `roles`
+again (or add it to `--install`) to get them back; [Using it](#using-it) lists them.
 
-  ```bash
-  mkdir -p ~/.claude/skills ~/.agents/skills
-  ln -s ~/workspace/ai-skills/prd-implementation ~/.claude/skills/prd-implementation   # Claude Code
-  ln -s ~/workspace/ai-skills/prd-implementation ~/.agents/skills/prd-implementation   # Codex
-  ```
+#### Claude Code in the cloud
 
-  On Windows the link is a junction:
-  `New-Item -ItemType Junction -Path $HOME\.claude\skills\prd-implementation -Target $HOME\workspace\ai-skills\prd-implementation`,
-  and the same for `$HOME\.agents\skills`; `epic-implementation` and `project-memory` are
-  linked the same way. A linked skill finds the clone through its link
-  and reads the settings files as with setup. A copy has no setup tool beside it: its
-  scripts use the built-in defaults and read no settings file. Setup did not make such a
-  link, so a home's `render` stops on it as a conflict, and names it: remove the links you
-  made before the first `render`. A link made by hand at a project's path
-  (`DIR/.claude/skills/<name>`, `DIR/.agents/skills/<name>`) that leads to the same skill of
-  the clone is taken over by `render --project DIR`; `uninstall --project DIR` then leaves
-  it in place, and taking the skill off the list removes it. A hand-made link in a home still
-  stops `render` as a conflict, `render --project` included, since that refreshes the homes too.
+In a Claude Code cloud environment, the setup script clones this repository and runs setup
+for the Claude Code home, then for the project:
 
-#### Adding roles later
+```bash
+#!/bin/bash
+set -e
+git clone https://github.com/yzaremba/ai-skills.git ~/ai-skills
+python3 ~/ai-skills/tools/setup/setup.py --yes --provider claude-code
+python3 ~/ai-skills/tools/setup/setup.py --yes /home/user/<repo name>
+```
 
-Turn the roles on with `init --roles`, which takes `roles.enabled = false` out of
-`~/.agents/workflow.toml` (or set it to `true` there yourself), then run `render`. It
-generates the role definitions and the entry points beside the skills already linked.
-The same `init` run sets which model each tier means. There is no `render` option that
-turns the roles on against the setting: what one run generated, the next would remove.
-Then a session starts as the Manager:
-
-| | Claude Code | Codex |
-|-|-------------|-------|
-| A session started as the Manager | `claude --agent manager --effort medium`; `render` prints the command with the effort your settings give, under "entry points" | `codex --profile manager --no-daemon` |
-| The Manager loaded into a session | `/manager` | `$manager` |
-| Every session in a project starts as the Manager | `init --project DIR --manager-default`, then `render --project DIR` | The same; Codex reads the project's `.codex/config.toml` only in a trusted project |
-
-On Codex `--profile` always runs the session embedded, without the shared app-server
-daemon; `--no-daemon` only states that and silences Codex's warning ("--profile requires
-embedded mode"). The flag was checked on Codex CLI 0.160.0 and 0.163.0. Which to use: the
-profile pins the Manager's model and effort, but its session is not on the daemon that
-`codex remote-control` manages, so `codex agents` does not list it and it has no remote
-control. To keep the daemon and remote control, start `codex` in the project and type
-`$manager`: the loaded Manager names its pinned model and effort, and `/model` switches
-to them.
-
-The Manager routes each request to the role that owns it: [Using it](#using-it) lists the
-nine roles and what each does. `init --no-roles` goes back to the process alone, and
-`render --no-roles` for one run; then run `render --project DIR` for each project
-rendered with roles, to take out its starting role. A project can turn its own roles off with
-`init --project DIR --no-roles`; it gets roles only where the home has them. On
-Codex, see `render --apply-codex-settings` in the Linux steps: with roles, a parallel group
-needs more agents than Codex allows with no limit set.
+The second run is the project's: the cloud session keeps the repository at
+`/home/user/<repo name>`, and without that line an item the project's `install` adds to the
+home's is missing. A project committed with `"agent"` in `.claude/settings.json` starts a
+fresh session as the Manager. A project whose sprint docs live in another repository does
+not run its sprints in the cloud, since a cloud session holds the one repository.
 
 ### `multiagent-collab` for Codex and Claude
 
