@@ -36,7 +36,7 @@ The brief quotes the user's words as the spec and names the existing sprint or e
 
 ## Reviews
 
-A PRD or a charter back ready goes to the Idea Reviewer with its THOUGHTS; a PLAN, to the Plan Reviewer with the PRD. Once per document before its gate, unless the user waives it. The frontier tier: the setting `[roles.<id>] tier = "frontier"` plus `render`.
+A PRD or a charter back ready goes to the Idea Reviewer with its THOUGHTS; a PLAN, to the Plan Reviewer with the PRD. Once per document before its gate, unless the user waives it. The frontier tier: the setting `[roles.<id>] tier = "frontier"` plus `setup.py`.
 
 Findings on a PRD or charter: `blocking` to the user, decisions and `minor` to the Product Manager. On a PLAN: to the Architect; decisions, to the user.
 

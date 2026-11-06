@@ -532,7 +532,7 @@
 
       <section class="panel" aria-label="One source, two providers">
         <p class="section-title">One source, two providers</p>
-        <p class="gen"><code>render</code> writes each role's definition for <b>Claude Code</b> and for <b>Codex</b>. A role names a tier, never a model; the dictionary maps the tier, and your settings may change it.</p>
+        <p class="gen"><code>setup.py</code> writes each role's definition for <b>Claude Code</b> and for <b>Codex</b>. A role names a tier, never a model; the dictionary maps the tier, and your settings may change it.</p>
         <table class="tiers">
           <thead><tr><th>Tier</th><th>Claude Code</th><th>Codex</th></tr></thead>
           <tbody>
@@ -552,18 +552,18 @@
       <p class="chip-label">Start as the Manager</p>
       <p class="chip-main">claude --agent manager --effort medium</p>
       <p class="chip-main">codex --profile manager --no-daemon</p>
-      <p class="chip-sub">or <code>$manager</code> in a <code>codex</code> session, to keep the shared daemon and remote control; or the project default <code>roles.manager_default</code>: <code>init --project DIR --manager-default</code>, then <code>render --project DIR</code>; Codex honours it only in a trusted project</p>
+      <p class="chip-sub">or <code>$manager</code> in a <code>codex</code> session, to keep the shared daemon and remote control; or the project default <code>roles.manager_default</code>: <code>setup.py DIR --manager-default</code>; Codex honours it only in a trusted project</p>
     </div>
     <div class="chip">
       <p class="chip-label">Settings · later layer wins</p>
       <p class="chip-main">~/.agents/workflow.toml</p>
       <p class="chip-main">&lt;project&gt;/.agents/workflow<span class="var">[.local]</span>.toml</p>
-      <p class="chip-sub">over the shipped defaults, key by key; <code>show roles</code> prints each role's model and effort</p>
+      <p class="chip-sub">over the shipped defaults, key by key; <code>setup.py</code> shows each role's model and effort</p>
     </div>
     <div class="chip">
       <p class="chip-label">Setup</p>
-      <p class="chip-main">workflow_setup.py <span class="var">init</span> · <span class="var">render</span> · <span class="var">doctor</span></p>
-      <p class="chip-sub">init proposes the mapping, render writes the definitions, doctor checks drift and discovery</p>
+      <p class="chip-main">setup.py <span class="var">DIR</span> · <span class="var">--check</span> · <span class="var">--uninstall</span></p>
+      <p class="chip-sub"><code>setup.py</code> proposes the mapping and writes the definitions, <code>--check</code> checks drift, <code>--uninstall</code> takes them out</p>
     </div>
   </footer>
 

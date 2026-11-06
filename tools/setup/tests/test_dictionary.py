@@ -150,7 +150,7 @@ class RepositoryDictionaryTests(support.ScratchCase):
                 self.assertNotIn(b"\r", raw)
                 header = raw.decode("utf-8").split("\n\n")[0]
                 self.assertTrue(all(line.startswith("#") for line in header.splitlines()), header)
-                self.assertIn("`init`", header)
+                self.assertIn("`setup.py`", header)
                 self.assertIn("confirms", header)
 
     def test_each_carries_the_schema_version(self) -> None:
