@@ -440,7 +440,7 @@ class GitLinesTests(ProgramCase):
             code, out, err = self.setup("--yes", "--manager-default", str(self.project))
         self.assertEqual((code, err), (0, ""), out)
         self.assertNothingAt(self.config)
-        self.assertIn("was not checked: git could not be started", out)
+        self.assertIn("was not checked: git could not be started, did not answer or failed", out)
         self.assertIn("will not start as lead", out)
 
     def test_the_other_sides_command_from_wsl_and_from_windows(self) -> None:
@@ -529,12 +529,16 @@ class GitLinesTests(ProgramCase):
         # Not the repository's owner: git exits 128, which is no answer.
         with mock.patch.dict(os.environ, {"GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}):
             self.assertIsNone(gitrepo.tracked(self.project, self.CODEX_CONFIG))
+            # Nor is it an answer for a subdirectory of the repository.
+            (self.project / "sub").mkdir()
+            self.assertIsNone(gitrepo.tracked(self.project / "sub", self.CODEX_CONFIG))
             code, out, err = self.setup("--yes", "--manager-default", str(self.project))
         self.assertEqual((code, err), (0, ""), out)
         self.assertEqual(self.config.read_bytes(), before)
         self.assertIn("was not checked", out)
-        # A directory with no repository is not tracked.
-        self.assertIs(gitrepo.tracked(self.project.parent, "x"), False)
+        # A directory with no repository at all is not tracked.
+        with mock.patch.object(gitrepo.os.path, "lexists", return_value=False):
+            self.assertIs(gitrepo.tracked(self.project.parent, "x"), False)
 
     @unittest.skipUnless(shutil.which("git"), "needs git")
     def test_a_file_taken_out_again_is_listed_only_if_git_tracks_it(self) -> None:

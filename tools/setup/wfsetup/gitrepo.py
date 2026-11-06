@@ -153,8 +153,8 @@ def tracked(project: Path, relative: str) -> bool | None:
     """Whether git tracks the file ``relative`` (R6.4) of the repository at
     ``project``: ``git -C DIR ls-files --error-unmatch -- FILE``, which
     only reads. Exit 0 is tracked, 1 not tracked. Any other exit counts as
-    not tracked where the project has no ``.git`` (no repository); where it
-    has one, git failed for another reason (dubious ownership, say) and the
+    not tracked where neither the project nor a directory above it has a
+    ``.git`` (no repository at all); where one does, git failed for another reason (dubious ownership, say) and the
     answer is None, like where ``git`` could not be started or did not answer
     in time: the caller does not know."""
     try:
@@ -167,4 +167,5 @@ def tracked(project: Path, relative: str) -> bool | None:
         return None
     if done.returncode in (0, 1):
         return done.returncode == 0
-    return None if os.path.lexists(Path(project) / GIT) else False
+    here = Path(os.path.abspath(project))
+    return None if any(os.path.lexists(d / GIT) for d in (here, *here.parents)) else False

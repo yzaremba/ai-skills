@@ -721,6 +721,8 @@ def _after(found: homes.Homes, where: locations.Locations, prepared: Any, outcom
         if side == homes.WINDOWS:
             clone = render._windows_path(str(found.clone)).rstrip("\\")
             target = None if project is None else render._windows_path(str(project))
+            if target is not None and target.startswith("/"):
+                target = None   # in the Linux file system: Windows reads it by no path formed here
             program = clone + "\\" + script.replace("/", "\\")
             command = [f"py -3 {_quoted(program, True)}"]
             command += [] if target is None else [_quoted(target, True)]

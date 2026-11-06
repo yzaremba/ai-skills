@@ -1690,7 +1690,7 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
                     # R6.4: nothing is written into a file git tracks, or may track.
                     run.notes.append(
                         f"project: {path} " + (
-                            "is tracked by git" if tracked else "was not checked: git could not be started"
+                            "is tracked by git" if tracked else "was not checked: git could not be started, did not answer or failed"
                         ) + f", so setup writes nothing there: Codex sessions in the project will not start as {role}"
                     )
                     run.project_facts["codex_default"] = "tracked" if tracked else "unknown"
