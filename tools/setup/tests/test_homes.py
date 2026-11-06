@@ -195,26 +195,6 @@ class ResolutionCase(HomesCase):
         self.assertFalse(Locations(home=self.home).real_home)
         self.assertTrue(homes.resolve(self.locations(), self.host()).scratch)
 
-    def test_the_command_line_ignores_the_variables_with_home(self) -> None:
-        elsewhere = self.root / "elsewhere"
-        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(elsewhere), "CODEX_HOME": str(elsewhere)}):
-            code, out, err = support.run("homes", "--json", "--home", str(self.home))
-        self.assertEqual((code, err), (0, ""))
-        found = json.loads(out)
-        self.assertTrue(found["scratch"])
-        self.assertEqual(
-            [provider["home"] for provider in found["providers"]],
-            [str(self.home / ".claude"), str(self.home / ".codex")],
-        )
-        self.assertNotIn("elsewhere", out)
-
-    def test_help_says_that_home_ignores_the_variables(self) -> None:
-        code, out, _ = support.run("homes", "--help")
-        flat = " ".join(out.split())
-        self.assertEqual(code, 0)
-        self.assertIn("CLAUDE_CONFIG_DIR and CODEX_HOME are ignored", flat)
-        self.assertIn("DIR/.claude and DIR/.codex", flat)
-
     def test_a_variable_set_to_nothing_is_not_set(self) -> None:
         found = self.found(self.host(CLAUDE_CONFIG_DIR="", CODEX_HOME="   "))
         self.assertEqual(found.provider(homes.CLAUDE_CODE).home, self.home / ".claude")
@@ -537,7 +517,8 @@ class CloneCase(HomesCase):
     def test_seen_from_windows_a_clone_off_a_local_drive_is_a_stop_not_a_warning(self) -> None:
         windows = homes.Host(homes.WINDOWS, {}, ())
         standing = homes.CloneStanding(self.clone, self.clone, False, "not on a local drive")
-        with mock.patch.object(homes, "clone_standing", return_value=standing):
+        with mock.patch.object(homes, "clone_standing", return_value=standing), \
+                mock.patch.object(homes.fsio, "local_drive_path", return_value=False):   # on a Windows host the clone is on one
             found = self.at(self.clone, windows)
             self.assertIsNone(homes.clone_warning(found))
             with self.assertRaises(SetupError) as raised:
@@ -589,12 +570,6 @@ class CloneCase(HomesCase):
         found = self.at(self.clone, homes.Host.current())
         self.assertEqual(found.host.side, homes.WINDOWS)
         self.assertIs(homes.clone_standing(found).shared, True)
-
-    def test_the_command_reports_and_does_not_refuse(self) -> None:
-        with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.wsl())):
-            code, out, err = support.run("homes", "--home", str(self.home))
-        self.assertEqual((code, err), (0, ""))
-        self.assertIn("  shared by both sides: not asked (a scratch home (--home))", out.splitlines())
 
 
 class LinkCase(HomesCase):

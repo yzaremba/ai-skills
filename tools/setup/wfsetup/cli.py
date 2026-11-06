@@ -5,7 +5,7 @@ it is, one ``error:`` line per problem; anything the system refused that no
 module turned into one (``OSError``) is printed by the backstop in ``main``
 as ``error: <file>: <reason>``. Both exit with ``EXIT_ERROR``.
 
-An interrupt (Ctrl-C) ends every command with one line and
+An interrupt (Ctrl-C) ends every program with one line and
 ``EXIT_INTERRUPT`` (130), never a traceback, from the first statement of
 the script on. One that arrives earlier, while Python itself is starting,
 is Python's to report: no code of the tool runs yet. A real process
@@ -17,7 +17,7 @@ kill that cannot be caught (SIGKILL, the power) leaves the same on disk,
 and the lock besides.
 
 Options are never abbreviated (``allow_abbrev=False`` on every parser): an
-abbreviation that is unique today turns ambiguous when a command gains an
+abbreviation that is unique today turns ambiguous when the program gains an
 option, and a caller's script would break with it.
 """
 from __future__ import annotations
@@ -26,77 +26,11 @@ import argparse
 import os
 import signal
 import sys
-from types import FrameType, ModuleType
+from types import FrameType
 from typing import Callable
 
-from . import commands, fsio, paths
+from . import fsio, paths
 from .errors import EXIT_ERROR, EXIT_INTERRUPT, EXIT_PIPE, SetupError
-
-PROG = "workflow_setup.py"   # setup.py's is ``program.PROG``
-DESCRIPTION = "Set up and inspect the workflow: settings, skills, roles and rules."
-
-
-def _add(subparsers: argparse._SubParsersAction, name: str, module: ModuleType) -> None:
-    sub = subparsers.add_parser(
-        name,
-        help=str(getattr(module, "SUMMARY", "")).replace("%", "%%"),
-        description=module.__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        allow_abbrev=False,
-    )
-    configure = getattr(module, "configure", None)
-    if configure is not None:
-        configure(sub)
-    sub.set_defaults(run=module.run)
-
-
-def _refuse(name: str, why: str) -> Callable[[argparse.Namespace], int]:
-    def run(args: argparse.Namespace) -> int:
-        raise SetupError(f"command {name}: unavailable: {why}")
-    return run
-
-
-def build_parser(argv: list[str]) -> argparse.ArgumentParser:
-    """The parser for ``argv``.
-
-    When ``argv`` starts with a command's name, that command's module is the
-    only one imported, so a fault in another command's module cannot get in
-    the way. Otherwise (``--help``, no command, a name that is not one)
-    every candidate is imported for the list, each on its own: one that
-    fails is listed as unavailable.
-    """
-    parser = argparse.ArgumentParser(prog=PROG, description=DESCRIPTION, allow_abbrev=False)
-    subparsers = parser.add_subparsers(dest="command", metavar="<command>", required=True)
-    if argv and argv[0] in commands.names():
-        name = argv[0]
-        module = commands.load(name)
-        if module is not None:
-            try:
-                _add(subparsers, name, module)
-            except Exception as exc:  # the module's own ``configure``
-                raise SetupError(f"command {name}: unavailable: {commands.reason(exc)}") from None
-            return parser
-    found, unavailable = commands.survey()
-    for name in commands.names():
-        if name in found:
-            try:
-                # Tried on a parser of its own first: a subparser cannot be
-                # taken back once it is added.
-                configure = getattr(found[name], "configure", None)
-                if configure is not None:
-                    configure(argparse.ArgumentParser(allow_abbrev=False))
-                _add(subparsers, name, found[name])
-                continue
-            except Exception as exc:
-                unavailable[name] = commands.reason(exc)
-        if name in unavailable:
-            why = unavailable[name]
-            stub = subparsers.add_parser(
-                name, help=f"unavailable: {why}".replace("%", "%%"), add_help=False, allow_abbrev=False
-            )
-            stub.set_defaults(run=_refuse(name, why))
-    return parser
-
 
 def _complain(*lines: str) -> None:
     """Print error lines to stderr; a stderr that cannot be written to is
@@ -138,18 +72,11 @@ def _interrupted(exc: BaseException) -> int:
     return EXIT_INTERRUPT if number is None else 128 + number
 
 
-def _commands(argv: list[str]) -> int:
-    """The runner of ``workflow_setup.py``: the command ``argv`` names."""
-    args = build_parser(argv).parse_args(argv)
-    return args.run(args)
-
-
-def main(argv: list[str] | None = None, runner: Callable[[list[str]], int] | None = None) -> int:
+def main(argv: list[str] | None, runner: Callable[[list[str]], int]) -> int:
     """Run ``runner`` on the arguments and return its exit code. The runner
-    is a function of the argument list that parses it and does the work;
-    without one it is the command ``argv`` names (``workflow_setup.py``).
-    ``setup.py`` gives its own (``program.main``), so both scripts share the
-    backstop below.
+    is a function of the argument list that parses it and does the work
+    (``program.main``, ``validate_program.main``); the backstop below is
+    shared by the programs.
 
     A ``SetupError`` is printed to stderr, one ``error:`` line per problem,
     and gives ``EXIT_ERROR``. A usage error leaves through ``argparse``,
@@ -160,7 +87,7 @@ def main(argv: list[str] | None = None, runner: Callable[[list[str]], int] | Non
     """
     argv = sys.argv[1:] if argv is None else list(argv)
     try:
-        return (runner or _commands)(argv)
+        return runner(argv)
     except KeyboardInterrupt as exc:
         return _interrupted(exc)
     except SetupError as exc:
@@ -223,7 +150,7 @@ def _take_signals() -> None:
             pass
 
 
-def run_from_command_line(runner: Callable[[list[str]], int] | None = None) -> int:
+def run_from_command_line(runner: Callable[[list[str]], int]) -> int:
     """``main`` for a real process, with the ``runner`` of ``main``.
 
     Output is UTF-8 with LF on every platform, whatever the console's own
@@ -245,7 +172,7 @@ def run_from_command_line(runner: Callable[[list[str]], int] | None = None) -> i
     try:
         _take_signals()
         try:
-            code = main(runner=runner)
+            code = main(None, runner)
         except SystemExit as exc:
             # ``argparse`` leaves this way: ``--help`` (0) and a usage
             # error (2). What it printed is flushed here like any output.

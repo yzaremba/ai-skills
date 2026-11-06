@@ -122,7 +122,7 @@ class ProposalTests(SettingsCase):
         self.assertNotIn(str(self.home), text)
         self.assertTrue(text.index("schema_version = 1") > text.index(header[-1]))
 
-    def test_the_written_file_loads_and_show_names_the_layer(self) -> None:
+    def test_the_written_file_loads_and_each_value_names_its_layer(self) -> None:
         self.ok("--yes", "--docs-dir", "sprints", "--tier", "codex:deep=gpt-6-astra")
         entries = settings.resolve(Locations(home=self.home, clone=self.clone))
         self.assertEqual(entries["process.docs_dir"].value, "sprints")
@@ -131,15 +131,9 @@ class ProposalTests(SettingsCase):
         self.assertEqual(entries["providers.codex.tiers.deep"].layer, "user")
         self.assertEqual(entries["providers.codex.tiers.fast"].layer, "user")
         self.assertEqual(entries["process.recommend"].layer, "shipped")
-        code, out, err = self.show(project=False)
-        self.assertEqual((code, err), (0, ""))
-        self.assertIn('process.docs_dir = "sprints"  (user)\n', out)
-        self.assertIn('process.questions = "all-together"  (shipped)\n', out)
-        self.assertIn('providers.codex.tiers.deep = "gpt-6-astra"  (user)\n', out)
-        self.assertIn('providers.claude-code.efforts.max = "max"  (user)\n', out)
-        code, out, err = self.show("roles", project=False)
-        self.assertEqual(code, 0, err)
-        self.assertIn('coder-hard @ codex: model = "gpt-6-astra"  (user: ', out)
+        self.assertEqual(entries["process.questions"].value, "all-together")
+        self.assertEqual(entries["providers.claude-code.efforts.max"].value, "max")
+        self.assertEqual(entries["providers.claude-code.efforts.max"].layer, "user")
 
     def test_the_mapping_is_shown_as_a_table(self) -> None:
         out = self.ok("--yes", "--dry-run")
@@ -709,11 +703,9 @@ class ProjectTests(SettingsCase):
         text = self.project_file.read_text(encoding="utf-8")
         self.assertTrue(text.startswith("# Workflow settings: the project layer (.agents/workflow.toml in the project).\n"))
         self.assertIn("# A key is here where a flag stated it or it differs from the layers below;", text)
-        code, shown, _ = self.show("process.docs_dir", "roles.manager_default")
-        self.assertEqual(code, 0)
-        self.assertEqual(
-            shown, 'process.docs_dir = "../planning/docs"  (project)\nroles.manager_default = true  (project)\n'
-        )
+        entries = settings.resolve(Locations(home=self.home, project=self.project, clone=self.clone))
+        self.assertEqual((entries["process.docs_dir"].value, entries["process.docs_dir"].layer), ("../planning/docs", "project"))
+        self.assertEqual((entries["roles.manager_default"].value, entries["roles.manager_default"].layer), (True, "project"))
 
     def test_a_project_file_holds_differences_from_the_users_file(self) -> None:
         self.ok("--yes", "--tier", "codex:deep=gpt-6-astra", "--docs-dir", "sprints")

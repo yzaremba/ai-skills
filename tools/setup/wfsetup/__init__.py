@@ -4,7 +4,6 @@ Modules:
     blocks      setup's marked blocks and exact lines in a user's text file
     carried     what Codex or the user added to the Codex profile after setup's part
     cli         argument parsing and the one place errors are printed
-    commands    one module per command, found by name
     definitions a role's definition for one provider, and its inputs digest
     dictionary  a provider's dictionary: models, efforts, versions, the list
     errors      the error a user can act on, and the exit codes
@@ -17,7 +16,7 @@ Modules:
     modellist   a provider's own model list, beside its dictionary
     paths       what is at a path, asked without a traceback
     profiles    the model and effort a role definition runs with
-    render      what render installs, as parts that fill one plan
+    render      what the install writes, as parts that fill one plan
     roles       a role's source, role.toml
     schema      what a settings file may hold
     settings    the layers, and the effective value of each key

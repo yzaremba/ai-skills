@@ -1,10 +1,16 @@
 """Check the sources of the clone and print every problem found.
 
+Usage:
+    py -3 tools/setup/validate.py [options]      (Windows)
+    python3 tools/setup/validate.py [options]
+
+It can be run by path from any directory.
+
 What is checked: the skills (a directory at the clone's root that holds
 SKILL.md), rules/, roles/, providers/ and tools/setup/defaults.toml. Nothing
-is written, nothing is run and no checked script is imported. "render" and
-"doctor" run the same checks before anything else. What "render" would
-refuse of the sources is reported here first: a name too long or not fit
+is written, nothing is run and no checked script is imported. setup.py runs
+the same checks before it shows a plan, and its --check runs them first.
+What setup.py would refuse of the sources is reported here first: a name too long or not fit
 for a file's name on every system, a control character in a title, a
 description or a note, a line in a role's text that reads as one of setup's
 markers, a file of an installed unit that is not UTF-8 text.
@@ -33,7 +39,7 @@ and Codex none. A role whose skill is over its provider's limit is a
 problem. With --rules the rule ids are
 printed, one per line with what each means, and nothing is checked.
 
---home and --project are accepted as by every command; the checks read the
+--home is accepted as by setup.py; the checks read the
 clone only.
 
 Exit code 0 when the sources are valid, 1 when a problem was found, and 2
@@ -46,16 +52,25 @@ from __future__ import annotations
 import argparse
 import json
 
-from .. import locations, validate
+from . import locations, validate
 
-SUMMARY = "check the clone's sources and print every problem found"
+PROG = "validate.py"
 EXIT_PROBLEMS = 1
 
 
-def configure(parser: argparse.ArgumentParser) -> None:
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog=PROG, description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter, allow_abbrev=False
+    )
     locations.add_arguments(parser)
     parser.add_argument("--json", action="store_true", help="print JSON instead of text")
     parser.add_argument("--rules", action="store_true", help="print the rule ids and what each means, and check nothing")
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    """Parse ``argv`` and run; the runner ``cli.main`` is given."""
+    return run(build_parser().parse_args(argv))
 
 
 def run(args: argparse.Namespace) -> int:

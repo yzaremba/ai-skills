@@ -10,11 +10,11 @@ How it is used
     entry.manager_default(where)                    # the setting roles.manager_default, for where
     entry.project_block(where)                      # codex: the project default, as a block's text
     entry.project_definitions(where, providers)     # the definitions a project's settings change
-    entry.digests(where, providers)                 # {(provider, kind, name): inputs}; what doctor compares
+    entry.digests(where, providers)                 # {(provider, kind, name): inputs}; what ``--check`` compares
     entry.project_digests(where, providers)         # the same for a project's definitions
 
 Nothing here writes, and nothing here knows a home or a directory: the
-caller (``render``) decides where a text goes. Every text is made from
+caller (the install) decides where a text goes. Every text is made from
 ``definitions.materials``, so it holds the role's text, its includes, its
 binding rows and the provider's action notes exactly as the role's
 definition does.
@@ -55,7 +55,7 @@ The entry points (provider facts read on 2026-10-05)
     one name). So the skill carries
     the user-level profile, its profile paragraph says that a project may
     set another and which command prints it (``PROJECT_PROFILE``), and
-    ``render --project`` reports each loaded role whose profile the
+    ``setup.py DIR`` reports each loaded role whose profile the
     project changes.
 
     The text begins with what makes it a loaded role (the one-active-role
@@ -204,8 +204,8 @@ BYTES_PER_TOKEN = 3
 # where it is printed.
 PROJECT_PROFILE = (
     "A project may set another profile: "
-    "`python tools/setup/workflow_setup.py show roles --project <the project>`, run in the skills repository, "
-    "prints it."
+    "`python tools/setup/setup.py <the project> --dry-run`, run in the skills repository, "
+    "reports it."
 )
 
 ONE_ROLE = "Loading it suspends any other role loaded in this session."
@@ -483,7 +483,7 @@ def block_text(found: definitions.Material) -> str:
         "Codex reads this file only in a trusted project. A key set here wins over the same key of a profile "
         "(codex --profile), and a command-line override wins over both.",
         definitions.notice_lines(CODEX, role, role)[1],
-        f"To change it, change a source and run `{definitions.RENDER_COMMAND} --project <this project>` in "
+        f"To change it, change a source and run `{definitions.RENDER_COMMAND} <this project>` in "
         f"that repository. To take it out, set {MANAGER_DEFAULT_KEY} = false and run the same.",
         "Setup does not overwrite an edit made between the markers; it reports the block as edited by hand.",
     ]

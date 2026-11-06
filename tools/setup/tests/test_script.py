@@ -1,4 +1,4 @@
-"""``workflow_setup.py`` itself: an interrupt or a signal is one line and an
+"""``setup.py`` itself: an interrupt or a signal is one line and an
 exit code from its first statement on, and a reader that went away is not
 a second error.
 
@@ -28,19 +28,25 @@ class StartUpTests(unittest.TestCase):
     """The script beside a stand-in package whose ``cli`` module is
     interrupted while it is being loaded."""
 
+    TOOL = support.SETUP_SCRIPT
+    ARGUMENT = "--dry-run"
+    STAND_INS: dict[str, str] = {"program.py": "def main(argv):\n    return 0\n"}
+
     def script(self, body: str) -> Path:
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
         root = Path(scratch.name)
-        shutil.copy(support.SCRIPT, root / "workflow_setup.py")
+        shutil.copy(self.TOOL, root / self.TOOL.name)
         (root / "wfsetup").mkdir()
         (root / "wfsetup" / "__init__.py").write_text("", encoding="utf-8")
         (root / "wfsetup" / "cli.py").write_text(body, encoding="utf-8")
-        return root / "workflow_setup.py"
+        for name, text in self.STAND_INS.items():
+            (root / "wfsetup" / name).write_text(text, encoding="utf-8")
+        return root / self.TOOL.name
 
     def run_script(self, body: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [sys.executable, "-B", str(self.script(body)), "validate"], stdin=subprocess.DEVNULL, capture_output=True,
+            [sys.executable, "-B", str(self.script(body)), self.ARGUMENT], stdin=subprocess.DEVNULL, capture_output=True,
             timeout=60,
         )
 
@@ -65,7 +71,7 @@ class StartUpTests(unittest.TestCase):
     def test_a_signal_while_the_interpreter_shuts_down_does_not_change_the_code(self) -> None:
         body = (
             "import atexit, os, signal\n"
-            "def run_from_command_line():\n"
+            "def run_from_command_line(runner=None):\n"
             "    atexit.register(lambda: os.kill(os.getpid(), signal.SIGINT))\n"
             "    return 3\n"
         )
@@ -76,23 +82,34 @@ class StartUpTests(unittest.TestCase):
     def test_nothing_is_imported_before_interrupts_are_taken_care_of(self) -> None:
         import ast
 
-        tree = ast.parse(support.SCRIPT.read_text(encoding="utf-8"))
+        tree = ast.parse(self.TOOL.read_text(encoding="utf-8"))
         top = [node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))]
         names = sorted(alias.name for node in top for alias in getattr(node, "names", []))
         self.assertEqual(names, ["annotations", "sys"])
+
+
+class ValidateStartUpTests(StartUpTests):
+    """The same, for ``validate.py``, which imports its program first."""
+
+    TOOL = support.VALIDATE_SCRIPT
+    ARGUMENT = "--rules"
+    STAND_INS = {"validate_program.py": "def main(argv):\n    return 0\n"}
 
 
 class OutputTests(support.ScratchCase):
     """A reader of the output that went away."""
 
     def run_tool(self, *args: str, stdout) -> subprocess.CompletedProcess:
+        script = support.SETUP_SCRIPT
+        if args and args[0] == "validate.py":
+            script, args = support.VALIDATE_SCRIPT, args[1:]
         return subprocess.run(
-            [sys.executable, "-B", str(support.SCRIPT), *args], stdin=subprocess.DEVNULL, stdout=stdout,
+            [sys.executable, "-B", str(script), *args], stdin=subprocess.DEVNULL, stdout=stdout,
             stderr=subprocess.PIPE, env=support.child_environment(), timeout=120,
         )
 
     def test_help_into_a_closed_pipe_is_not_a_second_error(self) -> None:
-        for args in (("--help",), ("render", "--help"), ("uninstall", "--help"), ("homes", "--home", str(self.home))):
+        for args in (("--help",), ("--uninstall", "--help"), ("validate.py", "--help")):
             with self.subTest(args=args):
                 reader, writer = os.pipe()
                 os.close(reader)
@@ -110,7 +127,7 @@ class OutputTests(support.ScratchCase):
 
     @unittest.skipUnless(os.path.exists("/dev/full"), "needs a device that is full")
     def test_a_full_device_is_not_reported_twice(self) -> None:
-        for args in (("--help",), ("render", "--help"), ("homes", "--home", str(self.home))):
+        for args in (("--help",), ("validate.py", "--help")):
             with self.subTest(args=args):
                 with open("/dev/full", "wb") as full:
                     done = self.run_tool(*args, stdout=full)

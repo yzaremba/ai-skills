@@ -57,13 +57,13 @@ Carrying it over
 What is said
     Keys Codex writes itself (``CODEX_KEYS``) are carried without a word.
     Any other top-level key after setup's part is carried and named
-    (``named``, ``said``): in render's line for the profile, and by doctor
+    (``named``, ``said``): in the install's line for the profile, and by ``--check``
     as information; one of ``RISKS``, which changes what a session started
-    with the profile may do, is a warning of doctor's.
+    with the profile may do, is a warning of ``--check``.
 
     A file at the path that the record does not list and whose keys are
-    all Codex's own (``only_codexs``: what ``uninstall`` left of a profile
-    Codex wrote into) is taken up by ``render``, with setup's text written
+    all Codex's own (``only_codexs``: what ``--uninstall`` left of a profile
+    Codex wrote into) is taken up by the install, with setup's text written
     before it. Any other file there is the user's and a conflict, as
     before. Its line ends become LF, and where it has to be written anew
     its comments go: a file of the user's that went that way and is then
@@ -87,11 +87,11 @@ SETUP_KEYS = ("model", "model_reasoning_effort", "developer_instructions")
 # started with, read from Codex 0.162.1: the answer to "trust this
 # project?" (``projects``) and the flags of its interface (``notice``).
 # They are carried without a word. Any other key after setup's part is
-# carried too, and named: in render's line for the profile and by doctor.
+# carried too, and named: in the install's line for the profile and by ``--check``.
 CODEX_KEYS = ("projects", "notice")
 
 # Keys after setup's part that change what a session started with the
-# profile may do, or what it is: carried, and doctor warns of each.
+# profile may do, or what it is: carried, and ``--check`` warns of each.
 RISKS = {
     "sandbox_mode": "while it is set in any config Codex loads, Codex uses the older sandbox settings for the "
                     "session and ignores the permission profile (default_permissions), setup's among them",
@@ -174,7 +174,7 @@ def unchanged(data: bytes, entry: dict[str, Any] | None) -> bool:
 
 def no_setup_key(data: bytes) -> bool:
     """Whether ``data`` is TOML with something in it and no key of setup's:
-    a profile setup's part is not in (what ``uninstall`` leaves, or what
+    a profile setup's part is not in (what ``--uninstall`` leaves, or what
     is left once its owner took setup's part out)."""
     if not data.strip():
         return False
@@ -184,8 +184,8 @@ def no_setup_key(data: bytes) -> bool:
 
 def only_codexs(data: bytes) -> bool:
     """Whether ``data`` is TOML with something in it whose keys are all
-    ones Codex writes itself (``CODEX_KEYS``): what ``uninstall`` leaves of
-    a profile Codex wrote into, which ``render`` takes up again. A file at
+    ones Codex writes itself (``CODEX_KEYS``): what ``--uninstall`` leaves of
+    a profile Codex wrote into, which the install takes up again. A file at
     the profile's path with any other key is the user's, and a conflict."""
     if not data.strip():
         return False
@@ -207,14 +207,14 @@ def tail_keys(tail: bytes | None) -> list[str]:
 
 
 def said(keys: list[str]) -> str:
-    """What render says of the keys ``named`` gives: empty when there are
+    """What the install says of the keys ``named`` gives: empty when there are
     none."""
     if not keys:
         return ""
     risky = [key for key in keys if key in RISKS]
     text = f"; besides what Codex writes there it holds {', '.join(keys)}"
     if risky:
-        text += f" ({', '.join(risky)} change{'s' if len(risky) == 1 else ''} what a session may do; see doctor)"
+        text += f" ({', '.join(risky)} change{'s' if len(risky) == 1 else ''} what a session may do; see setup.py --check)"
     return text
 
 

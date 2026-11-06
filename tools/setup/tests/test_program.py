@@ -22,13 +22,15 @@ import subprocess
 import sys
 import tomllib
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import provider_stub
 import support
 import test_definitions
 from test_render import tree
-from wfsetup import dictionary, gitrepo, homes, program, render
+from wfsetup import cli, dictionary, gitrepo, homes, locations, program, render
+from wfsetup.errors import EXIT_PIPE
 
 
 class ProgramCase(test_definitions.DefinitionsCase):
@@ -145,15 +147,13 @@ class StopTests(ProgramCase):
         self.assertIn("alpha", err)
         self.assertEqual(self.settled(), before)
 
-    def test_a_bad_dir_is_named_dir_and_render_keeps_its_option(self) -> None:
+    def test_a_bad_dir_is_named_dir(self) -> None:
         self.claude.mkdir()
         missing = str(self.root / "nowhere")
         code, out, err = self.setup("--yes", missing)
         self.assertEqual(code, 2)
         self.assertIn(f"DIR: {missing}: not a directory", err)
         self.assertNotIn("--project", err)
-        code, out, err = self.render("--project", missing)
-        self.assertIn(f"--project: {missing}: not a directory", err)
 
     def test_an_option_is_never_abbreviated(self) -> None:
         self.claude.mkdir()
@@ -272,6 +272,15 @@ class SettingsTests(ProgramCase):
         for gone in ("--unset", "--roles", "--skills", " init ", "`init`", "DIR/.gitignore"):
             self.assertNotIn(gone, flat)
         self.assertIn("exclude file, info/exclude in its git directory", flat)
+        self.assertIn("CLAUDE_CONFIG_DIR and CODEX_HOME are ignored", flat)
+        self.assertIn("DIR/.claude and DIR/.codex", flat)
+
+    def test_a_check_names_the_negative_option_given(self) -> None:
+        for given in ("--no-manager-default", "--no-high-stakes", "--manager-default"):
+            for mode in ("--check", "--uninstall"):
+                code, out, err = self.setup(mode, given)
+                self.assertEqual((code, out), (2, ""))
+                self.assertIn(f"takes no {given}", err)
 
 
 class ProjectKeysTests(ProgramCase):
@@ -488,6 +497,7 @@ class GitLinesTests(ProgramCase):
         self.assertIn("was not checked: git could not be started, did not answer or failed", out)
         self.assertIn("will not start as lead", out)
 
+    @unittest.skipUnless(os.name == "posix", "the view from WSL: a POSIX path under a mount point")
     def test_the_other_sides_command_from_wsl_and_from_windows(self) -> None:
         from types import SimpleNamespace
         from pathlib import Path
@@ -506,6 +516,12 @@ class GitLinesTests(ProgramCase):
         self.assertEqual(
             program._after(wsl, None, wanted, done),
             ["", 'for windows, run: py -3 "D:\\ai skills\\tools\\setup\\setup.py" C:\\proj'],
+        )
+        # From WSL, a project in the Linux file system: Windows reads it by no path, so none is named.
+        wsl.project = Path("/home/me/proj")
+        self.assertEqual(
+            program._after(wsl, None, wanted, done),
+            ["", 'for windows, run: py -3 "D:\\ai skills\\tools\\setup\\setup.py"'],
         )
         # From WSL, a clone in the Linux file system: the Windows side cannot read it.
         wsl.clone = Path("/home/me/clone")
@@ -641,6 +657,399 @@ class JsonTests(ProgramCase):
         code, out, err = self.setup("--json")
         self.assertEqual((code, out), (2, ""))
         self.assertIn("--json needs", err)
+
+
+class CheckTests(ProgramCase):
+    """``--check``: the checks, on the one parser."""
+
+    def test_check_reports_and_writes_nothing(self) -> None:
+        self.claude.mkdir()
+        self.assertEqual(self.setup("--yes")[0], 0)
+        before = self.settled()
+        code, out, err = self.setup("--check", "--no-versions", "--no-collab", "--skip", "models")
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertIn("check: setup itself writes nothing", out)
+        self.assertIn("summary: 0 errors", out)
+        self.assertEqual(self.settled(), before)
+
+    def test_check_json_and_exit_1_on_an_error(self) -> None:
+        self.claude.mkdir()
+        self.assertEqual(self.setup("--yes")[0], 0)
+        (self.claude_skills / "alpha").unlink()
+        code, out, err = self.setup("--check", "--json", "--only", "links")
+        self.assertEqual((code, err), (1, ""), out)
+        self.assertEqual(json.loads(out)["exit_code"], 1)
+
+    def test_check_with_dir_checks_the_project(self) -> None:
+        self.claude.mkdir()
+        code, out, err = self.setup("--check", "--only", "sources", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertIn(f"project: {self.project}", out)
+
+    def test_check_refuses_what_writes_and_the_check_options_need_it(self) -> None:
+        for argv in (("--check", "--yes"), ("--check", "--dry-run"), ("--check", "--docs-dir", "x"), ("--check", "--provider", "codex")):
+            code, out, err = self.setup(*argv)
+            self.assertEqual((code, out), (2, ""), argv)
+            self.assertIn("--check writes nothing and takes no", err)
+        for option in ("--no-versions", "--no-collab", "--codex-probe"):
+            code, out, err = self.setup("--yes", option)
+            self.assertEqual(code, 2, option)
+            self.assertIn("are for --check", err)
+        code, out, err = self.setup("--check", "--only", "nothing")
+        self.assertEqual(code, 2)
+        self.assertIn("nothing: not a check", err)
+
+
+class UninstallTests(ProgramCase):
+    """``--uninstall``: the old ``uninstall`` on the one parser."""
+
+    def test_uninstall_takes_back_a_home_and_a_project(self) -> None:
+        self.claude.mkdir()
+        start = self.settled()
+        self.assertEqual(self.setup("--yes", str(self.project))[0], 0)
+        self.assertNotEqual(self.settled(), start)
+        code, out, err = self.setup("--uninstall", "--dry-run", "--json", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(json.loads(out)["scope"], "project")
+        code, out, err = self.setup("--uninstall", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        code, out, err = self.setup("--uninstall")
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(self.settled(), start)
+
+    def test_uninstall_refuses_what_installs_and_its_options_need_it(self) -> None:
+        for argv in (("--uninstall", "--provider", "codex"), ("--uninstall", "--docs-dir", "x"), ("--uninstall", "--check"),
+                     ("--uninstall", "--overwrite-edited"), ("--uninstall", "--only", "links")):
+            code, out, err = self.setup(*argv)
+            self.assertEqual((code, out), (2, ""), argv)
+            self.assertRegex(err, "takes no|writes nothing")
+        for option in ("--keep-settings", "--discard-backups"):
+            code, out, err = self.setup("--yes", option)
+            self.assertEqual(code, 2, option)
+            self.assertIn("are for --uninstall", err)
+        code, out, err = self.setup("--uninstall", "--yes")
+        self.assertEqual(code, 2)
+        self.assertIn("--yes: only confirms --discard-backups", err)
+
+
+class PlacesTests(ProgramCase):
+    """``--home`` and ``DIR``: what is refused, and never a traceback. Each
+    run is a dry run that names a provider, so that the settings files are
+    read and nothing else is needed."""
+
+    def run_setup(self, *argv: str) -> tuple[int, str, str]:
+        with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
+            return support.setup("--dry-run", "--provider", "claude-code", *argv)
+
+    def refused(self, *argv: str) -> str:
+        code, out, err = self.run_setup(*argv)
+        self.assertEqual((code, out), (2, ""), err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(err.count("\n"), 1, err)
+        self.assertTrue(err.startswith("error: "), err)
+        return err[len("error: "):-1]
+
+    def test_an_empty_home_is_refused_and_is_not_the_real_home(self) -> None:
+        with mock.patch.object(Path, "home", side_effect=AssertionError("the real home was asked for")):
+            self.assertEqual(
+                self.refused("--home", ""),
+                "--home: an empty value is not a directory; name one, or leave the option out",
+            )
+            self.assertTrue(self.refused("--home", "  ").startswith("--home: an empty value"))
+            self.assertTrue(self.refused("--home=").startswith("--home: an empty value"))
+
+    def test_an_empty_dir_is_refused_and_is_not_the_working_directory(self) -> None:
+        self.write(self.project_file, '[process]\ndocs_dir = "from-the-working-directory"\n')
+        before = os.getcwd()
+        os.chdir(self.project)
+        self.addCleanup(os.chdir, before)
+        self.assertEqual(
+            self.refused("--home", str(self.home), ""),
+            "DIR: an empty value is not a directory; name one, or leave the option out",
+        )
+
+    def test_a_user_that_does_not_exist(self) -> None:
+        # Linux cannot expand the name. Windows guesses a directory beside
+        # the user's own, which is then not there. Either way: one line.
+        unknown = "the home directory of that user cannot be found"
+        self.assertIn(
+            self.refused("--home", "~no-such-user-here/x"),
+            (f"--home: ~no-such-user-here/x: {unknown}", "--home: ~no-such-user-here/x: not a directory"),
+        )
+        self.assertIn(
+            self.refused("--home", str(self.home), "~no-such-user-here"),
+            (f"DIR: ~no-such-user-here: {unknown}", "DIR: ~no-such-user-here: not a directory"),
+        )
+
+    def test_a_home_that_cannot_be_expanded(self) -> None:
+        with mock.patch.object(Path, "expanduser", side_effect=RuntimeError("Could not determine home directory.")):
+            self.assertEqual(
+                self.refused("--home", "~someone/x"),
+                "--home: ~someone/x: the home directory of that user cannot be found",
+            )
+            self.assertEqual(
+                self.refused("--home", str(self.home), "~someone"),
+                f"--home: {self.home}: the home directory of that user cannot be found",
+            )
+
+    def test_no_home_given_and_none_to_be_found(self) -> None:
+        for error in (RuntimeError("Could not determine home directory."), KeyError("getpwuid(): uid not found")):
+            with self.subTest(error=type(error).__name__):
+                with mock.patch.object(Path, "home", side_effect=error):
+                    self.assertEqual(
+                        self.refused(), "the user's home directory cannot be found; name one with --home DIR"
+                    )
+
+    def test_without_home_the_users_own_is_used(self) -> None:
+        with mock.patch.object(Path, "home", return_value=self.home):
+            self.write(self.user_file, '[process]\ndocs_dir = "mine"\n')
+            code, out, err = self.run_setup("--json")
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(json.loads(out)["settings"]["process.docs_dir"]["value"], "mine")
+
+    def test_agents_that_is_a_regular_file_is_an_error_naming_it(self) -> None:
+        agents = self.write(self.home / ".agents", "not a directory\n")
+        self.assertEqual(
+            self.refused("--home", str(self.home)),
+            f"{agents}: is not a directory; workflow.toml is looked for in it",
+        )
+        agents.unlink()
+        agents = self.write(self.project / ".agents", "")
+        self.assertTrue(
+            self.refused("--home", str(self.home), str(self.project)).startswith(f"{agents}: is not a directory")
+        )
+
+    def test_a_directory_where_a_settings_file_belongs(self) -> None:
+        self.user_file.mkdir(parents=True)
+        self.assertEqual(self.refused("--home", str(self.home)), f"{self.user_file}: is not a file")
+
+    def link(self, target: Path, link: Path) -> None:
+        link.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.symlink(target, link)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"symlinks are not permitted here: {exc}")
+
+    def test_a_dangling_link_where_a_settings_file_belongs(self) -> None:
+        for file in (self.user_file, self.project_file, self.local_file):
+            with self.subTest(file=file.name):
+                self.link(self.root / "gone.toml", file)
+                self.assertEqual(
+                    self.refused("--home", str(self.home), str(self.project)),
+                    f"link target missing: {file}",
+                )
+                file.unlink()
+
+    def test_a_link_that_leads_back_to_itself(self) -> None:
+        self.link(self.user_file, self.user_file)
+        self.assertEqual(self.refused("--home", str(self.home)), f"link target missing: {self.user_file}")
+
+    def test_a_link_to_a_real_file_is_read(self) -> None:
+        real = self.write(self.home / "real.toml", '[process]\ndocs_dir = "linked"\n')
+        self.link(real, self.user_file)
+        code, out, err = self.run_setup("--json", "--follow-config-symlinks", "--home", str(self.home))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(json.loads(out)["settings"]["process.docs_dir"]["value"], "linked")
+
+    def test_a_dangling_link_as_the_agents_directory(self) -> None:
+        self.link(self.root / "gone", self.home / ".agents")
+        self.assertEqual(self.refused("--home", str(self.home)), f"link target missing: {self.home / '.agents'}")
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "no FIFOs here")
+    def test_a_fifo_where_a_settings_file_belongs_is_not_opened(self) -> None:
+        self.user_file.parent.mkdir(parents=True)
+        os.mkfifo(self.user_file)
+        self.assertEqual(self.refused("--home", str(self.home)), f"{self.user_file}: is not a file")
+
+    @unittest.skipUnless(support.can_lock_directories(), "permissions do not keep this process out")
+    def test_directories_that_cannot_be_read(self) -> None:
+        agents = self.home / ".agents"
+        agents.mkdir()
+        locked = self.root / "locked"
+        (locked / ".agents").mkdir(parents=True)
+        cases = [
+            (agents, ["--home", str(self.home)], f"{self.user_file}: cannot be read: "),
+            (locked, ["--home", str(self.home), str(locked)], f"{locked / '.agents'}: cannot be read: "),
+            (
+                locked / ".agents",
+                ["--home", str(self.home), str(locked)],
+                f"{locked / '.agents' / 'workflow.toml'}: cannot be read: ",
+            ),
+        ]
+        for directory, argv, expected in cases:
+            with self.subTest(directory=directory):
+                os.chmod(directory, 0)
+                try:
+                    self.assertTrue(self.refused(*argv).startswith(expected))
+                finally:
+                    os.chmod(directory, 0o755)
+
+    @unittest.skipUnless(support.can_lock_directories(), "permissions do not keep this process out")
+    def test_a_settings_file_that_cannot_be_read(self) -> None:
+        self.write(self.user_file, "[process]\n")
+        os.chmod(self.user_file, 0)
+        self.assertTrue(self.refused("--home", str(self.home)).startswith(f"{self.user_file}: cannot be read: "))
+
+    def test_home_ignores_the_variables_for_the_homes(self) -> None:
+        elsewhere = self.root / "elsewhere"
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(elsewhere), "CODEX_HOME": str(elsewhere)}):
+            code, out, err = self.run_setup("--json", "--home", str(self.home))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertNotIn("elsewhere", out)
+
+
+class BackstopTests(ProgramCase):
+    """What no module turned into a ``SetupError`` still ends in one line."""
+
+    def test_an_os_error_names_the_file(self) -> None:
+        error = PermissionError(13, "Permission denied", "/some/where/file.toml")
+        with mock.patch.object(locations, "from_args", side_effect=error):
+            self.assertEqual(self.setup("--dry-run"), (2, "", "error: /some/where/file.toml: Permission denied\n"))
+
+    def test_an_os_error_without_a_file(self) -> None:
+        with mock.patch.object(locations, "from_args", side_effect=OSError(28, "No space left on device")):
+            self.assertEqual(self.setup("--dry-run"), (2, "", "error: No space left on device\n"))
+
+    def test_a_recursion_error(self) -> None:
+        with mock.patch.object(locations, "from_args", side_effect=RecursionError("too deep")):
+            self.assertEqual(self.setup("--dry-run"), (2, "", "error: the input is nested too deeply to read\n"))
+
+    def test_a_broken_pipe_is_left_to_the_entry_point(self) -> None:
+        with mock.patch.object(locations, "from_args", side_effect=BrokenPipeError(32, "Broken pipe")):
+            with self.assertRaises(BrokenPipeError):
+                cli.main(["--dry-run", "--home", str(self.home)], program.main)
+
+
+class EntryPointTests(ProgramCase):
+    """``setup.py`` run by path, as a child process, from another directory:
+    the tool copied into the fake clone, so the output is the fixtures'."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.claude.mkdir()
+        self.script = self.install_tool()
+
+    def child(self, *argv: str, cwd=None, script=None, **options) -> subprocess.CompletedProcess:
+        options.setdefault("capture_output", True)
+        options.setdefault("stdin", subprocess.DEVNULL)
+        return subprocess.run(
+            [sys.executable, "-B", str(script or self.script), *argv],
+            cwd=cwd or self.root,
+            env=support.child_environment(),
+            timeout=60,
+            **options,
+        )
+
+    def test_json_from_a_child_process(self) -> None:
+        done = self.child("--dry-run", "--json", "--home", str(self.home), str(self.project))
+        self.assertEqual((done.returncode, done.stderr), (0, b""))
+        self.assertIn("settings", json.loads(done.stdout.decode("utf-8")))
+
+    def test_a_dry_run_from_another_working_directory(self) -> None:
+        done = self.child("--dry-run", "--json", "--home", str(self.home))
+        self.assertEqual((done.returncode, done.stderr), (0, b""))
+        report = json.loads(done.stdout.decode("utf-8"))
+        self.assertEqual(report["settings"]["process.questions"]["value"], "all-together")
+
+    def test_the_repositorys_own_script_runs(self) -> None:
+        done = self.child("--dry-run", "--provider", "claude-code", "--home", str(self.home), script=support.SETUP_SCRIPT)
+        self.assertEqual((done.returncode, done.stderr), (0, b""))
+
+    def test_the_project_is_not_taken_from_the_working_directory(self) -> None:
+        self.write(self.project_file, '[process]\ndocs_dir = "p"\n')
+        here = self.child("--dry-run", "--json", "--home", str(self.home), cwd=self.project)
+        self.assertEqual(json.loads(here.stdout)["settings"]["process.docs_dir"]["value"], "docs")
+        named = self.child("--dry-run", "--json", "--home", str(self.home), ".", cwd=self.project)
+        self.assertEqual(json.loads(named.stdout)["settings"]["process.docs_dir"]["value"], "p")
+
+    def test_output_is_utf8_with_line_feeds_whatever_the_locale(self) -> None:
+        home = self.root / "hôme café中"
+        (home / ".claude").mkdir(parents=True)
+        env = {key: value for key, value in os.environ.items() if not key.startswith(("LC_", "PYTHON"))}
+        env.update({"LANG": "C", "LC_ALL": "C", "PYTHONIOENCODING": "ascii"})
+        done = subprocess.run(
+            [sys.executable, "-B", str(self.script), "--dry-run", "--home", str(home)],
+            cwd=self.root, env=env, capture_output=True, stdin=subprocess.DEVNULL, timeout=60,
+        )
+        self.assertEqual((done.returncode, done.stderr), (0, b""))
+        self.assertIn("café中".encode("utf-8"), done.stdout)
+        self.assertNotIn(b"\r", done.stdout)
+
+    def test_an_error_has_no_traceback_and_exit_code_two(self) -> None:
+        self.write(self.user_file, "[process]\ndocs_dir = 1\n")
+        done = self.child("--dry-run", "--home", str(self.home))
+        self.assertEqual((done.returncode, done.stdout), (2, b""))
+        self.assertEqual(
+            done.stderr.decode("utf-8"),
+            f"error: {self.user_file}: process.docs_dir: expected a string, got an integer\n"
+            "error: setup changes nothing while a settings file has a fault; correct the file first\n",
+        )
+
+    def test_a_run_writes_no_bytecode_into_the_clone(self) -> None:
+        """The shared clone is changed only by ``git pull``."""
+        done = self.child("--dry-run", "--home", str(self.home))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual([str(found) for found in self.clone.rglob("__pycache__")], [])
+        self.assertEqual([str(found) for found in self.clone.rglob("*.pyc")], [])
+
+    def test_a_settings_file_nested_thousands_deep(self) -> None:
+        self.write(self.user_file, "[process]\nx = " + "[" * 5000 + "]" * 5000 + "\n")
+        done = self.child("--dry-run", "--home", str(self.home))
+        self.assertEqual((done.returncode, done.stdout), (2, b""))
+        self.assertEqual(
+            done.stderr.decode("utf-8"),
+            f"error: {self.user_file}: is not valid TOML: arrays or inline tables are nested too deeply\n",
+        )
+
+    def test_a_closed_stdout_is_an_error_and_not_an_empty_success(self) -> None:
+        wrapper = (
+            "import runpy, sys\n"
+            "sys.stdout.close()\n"
+            f"sys.argv = [{str(self.script)!r}, '--dry-run', '--home', {str(self.home)!r}]\n"
+            f"runpy.run_path({str(self.script)!r}, run_name='__main__')\n"
+        )
+        done = subprocess.run(
+            [sys.executable, "-c", wrapper], cwd=self.root, env=support.child_environment(),
+            capture_output=True, stdin=subprocess.DEVNULL, timeout=60,
+        )
+        self.assertEqual((done.returncode, done.stdout), (2, b""))
+        self.assertEqual(done.stderr, b"error: the output cannot be written: standard output is closed\n")
+
+    @unittest.skipUnless(os.path.exists("/dev/full"), "no full device here")
+    def test_a_full_device_is_an_error_and_not_a_success(self) -> None:
+        with open("/dev/full", "w") as full:
+            done = self.child("--dry-run", "--home", str(self.home), stdout=full, stderr=subprocess.PIPE, capture_output=False)
+        self.assertEqual(done.returncode, 2)
+        err = done.stderr.decode("utf-8")
+        self.assertTrue(err.startswith("error: the output cannot be written: "), err)
+        self.assertEqual(err.count("\n"), 1, err)
+
+    def test_a_reader_that_went_away_is_quiet_and_not_a_success(self) -> None:
+        # The child waits for a line on stdin, so the pipe it writes to is
+        # closed before it writes.
+        wrapper = (
+            "import runpy, sys\n"
+            "sys.stdin.readline()\n"
+            f"sys.argv = [{str(self.script)!r}, '--dry-run', '--home', {str(self.home)!r}]\n"
+            f"runpy.run_path({str(self.script)!r}, run_name='__main__')\n"
+        )
+        child = subprocess.Popen(
+            [sys.executable, "-c", wrapper], cwd=self.root, env=support.child_environment(),
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        child.stdout.close()
+        child.stdin.write(b"go\n")
+        child.stdin.close()
+        err = child.stderr.read()
+        child.stderr.close()
+        code = child.wait(timeout=60)
+        self.assertNotIn(b"Traceback", err)
+        self.assertNotIn(b"Exception ignored", err)
+        if os.name == "posix":
+            self.assertEqual((code, err), (EXIT_PIPE, b""))
+        else:
+            # Windows reports the closed pipe as a failed write.
+            self.assertIn(code, (EXIT_PIPE, 2))
 
 
 class ScriptTests(unittest.TestCase):

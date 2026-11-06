@@ -56,6 +56,7 @@ V1 = {
     "epic-implementation.md": ("# Epics\n\nRoadmap.\n",),
     "agents/sprint-coder.md": ("---\nname: sprint-coder\n---\n\nShip the step.\n",),
     "self-reflection/SKILL.md": ("---\nname: self-reflection\n---\n\nFirst.\n", "---\nname: self-reflection\n---\n\nLast.\n"),
+    "csv-tools/SKILL.md": ("---\nname: csv-tools\n---\n\nRows.\n",),
     "usage-cost/SKILL.md": ("---\nname: usage-cost\n---\n\nCost.\n",),
     "usage-cost/scripts/usage_cost.py": ("print('cost')\n",),
 }
@@ -122,7 +123,7 @@ class UninstallCase(EntryCase):
             self.put(f"{name}/SKILL.md", SKILL.format(name=name))
         self.put("usage-cost/SKILL.md", SKILL.format(name="usage-cost").replace(
             "claude-code, codex", "claude-code (reads its own session logs)"))
-        self.put("tools/setup/workflow_setup.py", "# the tool\n")   # what makes a directory look like a clone
+        self.put("tools/setup/setup.py", "# the tool\n")   # what makes a directory look like a clone
         self.write(self.defaults_file, ALL_INSTALL + support.FIXTURE_DEFAULTS)
         self.agents = self.claude / "agents"
         self.old_skills = self.codex / "skills"
@@ -140,7 +141,11 @@ class UninstallCase(EntryCase):
         with mock.patch.object(homes.Host, "current", classmethod(lambda cls: host)):
             if argv[0] == "settings":   # the settings file of ``setup.py`` alone, with no install
                 return support.write_settings(*argv[1:])
-            return support.run(*argv)
+            if argv[0] == "install":     # ``setup.py`` applying its plan
+                return support.install(*argv[1:])
+            if argv[0] == "uninstall":
+                return support.setup("--uninstall", *argv[1:])
+            raise AssertionError(f"UninstallCase.cli: unknown command {argv[0]!r}")
 
     def done(self, *argv: str, code: int = 0, **how) -> str:
         got, out, err = self.cli(*argv, **how)
@@ -152,8 +157,8 @@ class UninstallCase(EntryCase):
         return ("--home", str(self.home))
 
     @property
-    def in_project(self) -> tuple[str, str]:
-        return ("--project", str(self.project))
+    def in_project(self) -> tuple[str]:
+        return (str(self.project),)
 
     @property
     def project_dir(self) -> tuple[str]:
@@ -208,7 +213,7 @@ class UninstallCase(EntryCase):
         return self.data(state / "backups" / "20260101T000000.000000Z" / anchor / ".claude" / name, data)
 
     def discard(self, *argv: str, code: int = 0, answer: str | None = None, project: bool = False) -> tuple[str, str]:
-        """``uninstall --discard-backups``. Standard input is no terminal,
+        """``--uninstall --discard-backups``. Standard input is no terminal,
         unless ``answer`` is what is typed at one."""
         places = [*self.at_home, *(self.in_project if project else ())]
         stdin = io.StringIO()
@@ -330,19 +335,19 @@ class UninstallCase(EntryCase):
     def install(self, *render: str, earlier: bool = True, project: bool = True, codex: tuple[str, ...] = ()) -> None:
         """Every command that writes, as the user would run them, after what
         an earlier setup did (``earlier_setup``, when the fixture has the
-        files). ``render`` goes to every run of it, ``codex`` with
-        --apply-codex-settings."""
+        files). the extra arguments (``*render``) go to every run of it, ``codex`` replaces
+        "--codex-settings on"."""
         self.done("settings", "--rewrite-settings", *self.at_home)
         if project:
             self.done("settings", "--rewrite-settings", *self.at_home, *self.project_dir)
         if earlier:
             self.earlier_setup()
-        self.done("render", "--apply-codex-settings", *codex, *render, *self.at_home)
+        self.done("install", *(codex or ("--codex-settings", "on")), *render, *self.at_home)
         if project:
-            self.done("render", *render, *self.at_home, *self.in_project)
+            self.done("install", *render, *self.at_home, *self.in_project)
             # A second run writes nothing.
             before = self.pictures()
-            out = self.done("render", "--json", *render, *self.at_home, *self.in_project)
+            out = self.done("install", "--json", *render, *self.at_home, *self.in_project)
             self.assertEqual(json.loads(out)["plan"], [])
             self.assertEqual(self.pictures(), before)
 
@@ -393,13 +398,13 @@ class RoundTripCase(UninstallCase):
 
     def test_a_codex_config_with_an_agents_table(self) -> None:
         before = self.start(config=CONFIG_AGENTS)
-        self.install(codex=("--default-codex-permissions",))
+        self.install(codex=("--codex-settings", "profile"))
         self.take_back()
         self.assertAsAtTheStart(before)
 
     def test_no_codex_config_at_all(self) -> None:
         before = self.start(config=None)
-        self.install(codex=("--default-codex-permissions",))
+        self.install(codex=("--codex-settings", "profile"))
         self.assertTrue((self.codex / "config.toml").is_file())
         self.take_back()
         self.assertAsAtTheStart(before)
@@ -473,7 +478,7 @@ class RoundTripCase(UninstallCase):
         # The home is as it was, its state with the record and every backup included.
         self.assertEqual(picture(self.home), home)
         self.assertLinked(self.claude_skills / "alpha", self.clone / "alpha")
-        code, out, _ = self.cli("render", "--json", *self.at_home)
+        code, out, _ = self.cli("install", "--json", *self.at_home)
         self.assertEqual((code, json.loads(out)["plan"]), (0, []))
 
     @unittest.skipUnless(POSIX and SYMLINKS, "a link text with a trailing separator and a ..")
@@ -598,11 +603,11 @@ class OrderCase(UninstallCase):
         self.exclude_file = support.make_repository(self.project)
         self.project_state = self.project / ".agents" / "workflow-setup"
         self.project_record = self.project_state / "manifest.json"
-        self.project_arg = ("--project", str(self.project))
+        self.project_arg = (str(self.project),)
         wsl = homes.Host(homes.WSL, {"PATH": ""}, (str(drive),))
         before = self.start(earlier=False)
         self.done("settings", "--rewrite-settings", *self.at_home, host=wsl)
-        self.done("render", *self.at_home, *self.in_project, host=wsl)
+        self.done("install", *self.at_home, *self.in_project, host=wsl)
         self.assertTrue(self.project_record.is_file())
         self.assertEqual(self.uninstall(project=True, host=wsl)["kept"], [])
         self.assertEqual(self.uninstall(host=wsl)["kept"], [])
@@ -616,7 +621,7 @@ class OrderCase(UninstallCase):
         self.data(other / ".claude" / "settings.json", USER_JSON)
         other_before = picture(other)
         self.install()
-        self.done("render", *self.at_home, "--project", str(other))
+        self.done("install", *self.at_home, str(other))
         other_state = other / ".agents" / "workflow-setup"
         self.assertTrue((other_state / "manifest.json").is_file())
         other_installed = picture(other)
@@ -630,7 +635,7 @@ class OrderCase(UninstallCase):
         self.assertNotIn("project_backups", report["state"])
         self.assertNothingAt(self.state)
         self.assertEqual(picture(other), other_installed)
-        got, out, err = self.cli("uninstall", "--json", *self.at_home, "--project", str(other))
+        got, out, err = self.cli("uninstall", "--json", *self.at_home, str(other))
         self.assertEqual((got, err), (0, ""), out)
         report = json.loads(out)
         self.assertEqual((report["state"]["path"], report["state"]["removed"]), (str(other_state), True))
@@ -732,51 +737,50 @@ class OrderCase(UninstallCase):
         environment = {**support.child_environment(), "PATH": str(empty)}
 
         def child(*argv: str) -> subprocess.CompletedProcess:
-            program = script.with_name("setup.py") if argv[0] == "setup.py" else script
             return subprocess.run(
-                [sys.executable, "-B", str(program), *argv[(argv[0] == "setup.py"):], *self.at_home], env=environment, cwd=str(self.root),
+                [sys.executable, "-B", str(script), *argv, *self.at_home], env=environment, cwd=str(self.root),
                 stdin=subprocess.DEVNULL, capture_output=True, timeout=120, check=False,
             )
 
-        for argv in (("setup.py", "--yes", "--rewrite-settings"), ("render",)):
+        for argv in (("--yes", "--rewrite-settings"), ("--yes",)):
             done = child(*argv)
             self.assertEqual((done.returncode, done.stderr), (0, b""), done.stdout.decode("utf-8", "replace")[-800:])
         self.assertLinked(self.claude_skills / "alpha", self.clone / "alpha")
         file = self.claude_agents / "lead.md"
         wrote = file.read_bytes()
         file.write_bytes(wrote + b"mine\n")
-        done = child("uninstall")
+        done = child("--uninstall")
         self.assertEqual((done.returncode, done.stderr), (3, b""))
         self.assertNotIn(b"\r\n", done.stdout)
         self.assertIn(b"not finished: ", done.stdout.splitlines()[-1])
         file.write_bytes(wrote)
-        done = child("uninstall")
+        done = child("--uninstall")
         self.assertEqual((done.returncode, done.stderr), (0, b""))
         self.assertTrue(done.stdout.splitlines()[-1].startswith(b"done: "))
-        done = child("uninstall")
+        done = child("--uninstall")
         self.assertEqual((done.returncode, done.stderr), (0, b""))
         self.assertTrue(done.stdout.splitlines()[-1].startswith(b"nothing to do: "))
         before["clone"] = clone
         self.assertAsAtTheStart(before)
 
     def test_help_states_the_scope_the_state_and_the_exit_codes(self) -> None:
-        code, out, _ = support.run("uninstall", "--help")
+        code, out, _ = support.setup("--uninstall", "--help")
         flat = " ".join(out.split())
         self.assertEqual(code, 0)
-        for option in ("--project", "--home", "--dry-run", "--json", "--follow-config-symlinks", "--keep-settings",
+        for option in ("--uninstall", "--home", "--dry-run", "--json", "--follow-config-symlinks", "--keep-settings",
                        "--discard-backups", "--yes"):
             self.assertIn(option, flat)
         self.assertNotIn("--clone-was", flat)
         self.assertNotIn("--discard-project-backups", flat)
-        self.assertIn("With --project DIR: what setup did in that project, and nothing else", flat)
+        self.assertIn("With DIR: what setup did in that project, and nothing else", flat)
         self.assertIn("in ~/.agents/workflow-setup for the user level, and in DIR/.agents/workflow-setup for a project", flat)
         self.assertIn("undoing a project touches nothing of the home, and undoing the home nothing of a project", flat)
         self.assertIn("When every entry was removed or restored, the state goes too", flat)
         self.assertIn("is never removed by a run: it may be the only copy of a file of yours", flat)
-        self.assertIn("`uninstall` then leaves the state directory, names the files, and ends with 3", flat)
+        self.assertIn("`--uninstall` then leaves the state directory, names the files, and ends with 3", flat)
         self.assertIn("removes them after you confirm (or with --yes; --dry-run only lists)", flat)
         self.assertIn("Exit code 0 when everything was undone, or there was nothing to do; 3 when", flat)
-        self.assertIn("uninstall", support.run("--help")[1])
+        self.assertIn("--uninstall", support.setup("--help")[1])
 
 
 # --- What the user changed since ---------------------------------------------------
@@ -913,7 +917,7 @@ class KeptCase(UninstallCase):
         out = self.done("uninstall", *self.at_home, code=3)
         self.assertIn(f"    backup: {item['backup']}", out)
         self.assertIn(f"    path: {rule}", out)
-        self.assertIn("to finish: do what is said for each kept entry, then run `workflow_setup.py uninstall` again", out)
+        self.assertIn("to finish: do what is said for each kept entry, then run `setup.py --uninstall` again", out)
         rule.unlink()
         self.finished()
 
@@ -995,7 +999,7 @@ class ProjectInstallCase(UninstallCase):
         self.copy = self.project / ".claude" / "rules" / "sample" / "sample.md"
 
     def render_project(self, **how) -> None:
-        self.done("render", *self.at_home, *self.in_project, **how)
+        self.done("install", *self.at_home, *self.in_project, **how)
 
     def assertAsItWas(self) -> None:
         """The project as at the start, but for the list this test wrote in
@@ -1092,7 +1096,7 @@ class ProjectInstallCase(UninstallCase):
         self.assertAsItWas()
 
     def test_the_help_says_what_a_projects_links_and_copies_become(self) -> None:
-        code, out, _ = support.run("uninstall", "--help")
+        code, out, _ = support.setup("--uninstall", "--help")
         self.assertEqual(code, 0)
         self.assertIn("A project's skill links (relative ones included,", out)
         self.assertIn("A link you made by hand that setup", out)
@@ -1299,7 +1303,7 @@ class PlacesCase(UninstallCase):
         wsl = homes.Host(homes.WSL, {"PATH": ""}, (str(drive),))
         self.done("settings", "--rewrite-settings", *self.at_home, host=wsl)
         self.earlier_setup()
-        self.done("render", *self.at_home, host=wsl)
+        self.done("install", *self.at_home, host=wsl)
         entry = fileops.read_record(self.roots()).entries["home:.claude/skills/csv-tools"]
         self.assertEqual(entry["replaced"]["target"], f"raw:{theirs}")
         self.assertEqual(self.uninstall(host=wsl)["kept"], [])
@@ -1318,7 +1322,7 @@ class PlacesCase(UninstallCase):
         wsl = homes.Host(homes.WSL, {"PATH": ""}, (str(drive),))
         before, drive_before = self.pictures(), picture(drive)
         self.done("settings", "--rewrite-settings", *self.at_home, host=wsl)
-        self.done("render", *self.at_home, host=wsl)
+        self.done("install", *self.at_home, host=wsl)
         self.assertEqual(picture(drive), drive_before)
         report = self.uninstall(host=wsl)
         self.assertEqual(report["kept"], [])
@@ -1331,7 +1335,7 @@ class PlacesCase(UninstallCase):
 class UnlistedBackupsCase(UninstallCase):
     """A file under a backups directory that no record lists: no run
     removes it, ``uninstall`` leaves the state directory for it, and
-    ``uninstall --discard-backups`` removes it when asked."""
+    ``--uninstall --discard-backups`` removes it when asked."""
 
     def test_they_keep_the_state_directory_are_named_and_the_code_is_3(self) -> None:
         before = self.start()
@@ -1342,7 +1346,7 @@ class UnlistedBackupsCase(UninstallCase):
         state = report["state"]
         self.assertEqual((state["path"], state["removed"], state["unlisted_backups"]), (str(self.state), False, [str(mine)]))
         self.assertIn("1 backup that no record lists", state["why"])
-        self.assertIn("uninstall --discard-backups", state["why"])
+        self.assertIn("setup.py --uninstall --discard-backups", state["why"])
         self.assertTrue(report["summary"].startswith("not finished: "), report["summary"])
         # Everything was undone, the record and the backups it listed are gone, and the file is as it was.
         self.assertEqual(self.home_without_state(), before["home"])
@@ -1363,7 +1367,7 @@ class UnlistedBackupsCase(UninstallCase):
         self.assertEqual(self.uninstall("--dry-run", code=3)["state"]["unlisted_backups"], [str(mine)])
         self.done("settings", "--rewrite-settings", *self.at_home)
         self.earlier_setup()
-        self.done("render", *self.at_home)
+        self.done("install", *self.at_home)
         self.assertEqual(mine.read_bytes(), b"the only copy\n")
         self.assertEqual(self.uninstall(code=3)["state"]["unlisted_backups"], [str(mine)])
         self.assertEqual(mine.read_bytes(), b"the only copy\n")
@@ -1516,13 +1520,13 @@ class RandomCase(UninstallCase):
             ["settings", "--rewrite-settings", "--docs-dir", "sprints", "--high-stakes", *home],
             ["settings", "--rewrite-settings", *home, *project_dir],
             ["settings", "--rewrite-settings", "--max-parallel-coders", "5", *home, *project_dir],
-            ["render", *home],
+            ["install", *home],
             ["roles-off"],
             ["roles-on"],
             ["earlier"],
-            ["render", "--apply-codex-settings", "--default-codex-permissions", *home],
-            ["render", "--remove-codex-settings", *home],
-            ["render", *home, *project],
+            ["install", "--codex-settings", "profile", *home],
+            ["install", "--codex-settings", "off", *home],
+            ["install", *home, *project],
         ]
         return [rng.choice(choices) for _ in range(rng.randint(2, 7))]
 

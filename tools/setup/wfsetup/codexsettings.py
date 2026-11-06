@@ -4,12 +4,10 @@ request into marked blocks of the user's Codex ``config.toml``.
 How it is used
 
     render.PARTS      Part("codex-settings", codexsettings.fill, codexsettings.configure)
-    doctor.CHECKS     Check("codex-settings", codexsettings.check, ..., configure=codexsettings.configure_check)
+    doctor.CHECKS     Check("codex-settings", codexsettings.check, ...)
 
     setup.py --codex-settings off|on|profile [--worktree-root DIR]
-    render --apply-codex-settings [--worktree-root DIR] [--default-codex-permissions]   (until it goes)
-    render --remove-codex-settings                                                       (until it goes)
-    doctor --only codex-settings [--codex-probe]
+    setup.py --check --only codex-settings [--codex-probe]
 
 What the framework needs on Codex (docs/agent-roles-framework.md,
 "Differences on Codex, and what to do about each")
@@ -130,7 +128,7 @@ The Manager's model and effort (R2.1 to R2.3 of sprint 03)
     home's roles on, its ``entry.load`` true, Codex installed), the head
     block sets ``model`` and ``model_reasoning_effort`` to the Manager's
     resolved Codex model and effort: every plain ``codex`` session in the
-    home starts on them, which is the accepted cost. ``doctor`` warns where
+    home starts on them, which is the accepted cost. ``--check`` warns where
     the block's values are no longer the Manager's resolution.
 
     either key set outside setup's blocks    nothing: a key is set once, and
@@ -219,7 +217,7 @@ The profile
 
     A profile of that name that the user defined is reported and kept. An
     end block that an earlier setup wrote with the profile and no
-    ``default_permissions`` beside it is the config Codex refuses: ``doctor``
+    ``default_permissions`` beside it is the config Codex refuses: ``--check``
     reports it as an error, and the next run without the option takes the
     profile out of the block and says so.
 
@@ -241,7 +239,7 @@ What stays
     blocks out where they still hold what setup wrote, and
     ``--worktree-root`` sets the root of an item that is on. The stale
     sweep of a run removes links and generated files only. They also go with
-    the reversal of the record (``uninstall``). What a run takes out of an
+    the reversal of the record (``--uninstall``). What a run takes out of an
     earlier block is said in the output. A block edited by hand is kept and
     reported (exit code 3), as every block of setup's is. A block the record
     lists and the file no longer holds is taken out of the record by the
@@ -269,7 +267,7 @@ BLOCK = "codex-settings"
 TOP_BLOCK = "codex-settings-top"
 BLOCK_NAMES = (BLOCK, TOP_BLOCK)
 
-# The kind of this part's items in the report of ``render``.
+# The kind of this part's items in the report of the install.
 KIND = "codex-settings"
 
 PROFILE = "workflow"
@@ -346,7 +344,7 @@ UNCERTAIN = (
     "provider's pages (\"More specific entries override broader ones\") and was not tried here"
 )
 
-_UP_TO_DATE = "up-to-date"   # ``render.UP_TO_DATE``; ``render`` imports this module, so it is not imported here
+_UP_TO_DATE = "up-to-date"   # ``render.UP_TO_DATE``; ``render.py`` imports this module, so it is not imported here
 
 _TOML_PLACE = re.compile(r"\(at (line \d+, column \d+|end of document)\)")
 
@@ -373,16 +371,6 @@ def configure(parser: Any) -> None:
         "is on. An absolute path, written normalised (no . or .. left in it), or one that starts with ~/, "
         "written with / between its parts. The filesystem root and the home directory itself are refused. "
         "It is your input: it goes into your config.toml and nowhere else",
-    )
-
-
-def configure_check(parser: Any) -> None:
-    """The option of the check of ``doctor``."""
-    parser.add_argument(
-        PROBE_OPTION, action="store_true",
-        help="with the check `codex-settings`: print the steps of the one session that shows whether this "
-        f"Codex ignores a `-c {PERMISSIONS_KEY}=...` override while {SANDBOX_KEY} is set (gate G4). doctor "
-        "itself starts no session",
     )
 
 
@@ -869,8 +857,7 @@ def decide(facts: Facts, want: Want) -> Decision:
             f"{PERMISSIONS_KEY}. Setup never changes or removes {SANDBOX_KEY}; {APPROVAL}"
         )
         found.printed = [
-            f"the permission profile `{PROFILE}`, as text; nothing of it was written:",
-            *[f"    {one}" for one in profile_lines(want.root, comments=False) if one],
+            _profile_text(want.root),
             f"to use it you would, yourself: remove {SANDBOX_KEY}, and any [sandbox_workspace_write] table, "
             f"from every config Codex loads (this file, a project's .codex/config.toml, a profile file); run "
             f"setup.py {APPLY_OPTION} again, which then writes the profile; and select it with "
@@ -895,8 +882,7 @@ def decide(facts: Facts, want: Want) -> Decision:
             + f". Setup writes the profile only where {PERMISSIONS_KEY} is set"
         )
         found.printed = [
-            f"the permission profile `{PROFILE}`, as text; nothing of it was written:",
-            *[f"    {one}" for one in profile_lines(want.root, comments=False) if one],
+            _profile_text(want.root),
             f"to use it: run setup.py {DEFAULT_OPTION}, which writes it and selects it with "
             f"{PERMISSIONS_KEY} = \"{PROFILE}\"; or set {PERMISSIONS_KEY} yourself (any value, a built-in such as "
             f"\"{PARENT}\" among them) and run setup.py {APPLY_OPTION} again, which then writes it unselected, for "
@@ -1117,6 +1103,14 @@ def _decide_pin(found: Decision, facts: Facts, want: Want) -> list[str]:
     ]
 
 
+def _profile_text(root: str | None) -> str:
+    """The profile as text, one note: its heading, then its lines indented."""
+    return "\n".join([
+        f"the permission profile `{PROFILE}`, as text; nothing of it was written:",
+        *[f"    {one}" for one in profile_lines(root, comments=False) if one],
+    ])
+
+
 def _no_root() -> str:
     return (
         f"no worktree root is in the profile: a worktree made beside the repository is outside the workspace "
@@ -1134,7 +1128,7 @@ def _notice(where: str) -> list[str]:
     ]
 
 
-# --- The part of render ------------------------------------------------------------
+# --- The part of the install ------------------------------------------------------------
 
 def _reach(run: Any, path: Path) -> tuple[str | None, str, bytes | None]:
     """Whether this run may write ``path``, the user's ``config.toml``: a
@@ -1186,7 +1180,7 @@ def _mine(item: Any, provider: Any) -> Any:
 
 
 def fill(run: Any) -> None:
-    """The part of ``render``; see the module. Without an option of its own
+    """The part of the install; see the module. Without an option of its own
     it keeps the item as the blocks hold it (a run rewrites them as they
     stand), and takes out of the record a block that is no longer in the
     file."""
@@ -1359,10 +1353,10 @@ def _forget_gone(run: Any, provider: Any, path: Path, key: str | None) -> None:
         except blocks.Refusal:
             return
         if gone:
-            run.drop_block(path, name)  # a block, as the record holds it: doctor tells it by that kind
+            run.drop_block(path, name)  # a block, as the record holds it: ``--check`` tells it by that kind
 
 
-# --- The check of doctor -----------------------------------------------------------
+# --- The check of --check, in doctor.CHECKS -----------------------------------------------------------
 
 def _bytes(path: Path) -> bytes | None:
     seen = fsio.look(path)
@@ -1379,7 +1373,7 @@ def _bytes(path: Path) -> bytes | None:
 
 
 def check(context: Any) -> list[Any]:
-    """The check ``codex-settings`` of ``doctor``: the three keys, as
+    """The check ``codex-settings`` of ``--check``: the three keys, as
     ``doctor.check_codex_settings`` reports them, then setup's blocks by the
     record, and what ``setup.py --codex-settings on`` would do now and
     would leave to the user. Nothing is written."""
@@ -1522,7 +1516,7 @@ def _block_findings(context: Any, path: Path, facts: Facts) -> tuple[list[Any], 
             edited.add(name)
             findings.append(doctor.info(
                 f"setup's block {name}: in the file, and changed by hand since setup wrote it (the check "
-                "`hand-edits` says what render does with it)", subject,
+                "`hand-edits` says what the install does with it)", subject,
             ))
         else:
             findings.append(doctor.fine(f"setup's block {name}: in the file, as setup wrote it", subject))
@@ -1547,7 +1541,7 @@ def probe_lines(sandbox: Any = UNSET) -> list[str]:
         honoured = "Codex asks for approval, or the sandbox refuses the write"
         ignored = "the file is created without a question"
     return [
-        f"G4 probe: one Codex session, started by you; doctor starts none. Your config stays as it is "
+        f"G4 probe: one Codex session, started by you; --check starts none. Your config stays as it is "
         f"({SANDBOX_KEY} = {shown(sandbox)})",
         "G4 probe, step 1: make a scratch repository, outside any project: mkdir g4-probe; cd g4-probe; "
         "git init; git commit --allow-empty -m first",
@@ -1582,7 +1576,7 @@ def _probe_findings(context: Any, sandbox: Any) -> list[Any]:
             return []
         return [doctor.info(
             f"gate G4 (whether this Codex ignores a `-c {PERMISSIONS_KEY}=...` override while {SANDBOX_KEY} is "
-            f"set) is not proved: `doctor --only codex-settings {PROBE_OPTION}` prints the steps of the one "
+            f"set) is not proved: `setup.py --check --only codex-settings {PROBE_OPTION}` prints the steps of the one "
             "session that shows it"
         )]
     return [doctor.info(line) for line in probe_lines(sandbox)]

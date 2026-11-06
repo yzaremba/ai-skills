@@ -1,9 +1,9 @@
-"""Tests for ``doctor``: each check, clean and with each kind of finding.
+"""Tests for ``setup.py --check``: each check, clean and with each kind of finding.
 
 Run from the repository root:
     python -m unittest discover -s tools/setup/tests
 
-The homes are scratch directories built by running ``render``, then
+The homes are scratch directories built by running ``setup.py``, then
 disturbed. No real provider is started (R6.8): ``codex`` and ``claude`` are
 ``provider_stub.StubProgram``, and the collaboration skill's doctor is a
 stub script in the fixture clone, found through a link in a scratch skills
@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import shutil
+import subprocess
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -86,7 +87,16 @@ class DoctorCase(EntryCase):
     def run_doctor(self, *argv: str, host: homes.Host | None = None) -> tuple[int, str, str]:
         host = host or self.host
         with mock.patch.object(homes.Host, "current", classmethod(lambda cls: host)):
-            return support.run("doctor", *argv, "--home", str(self.home))
+            return support.setup("--check", *self.dir_form(argv), "--home", str(self.home))
+
+    @staticmethod
+    def dir_form(argv: tuple[str, ...]) -> list[str]:
+        """The project of ``--project DIR``, which the fixtures name, is DIR of ``--check``."""
+        found = list(argv)
+        if "--project" in found:
+            at = found.index("--project")
+            found[at:at + 2] = found[at + 1:at + 2]
+        return found
 
     def doctor(self, *argv: str, host: homes.Host | None = None) -> tuple[int, dict]:
         code, out, err = self.run_doctor("--json", *argv, host=host)
@@ -178,7 +188,7 @@ class CleanCase(DoctorCase):
         self.assertEqual(code, 0)
         self.assertEqual((report["counts"]["error"], report["counts"]["warning"]), (0, 0), report)
         by_name = {check["name"]: check["findings"] for check in report["checks"]}
-        self.assertFinding(by_name["missing"], doctor.INFO, "not rendered yet")
+        self.assertFinding(by_name["missing"], doctor.INFO, "not installed yet")
         for name in ("drift", "hand-edits", "links"):
             self.assertFinding(by_name[name], doctor.INFO, "no run of setup has written")
 
@@ -251,17 +261,11 @@ class OutputCase(DoctorCase):
         self.assertEqual(list(by_name), ["boom", "refused", *doctor.names()])
         self.assertEqual(report["counts"]["error"], 3)
 
-    def test_a_check_added_to_the_registry_gets_its_option_and_runs_on_request(self) -> None:
-        def configure(parser):
-            parser.add_argument("--prove", action="store_true")
-
-        extra = doctor.Check("extra", lambda context: [doctor.warning("looked")], "fine", default=False,
-                             switch="prove", configure=configure)
+    def test_a_check_added_to_the_registry_runs_on_request(self) -> None:
+        extra = doctor.Check("extra", lambda context: [doctor.warning("looked")], "fine", default=False)
         with mock.patch.object(doctor, "CHECKS", (*doctor.CHECKS, extra)):
             _, report = self.doctor()
             self.assertEqual(report["not_run"], ["extra"])
-            _, report = self.doctor("--prove")
-            self.assertEqual(report["checks"][-1]["findings"][0]["detail"], "looked")
             _, findings = self.only("extra")
             self.assertEqual(self.details(findings, doctor.WARNING), ["looked"])
 
@@ -313,7 +317,7 @@ class DriftCase(DoctorCase):
             "home:.claude/skills/quick/SKILL.md", "home:.codex/agents/quick.toml",
         ])
         code, findings = self.only("drift")
-        self.assertFinding(findings, doctor.WARNING, "home:.claude/agents/quick.md", "run render")
+        self.assertFinding(findings, doctor.WARNING, "home:.claude/agents/quick.md", "run setup.py")
         self.ok()
         self.assertEqual(self.drifted(), [])
 
@@ -383,7 +387,7 @@ class DriftCase(DoctorCase):
         code, findings = self.only("drift", *self.project_arg)
         self.assertEqual(code, 0)
         self.assertFinding(findings, doctor.WARNING, "project:.claude/settings.json: key effortLevel",
-                           "no longer set by setup", "run render")
+                           "no longer set by setup", "run setup.py")
 
     def test_a_default_turned_off_is_what_render_would_remove(self) -> None:
         self.rendered(project=True)
@@ -403,7 +407,7 @@ class HandEditCase(DoctorCase):
         self.assertEqual(code, 0)
         self.assertEqual(len(self.details(findings, doctor.WARNING)), 1)
         self.assertFinding(findings, doctor.WARNING, "home:.claude/agents/worker.md", "edited by hand",
-                           "render keeps it", "--overwrite-edited")
+                           "setup keeps it", "--overwrite-edited")
         # It is no drift: its sources did not change.
         _, findings = self.only("drift")
         self.assertQuiet(findings)
@@ -447,7 +451,7 @@ class MissingCase(DoctorCase):
             "home:.agents/skills/lead/SKILL.md", "home:.agents/skills/lead/agents/openai.yaml",
             "home:.claude/agents/worker.md",
         ])
-        self.assertFinding(findings, doctor.ERROR, "home:.claude/agents/worker.md", "is gone", "run render")
+        self.assertFinding(findings, doctor.ERROR, "home:.claude/agents/worker.md", "is gone", "run setup.py")
         self.assertEqual(self.details(findings, doctor.WARNING), [])
         self.ok()
         code, findings = self.only("missing")
@@ -462,7 +466,7 @@ class MissingCase(DoctorCase):
         self.assertFinding(findings, doctor.ERROR, "project:.codex/config.toml: block starting-role", "gone")
         self.assertFinding(findings, doctor.ERROR, "project:.claude/settings.json: key agent", "no longer in the file")
         self.assertFinding(findings, doctor.ERROR, "project:.claude/settings.json: key effortLevel",
-                           'the key setup set ("medium") is no longer in the file', "run render")
+                           'the key setup set ("medium") is no longer in the file', "run setup.py")
 
     def test_an_effort_of_the_users_where_setup_would_set_one_is_a_warning(self) -> None:
         self.write(self.project_file, DEFAULT_ON + OVERRIDE)
@@ -487,7 +491,7 @@ class MissingCase(DoctorCase):
             "home:.agents/skills/gamma", "home:.claude/agents/extra.md", "home:.claude/skills/gamma",
             "home:.codex/agents/extra.toml",
         ])
-        self.assertFinding(findings, doctor.WARNING, "home:.claude/skills/gamma", "not installed", "run render")
+        self.assertFinding(findings, doctor.WARNING, "home:.claude/skills/gamma", "not installed", "run setup.py")
 
     def test_a_home_rendered_without_roles_is_info(self) -> None:
         self.roles_off()
@@ -506,14 +510,13 @@ class MissingCase(DoctorCase):
         self.assertNotIn("could not be made", json.dumps(findings))
 
     def test_a_process_skill_the_roles_need_is_not_missing_after_roles_left_out(self) -> None:
-        self.write(self.user_file, '[setup]\nenabled = ["beta", "solo", "sample"]\ndisabled = ["alpha"]\n')
-        self.roles_off()
+        self.write(self.user_file, 'install = ["beta", "solo", "sample"]\n')   # alpha and the roles left out
         self.ok()
         code, findings = self.only("missing")
         self.assertEqual(code, 0)
         self.assertQuiet(findings)
-        self.roles_on()
-        self.ok()
+        self.write(self.user_file, 'install = ["beta", "solo", "sample", "roles"]\n')
+        self.ok("--rewrite-settings")
         code, findings = self.only("missing")
         self.assertEqual(code, 0)
         self.assertQuiet(findings)
@@ -536,7 +539,7 @@ class MissingCase(DoctorCase):
         self.write(self.user_file, "install = []\n")
         code, findings = self.only("drift")
         self.assertEqual(code, 0)
-        self.assertFinding(findings, doctor.WARNING, "home:.claude/agents/lead.md", "run render")
+        self.assertFinding(findings, doctor.WARNING, "home:.claude/agents/lead.md", "run setup.py")
         code, findings = self.only("missing")
         self.assertEqual(code, 0)
         self.assertQuiet(findings)
@@ -547,7 +550,7 @@ class MissingCase(DoctorCase):
         code, findings = self.only("missing", *self.project_arg)
         self.assertEqual(code, 0)
         self.assertQuiet(findings)
-        self.assertFinding(findings, doctor.INFO, "not rendered in the project yet",
+        self.assertFinding(findings, doctor.INFO, "not installed in the project yet",
                            "project:.claude/settings.json: key agent", "project:.claude/settings.json: key effortLevel")
 
     def test_something_in_the_way_is_an_error(self) -> None:
@@ -555,7 +558,7 @@ class MissingCase(DoctorCase):
         code, findings = self.only("missing")
         self.assertEqual(code, 1)
         self.assertFinding(findings, doctor.ERROR, str(self.claude_skills / "alpha"), "setup did not make it",
-                           "render stops on it")
+                           "setup stops on it")
 
     def test_a_removed_file_render_would_no_longer_make_is_info(self) -> None:
         self.rendered()
@@ -669,7 +672,7 @@ class DuplicateCase(DoctorCase):
 class OtherCloneCase(DoctorCase):
     def other_clone(self) -> Path:
         other = self.root / "other-clone"
-        self.write(other / "tools" / "setup" / "workflow_setup.py", "# the tool\n")
+        self.write(other / "tools" / "setup" / "setup.py", "# the tool\n")
         (other / "roles").mkdir()
         for name in ("gamma", "multiagent-collab"):
             self.write(other / name / "SKILL.md", "---\nname: x\n---\n")
@@ -724,7 +727,10 @@ class CloneVerdictCase(DoctorCase):
     def test_a_scratch_home_is_not_asked(self) -> None:
         code, findings = self.only("clone")
         self.assertEqual(code, 0)
-        self.assertFinding(findings, doctor.INFO, "not asked: a scratch home")
+        if os.name == "nt":   # a scratch home is not exempt on Windows (R8.7): a temp directory is a local drive
+            self.assertFinding(findings, doctor.OK, "on a local drive")
+        else:
+            self.assertFinding(findings, doctor.INFO, "not asked: a scratch home")
 
     def verdict(self, mounts: tuple[str, ...]) -> list[doctor.Finding]:
         where = Locations(home=self.home, clone=self.clone, real_home=True)
@@ -1089,6 +1095,45 @@ class ProfilesCase(DoctorCase):
         self.assertEqual((code, [found["severity"] for found in findings]), (0, [doctor.OK]))
 
 
+class NoticesCase(DoctorCase):
+    """What the user is to do by hand (R6.4, R10.2, R10.3), as warnings."""
+
+    OLD_BLOCK = "# workflow-setup:start\n.agents/workflow.local.toml\n.claude/skills/alpha\n# workflow-setup:end\n"
+
+    def test_an_old_key_is_a_warning_naming_its_replacement(self) -> None:
+        self.write(self.user_file, '[setup]\nenabled = ["alpha"]\n')
+        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
+        code, findings = self.only("profiles", *self.project_arg)
+        self.assertEqual(code, 0)
+        self.assertFinding(findings, doctor.WARNING, str(self.user_file), "setup.enabled is an old key", "install in ~/.agents/workflow.toml")
+        self.assertFinding(findings, doctor.WARNING, str(self.project_file), "project.enabled is an old key", "install")
+
+    def test_setups_old_gitignore_block_is_a_warning_with_no_record(self) -> None:
+        (self.project / ".gitignore").write_text("build/\n" + self.OLD_BLOCK, encoding="utf-8")
+        before = snapshot(self.project)
+        code, findings = self.only("drift", *self.project_arg)
+        self.assertEqual(code, 0)
+        self.assertFinding(findings, doctor.WARNING, f"{self.project / '.gitignore'}: lines 2-5 are setup's old ignore block", "remove those lines")
+        self.assertEqual(snapshot(self.project), before)
+
+    @unittest.skipUnless(shutil.which("git"), "needs git")
+    def test_a_tracked_codex_config_gets_the_r64_line_and_a_named_old_block(self) -> None:
+        config = self.project / ".codex" / "config.toml"
+        self.write(self.project_file, "[roles]\nmanager_default = true\n")
+        self.write(config, 'model = "x"\n')
+        shutil.rmtree(self.project / ".git")
+        for argv in (("init", "-q"), ("add", "--", ".codex/config.toml")):
+            subprocess.run(["git", "-C", str(self.project), *argv], check=True, capture_output=True)
+        code, findings = self.only("drift", *self.project_arg)
+        self.assertEqual(code, 0)
+        self.assertFinding(findings, doctor.WARNING, f"{config} is tracked by git, so setup writes nothing there", "will not start as")
+        block = "# workflow-setup:start starting-role\nmodel = \"y\"\n# workflow-setup:end starting-role\n"
+        self.write(config, block + 'model = "x"\n')
+        subprocess.run(["git", "-C", str(self.project), "add", "-f", "--", ".codex/config.toml"], check=True, capture_output=True)
+        code, findings = self.only("drift", *self.project_arg)
+        self.assertFinding(findings, doctor.WARNING, "are setup's old Codex block", "remove those lines")
+
+
 class InterruptedCase(DoctorCase):
     def test_none(self) -> None:
         self.rendered()
@@ -1269,7 +1314,7 @@ class CollaborationCase(DoctorCase):
 
 
 class ProjectSetCase(DoctorCase):
-    """``doctor --project`` on a project that lists skills and a rule
+    """``setup.py --check DIR`` on a project that lists skills and a rule
     (R5.1): the home leaves the units out, so the project links or copies
     them."""
 
@@ -1310,7 +1355,7 @@ class ProjectSetCase(DoctorCase):
     def test_a_unit_the_home_has_is_not_missing(self) -> None:
         self.project_rendered()
         self.write(self.user_file, "")             # the home installs everything
-        self.render()
+        self.render("--rewrite-settings")
         code, findings = self.only("missing", *self.project_arg)
         self.assertQuiet(findings)
 
@@ -1351,7 +1396,7 @@ class ProjectSetCase(DoctorCase):
         record = json.loads((self.project / ".agents" / "workflow-setup" / "manifest.json").read_text(encoding="utf-8"))
         self.assertTrue(record["entries"]["project:.claude/skills/alpha"].get("adopted"))
         self.write(self.user_file, "")             # the home has alpha too (R3.2)
-        self.render()
+        self.render("--rewrite-settings")
         for name in ("links", "duplicate-skills", "other-clones", "missing"):
             code, findings = self.only(name, *self.project_arg)
             self.assertQuiet(findings)
@@ -1372,7 +1417,7 @@ class ProjectSetCase(DoctorCase):
         code, findings = self.only("other-clones", *self.project_arg)
         self.assertEqual([found["severity"] for found in findings], [doctor.OK])
         other = self.root / "other-clone"
-        self.write(other / "tools" / "setup" / "workflow_setup.py", "# the tool\n")
+        self.write(other / "tools" / "setup" / "setup.py", "# the tool\n")
         (other / "roles").mkdir()
         self.write(other / "gamma" / "SKILL.md", "---\nname: x\n---\n")
         self.link(self.skills / "gamma", other / "gamma")
@@ -1394,8 +1439,8 @@ class ProjectSetCase(DoctorCase):
         self.project_rendered()
         self.write(self.project_file, 'install = ["alpha"]\n')
         code, findings = self.only("drift", *self.project_arg)
-        self.assertFinding(findings, doctor.WARNING, "project:.claude/skills/solo", "run render")
-        self.assertFinding(findings, doctor.WARNING, "project:.claude/rules/sample/sample.md", "run render")
+        self.assertFinding(findings, doctor.WARNING, "project:.claude/skills/solo", "run setup.py")
+        self.assertFinding(findings, doctor.WARNING, "project:.claude/rules/sample/sample.md", "run setup.py")
         self.assertEqual(sorted(self.subjects(findings, doctor.WARNING)),
                          ["project:.claude/rules/sample/sample.md", "project:.claude/skills/solo"])
 
@@ -1403,7 +1448,7 @@ class ProjectSetCase(DoctorCase):
         self.write(self.project_file, 'install = ["alpha", "nothing"]\n')
         code, findings = self.only("missing", *self.project_arg)
         self.assertEqual(code, 1)
-        self.assertFinding(findings, doctor.ERROR, "render cannot plan the install", "nothing", str(self.project_file))
+        self.assertFinding(findings, doctor.ERROR, "setup cannot plan the install", "nothing", str(self.project_file))
 
     def test_doctor_project_writes_nothing(self) -> None:
         self.project_rendered()
@@ -1486,15 +1531,15 @@ class ReadOnlyCase(DoctorCase):
 
 
 class RepositoryCase(DoctorCase):
-    def test_the_command_is_listed_and_its_help_names_every_check(self) -> None:
-        code, out, _ = support.run("--help")
-        self.assertIn("doctor", out)
-        code, out, _ = support.run("doctor", "--help")
+    def test_the_help_of_setup_names_every_check(self) -> None:
+        code, out, _ = support.setup("--help")
         self.assertEqual(code, 0)
         for name in doctor.names():
             self.assertIn(name, out)
-        for option in ("--only", "--skip", "--no-versions", "--no-collab", "--json", "--project", "--home"):
+        for option in ("--check", "--only", "--skip", "--no-versions", "--no-collab", "--codex-probe", "--json", "--home"):
             self.assertIn(option, out)
+        self.assertNotIn("doctor [", out)
+        self.assertNotIn("doctor --", out)
         self.assertNotIn("allow-unshared-clone", out)
 
     def test_every_check_has_a_name_of_its_own(self) -> None:

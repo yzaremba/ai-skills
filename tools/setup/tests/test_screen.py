@@ -57,7 +57,7 @@ class ScreenTests(ScreenCase):
         row = next(line for line in lines if "process.questions" in line)
         self.assertTrue(row.lstrip().startswith("4 "), row)
         self.assertIn('"all-together"', row)
-        self.assertIn("shipped: tools/setup/defaults.toml", row)
+        self.assertIn("shipped: " + os.path.join("tools", "setup", "defaults.toml"), row)
         self.assertTrue(any(line.lstrip().startswith("1 ") and "this machine" in line for line in lines))
         self.assertTrue(any("claude-code tiers" in line and "fast=haiku" in line for line in lines))
         self.assertFalse(any("roles.enabled" in line for line in lines))
@@ -307,8 +307,20 @@ class HandWrittenFileTests(ScreenCase):
         self.assertIn("kept:", between)
         self.assertNotIn("--rewrite-settings", between)
         self.assertNotIn("changes to", between)
-        self.assertNotIn("(in this file)", between)
         self.assertNotIn("edited outside setup", between)
+        # What the file holds is said to be in it; only the changed value is not written.
+        self.assertIn('process.docs_dir = "sprints"  (in this file)', between)
+        self.assertIn('process.questions = "one-at-a-time"  (not written)', between)
+
+    def test_no_on_an_installed_home_does_not_say_everything_is_up_to_date(self) -> None:
+        self.hand_file()
+        self.assertEqual(self.typed("", "")[0], 0)
+        code, out, err = self.typed("4", "one-at-a-time", "", "n", "")
+        self.assertEqual((code, err), (3, ""), out)
+        kept = out.split(self.ASK)[1]       # the plan shown before the question is the one that would write
+        self.assertIn("plan:\n  nothing else to do: the rest is up to date\n", kept)
+        self.assertNotIn("everything is up to date", kept)
+        self.assertTrue(out.rstrip().endswith("; the settings file was kept as written or edited by hand"), out)
 
     def test_no_in_a_project_makes_the_plan_again_without_the_project_changes(self) -> None:
         file = self.project / ".agents" / "workflow.toml"
@@ -352,7 +364,7 @@ class CodexItemTests(ScreenCase):
         self.assertEqual((code, err), (0, ""), out)
         config = tomllib.loads((self.codex / "config.toml").read_text(encoding="utf-8"))
         self.assertEqual(config["default_permissions"], "workflow")
-        self.assertIn(root, str(config["permissions"]["workflow"]))
+        self.assertIn(root, config["permissions"]["workflow"]["filesystem"])
         self.assertIn("agents", config)
         code, out, err = self.typed("", "n", argv=self.ARGV)
         self.assertIn("as the Codex config holds it", out)
@@ -382,7 +394,7 @@ class CodexItemTests(ScreenCase):
 
     def test_a_root_the_profile_refuses_is_asked_again(self) -> None:
         number = self.number(self.typed("", "n", argv=self.ARGV)[1])
-        code, out, err = self.typed(number, "on", "relative/dir", "/srv/trees", "", "n", argv=self.ARGV)
+        code, out, err = self.typed(number, "on", "relative/dir", str(self.home / "trees"), "", "n", argv=self.ARGV)
         self.assertEqual((code, err), (1, ""), out)
         self.assertIn("not an absolute path", out)
         self.assertFalse((self.codex / "config.toml").exists())

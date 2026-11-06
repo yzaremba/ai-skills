@@ -1,10 +1,10 @@
 """Whether a provider itself lists what setup installed: the check ``discovery``.
 
-How ``doctor`` uses it
+How ``--check`` uses it
 
     Check("discovery", discovery.check_discovery, "...")
 
-    doctor                                  # offline commands only: no session is started
+    setup.py --check                        # offline commands only: no session is started
 
 What counts (R6.3, R8.1)
     A provider's own output that lists the item. A model's answer does not
@@ -455,7 +455,7 @@ class Item:
 
 
 def expected(context: Any, provider: homes.Provider) -> list[Item]:
-    """What ``render`` installs for ``provider`` in the home, from the
+    """What the install writes for ``provider`` in the home, from the
     sources and settings as they are now. A ``SetupError`` where the
     sources do not allow it."""
     where = context.user_level
@@ -718,7 +718,7 @@ def _plural(count: int, kind: str) -> str:
 
 def check_discovery(context: Any) -> list[Any]:
     """Whether each provider lists what setup installed for it (R6.3)."""
-    from . import doctor  # at the call: ``doctor`` imports this module for its registry
+    from . import doctor  # at the call: the checks import this module for its registry
 
     if not context.sources.ok:
         return [doctor.info(doctor.NOT_PLANNED)]
@@ -733,7 +733,7 @@ def check_discovery(context: Any) -> list[Any]:
     if len(absent) == len(found.items):
         return [*findings, doctor.info(
             f"nothing that setup installs is in this home ({_plural(len(absent), 'item')}); the check `missing` "
-            "says what render would create"
+            "says what the install would create"
         )]
     for item in found.items:
         if item.fault is not None:

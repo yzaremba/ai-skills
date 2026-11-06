@@ -157,7 +157,7 @@ class SyntaxTreeTests(unittest.TestCase):
         """The scripts in ``tools/setup`` are read as well. The command
         line changes no disk by itself."""
         scripts = sorted(support.SETUP.glob("*.py"))
-        self.assertEqual([path.name for path in scripts], sorted([support.SCRIPT.name, support.SETUP_SCRIPT.name]))
+        self.assertEqual([path.name for path in scripts], sorted([support.SETUP_SCRIPT.name, support.VALIDATE_SCRIPT.name]))
         for script in scripts:
             self.assertEqual(
                 [(what, inside) for _, what, inside in changes(ast.parse(script.read_text(encoding="utf-8")))], [], script
@@ -172,7 +172,7 @@ class SyntaxTreeTests(unittest.TestCase):
         self.assertIsNotNone(first)
 
     def test_the_stop_variable_is_read_in_fsio_alone(self) -> None:
-        for path in [*modules(), support.SCRIPT, support.SETUP_SCRIPT]:
+        for path in [*modules(), support.SETUP_SCRIPT, support.VALIDATE_SCRIPT]:
             if path.name == "fsio.py":
                 continue
             self.assertNotIn(fsio.STOP_VARIABLE, path.read_text(encoding="utf-8"), path.name)

@@ -145,26 +145,6 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--memory-dir", metavar="DIR", help="memory.dir: where the project memory lives")
 
 
-# --- Asking -------------------------------------------------------------------
-
-class _Dialogue:
-    def __init__(self, yes: bool, interactive: bool) -> None:
-        self.yes = yes
-        self.interactive = interactive and not yes
-
-    def ask(self, prompt: str) -> str:
-        try:
-            return input(prompt).strip()
-        except EOFError:
-            raise SetupError("standard input ended before every question was answered") from None
-
-    def unanswered(self, what: str, flags: str) -> SetupError:
-        return SetupError(
-            f"{what}: not answered. Standard input is not a terminal, so nothing is asked, and --yes "
-            f"was not given. Give {flags}, or --yes to accept what is proposed"
-        )
-
-
 def _check(key: str, value: Any, source: str) -> None:
     """Check one value through the settings schema; ``source`` is named
     where a settings file would be."""
@@ -223,20 +203,9 @@ class _Provider:
     comparison: Comparison | None
     checked: Dictionary                       # the dictionary as the list corrects it
     maps: dict[str, dict[str, str]]           # "tiers" and "efforts", as they will be
-    given: dict[str, set[str]]                # the keys of each that a flag answered
-    stated: dict[str, set[str]]               # the keys of each that a flag or the prompt answered
+    stated: dict[str, set[str]]               # the keys of each that a flag answered
     notes: dict[str, str] = field(default_factory=dict)
     unset: dict[str, set[str]] = field(default_factory=lambda: {table: set() for table in _MAPS})   # taken out
-
-    def choices(self) -> list[str]:
-        """The models offered: the list's where there is one, else the
-        dictionary's, hidden entries left out."""
-        if self.reading.has_list:
-            return [
-                name + ("" if name in self.known.models else " (new: not in the dictionary)")
-                for name in self.reading.offered()
-            ]
-        return [name for name, model in self.known.models.items() if model.visibility in (None, modellist.LISTED)]
 
     def model_fault(self, key: str, model: str, flag: str, allow_unlisted: bool) -> str | None:
         """Why ``model`` cannot stay at ``key``, or None. What is worth
@@ -302,70 +271,6 @@ class _Provider:
         if entry is None:
             return "unknown: the model is not listed"
         return ", ".join(entry.efforts) if entry.takes_effort else "none: the model takes no effort setting"
-
-
-def _settle_map(dialogue: _Dialogue, state: _Provider, table: str, allow_unlisted: bool) -> None:
-    """Bring one mapping of a provider to its final values, or raise."""
-    word, meta, names, flag = _MAPS[table]
-    values, given = state.maps[table], state.given[table]
-    while True:
-        problems = state.faults(table, allow_unlisted)
-        if dialogue.yes or all(name in given for name in names):
-            if problems:
-                raise SetupError(*problems)
-            return
-        if not dialogue.interactive:
-            flags = ", ".join(f"{flag} {state.name}:{name}={meta}" for name in names if name not in given)
-            raise dialogue.unanswered(f"{state.name}: the {word} mapping", flags)
-        print(f"{state.name} {table}: " + "  ".join(f"{name}={values[name]}" for name in names))
-        if table == "tiers":
-            print(f"  models: {', '.join(state.choices()) or 'none listed'}")
-        for line in problems:
-            print(f"  {line}")
-        answer = dialogue.ask(f"  change, as {word}={meta} ..., or nothing to accept ({flag} {state.name}:...): ")
-        if not answer:
-            if not problems:
-                return
-            continue
-        try:
-            changed: dict[str, str] = {}
-            for item in answer.split():
-                name, equals, value = item.partition("=")
-                if not equals or not name:
-                    raise SetupError(f"{item}: expected {word}={meta}")
-                _check(f"providers.{state.name}.{table}.{name}", value, "answer")
-                changed[name] = value
-        except SetupError as exc:
-            for line in exc.lines:
-                print(f"  {line}")
-            continue
-        values.update(changed)
-        state.stated[table].update(changed)
-        state.unset[table].difference_update(changed)
-        if not state.faults(table, allow_unlisted):
-            return
-
-
-def _settle_setting(dialogue: _Dialogue, key: str, flag: str, kind: str, proposed: Any) -> tuple[Any, bool]:
-    """The value, and whether it was typed: Enter and --yes accept a proposal, which is not an answer."""
-    if dialogue.yes:
-        return proposed, False
-    hint = f"{flag} or --no-{flag[2:]}" if kind == "boolean" else flag
-    if not dialogue.interactive:
-        raise dialogue.unanswered(key, hint)
-    while True:
-        answer = dialogue.ask(f"{key} [{tomlio.format_value(proposed)}] ({hint}): ")
-        if not answer:
-            return proposed, False
-        value = _typed(kind, answer)
-        try:
-            _check(key, value, "answer")
-        except SetupError as exc:
-            for line in exc.lines:
-                print(f"  {line}")
-            continue
-        return value, True
-
 
 
 # --- The file -----------------------------------------------------------------
@@ -521,7 +426,6 @@ def prepare(
         else:
             flat[key] = value
 
-    dialogue = _Dialogue(True, False)
     layer = "the user layer" if scope == USER else "the project layer"
     say(f"settings file: {target} ({layer}; {'it exists' if existing is not None else 'not there yet'})")
 
@@ -622,28 +526,27 @@ def prepare(
                 table: {name: proposed(f"providers.{provider.name}.{table}.{name}") for name in _MAPS[table][2]}
                 for table in _MAPS
             },
-            given={table: set() for table in _MAPS},
             stated={table: set() for table in _MAPS},
         )
         for table in _MAPS:
             for (provider_name, name), value in flags[table].items():
                 if provider_name == provider.name:
                     state.maps[table][name] = value
-                    state.given[table].add(name)
                     state.stated[table].add(name)
         for table in _MAPS:
             for name in _MAPS[table][2]:
                 key = f"providers.{state.name}.{table}.{name}"
                 if key in unset:
                     state.maps[table][name] = below[key].value
-                    state.given[table].add(name)
                     state.unset[table].add(name)
         say(f"{state.name}: {reading.describe()}")
         if state.comparison is not None:
             for line in state.comparison.lines():
                 say(f"  {line}")
         for table in _MAPS:
-            _settle_map(dialogue, state, table, args.allow_unlisted)
+            problems = state.faults(table, args.allow_unlisted)
+            if problems:
+                raise SetupError(*problems)
         states.append(state)
 
     for state in states:
@@ -676,15 +579,13 @@ def prepare(
         flat[schema.INSTALL_KEY] = answers[schema.INSTALL_KEY]
     elif schema.INSTALL_KEY in unset:
         flat.pop(schema.INSTALL_KEY, None)
-    for key, flag, _, kind in _SETTINGS:
+    for key, *_ in _SETTINGS:
         if key in answers:
             place(key, answers[key], stated=True)
-            continue
-        if key in unset:
+        elif key in unset:
             flat.pop(key, None)
-            continue
-        value, typed = _settle_setting(dialogue, key, flag, kind, proposed(key))
-        place(key, value, stated=typed)
+        else:
+            place(key, proposed(key))     # accepted as shown: not stated
 
     # --- What the roles would run with ----------------------------------------
     entries = {key: entry for key, entry in below.items() if key.split(".")[0] in profiles.GROUPS}
@@ -736,14 +637,21 @@ def prepare(
     kept = by_hand and bool(getattr(args, "keep_by_hand", False))
     # The values a kept file is not given are not shown as held by it.
     say("settings:")
-    held = "not written" if kept else "in this file"
-    for key, _, _, _ in _SETTINGS:
+
+    def held(key: str) -> str:
+        # A kept file holds only what it held: a value it already has is
+        # in it, a changed or new one is not written.
+        if kept and not (existing is not None and key in existing and _same(existing[key], flat[key])):
+            return "not written"
+        return "in this file"
+
+    for key, *_ in _SETTINGS:
         if key in flat:
-            say(f"  {key} = {tomlio.format_value(flat[key])}  ({held})")
+            say(f"  {key} = {tomlio.format_value(flat[key])}  ({held(key)})")
         else:
             say(f"  {key} = {tomlio.format_value(below[key].value)}  ({below[key].layer}; not written)")
     if schema.INSTALL_KEY in flat:
-        say(f"  {schema.INSTALL_KEY} = {tomlio.format_value(flat[schema.INSTALL_KEY])}  ({held})")
+        say(f"  {schema.INSTALL_KEY} = {tomlio.format_value(flat[schema.INSTALL_KEY])}  ({held(schema.INSTALL_KEY)})")
     say("")
     if kept:
         say(f"kept: {target}, written or edited by hand; not written:")
@@ -791,7 +699,7 @@ def prepare(
             "change it. Setup rewrites the file from its values: every key is kept, its comments and layout are "
             f"not, and --yes alone does not confirm that. Give {REWRITE_OPTION} with --yes to rewrite it; the file "
             f"as it is now is then copied to {roots.backups_dir_of(scope == PROJECT)} first, under the time of the "
-            "run. `uninstall` puts back a file that was there before the first run, and leaves in place, as "
+            "run. `--uninstall` puts back a file that was there before the first run, and leaves in place, as "
             "yours, one that setup rewrote after you edited it. Nothing was written"
         )
     return Prepared(

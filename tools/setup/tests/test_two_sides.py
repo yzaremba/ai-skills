@@ -178,6 +178,14 @@ class WslLinkSeenFromWindowsCase(TreeCase):
         self.claude.mkdir()
         self.codex.mkdir()
 
+    @property
+    def setup_script(self) -> Path:
+        return self.script.with_name("setup.py")
+
+    @property
+    def validate_script(self) -> Path:
+        return self.script.with_name("validate.py")
+
     def run_there(self, *argv: str, script: Path | None = None) -> tuple[int, str, str]:
         done = self.far.run(
             self.far.python, "-B", self.far.there(script or self.script), *argv, "--home", self.far.there(self.home))
@@ -188,6 +196,10 @@ class WslLinkSeenFromWindowsCase(TreeCase):
             self.assertTrue(line.startswith("error: "), (argv, err))
         return done.returncode, out, err
 
+    def install_there(self, *argv: str) -> tuple[int, str, str]:
+        """``setup.py`` applying its plan on the Windows side (``--yes``, unless the run is a ``--dry-run``)."""
+        return self.run_there(*(argv if "--dry-run" in argv else ("--yes", *argv)), script=self.setup_script)
+
     def wsl_link(self, path: Path, target: str = "/home/nobody/there") -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         os.symlink(target, path)
@@ -196,7 +208,7 @@ class WslLinkSeenFromWindowsCase(TreeCase):
     def test_the_junctions_render_makes_on_windows_read_from_wsl_as_links_into_the_clone(self) -> None:
         # Setup's own way of making one (inside the Windows Python, not
         # ``mklink``), through the real commands on the Windows side.
-        code, out, err = self.run_there("render")
+        code, out, err = self.install_there()
         self.assertEqual((code, err), (0, ""), out)
         where = Locations(home=self.home, clone=self.clone, real_home=True)
         sorter = homes.Classifier(homes.resolve(where, homes.Host.current()))
@@ -210,7 +222,7 @@ class WslLinkSeenFromWindowsCase(TreeCase):
             self.assertEqual(sorter.standing(link).kind, homes.OTHER_SIDE, link)
         self.assertTrue((links[0] / "SKILL.md").read_bytes().startswith(b"---\n"))
         source = sorted(os.listdir(self.clone / "alpha"))
-        code, out, err = self.run_there("uninstall")
+        code, out, err = self.run_there("--uninstall", script=self.setup_script)
         self.assertEqual((code, err), (0, ""), out)
         for link in links:
             self.assertEqual(fsio.look(link).kind, fsio.ABSENT, link)
@@ -218,40 +230,37 @@ class WslLinkSeenFromWindowsCase(TreeCase):
 
     def test_where_a_skill_is_to_be_linked(self) -> None:
         link = self.wsl_link(self.claude / "skills" / "alpha", str(self.clone / "alpha"))
-        code, out, err = self.run_there("homes")
-        self.assertEqual((code, err), (0, ""))
-        self.assertIn("    - alpha: a file of its own, not a link", out.splitlines())
-        for argv in (("render", "--dry-run"), ("render",)):
-            code, out, err = self.run_there(*argv)
+        for argv in (("--dry-run",), ()):
+            code, out, err = self.install_there(*argv)
             self.assertEqual(code, 2, out)
             self.assertEqual(len([line for line in err.splitlines() if "alpha" in line]), 1, err)
             self.assertIn(f"{self.far.there(link)}: a file of its own, not a link, and setup did not make it", err)
             self.assertIn("nothing was written", out.splitlines()[-1])
         self.assertEqual(os.readlink(link), str(self.clone / "alpha"))   # as WSL made it
         self.assertEqual(sorted(os.listdir(self.claude / "skills")), ["alpha"])
-        code, out, _ = self.run_there("doctor", "--only", "links")
+        code, out, _ = self.run_there("--check", "--only", "links", script=self.setup_script)
         self.assertIn(code, (0, 1, 2))
 
     def test_where_setups_own_link_was(self) -> None:
-        self.assertEqual(self.run_there("render")[0], 0)
+        self.assertEqual(self.install_there()[0], 0)
         link = self.claude / "skills" / "alpha"
         self.assertEqual(self.far.shell("rmdir", self.far.there(link)).returncode, 0)
         self.wsl_link(link, str(self.clone / "alpha"))
-        code, out, err = self.run_there("render")
+        code, out, err = self.install_there()
         self.assertEqual(code, 2)
         self.assertEqual(len(err.splitlines()), 1, err)            # the conflict
-        code, out, err = self.run_there("doctor", "--only", "links")
+        code, out, err = self.run_there("--check", "--only", "links", script=self.setup_script)
         self.assertNotEqual(code, 0)
         self.assertIn("home:.claude/skills/alpha: no longer a link: a file is there", out)
         for _ in range(2):
-            code, out, err = self.run_there("uninstall")
+            code, out, err = self.run_there("--uninstall", script=self.setup_script)
             self.assertEqual(code, 2)
             self.assertEqual(err.splitlines(), [
                 f"error: {self.far.there(link)}: cannot be read: Invalid argument (it is {WSL_NOTE})"])
             self.assertIn("nothing was changed", out.splitlines()[-1])
         self.assertEqual(os.readlink(link), str(self.clone / "alpha"))
         os.unlink(link)
-        code, _, err = self.run_there("uninstall")
+        code, _, err = self.run_there("--uninstall", script=self.setup_script)
         self.assertEqual(err, "")
         self.assertIn(code, (0, 3))
 
@@ -260,9 +269,7 @@ class WslLinkSeenFromWindowsCase(TreeCase):
         self.wsl_link(self.claude / "rules")
         config = self.wsl_link(self.codex / "config.toml")
         self.wsl_link(self.claude / "agents" / "sprint-coder.md")
-        code, out, err = self.run_there("homes")
-        self.assertEqual((code, err), (0, ""))
-        code, out, err = self.run_there("render", "--apply-codex-settings")
+        code, out, err = self.install_there("--codex-settings", "on")
         self.assertEqual(code, 2, out)
         rules = self.far.there(self.claude / "rules")
         self.assertEqual(sorted(err.splitlines()), sorted([
@@ -272,10 +279,10 @@ class WslLinkSeenFromWindowsCase(TreeCase):
         ]))
         self.assertIn("nothing was written", out.splitlines()[-1])
         self.assertFalse((self.home / ".agents").exists())
-        code, out, err = self.run_there("doctor", "--only", "links", "--only", "codex-settings")
+        code, out, err = self.run_there("--check", "--only", "links", "--only", "codex-settings", script=self.setup_script)
         self.assertEqual(err, "")
         self.assertIn(WSL_NOTE, out)
-        code, out, err = self.run_there("uninstall")
+        code, out, err = self.run_there("--uninstall", script=self.setup_script)
         self.assertEqual((code, err), (0, ""))
         for path in (self.claude / "CLAUDE.md", self.claude / "rules", config):
             self.assertEqual(os.readlink(path), "/home/nobody/there")
@@ -283,15 +290,15 @@ class WslLinkSeenFromWindowsCase(TreeCase):
     def test_where_setups_own_state_and_settings_are(self) -> None:
         state = self.wsl_link(self.home / ".agents" / "workflow-setup")
         record = self.far.there(state) + "\\manifest.json"
-        for argv in (("render",), ("uninstall",), ("doctor", "--only", "links")):
-            code, out, err = self.run_there(*argv)
+        for argv in (("--yes",), ("--uninstall",), ("--check", "--only", "links")):
+            code, out, err = self.run_there(*argv, script=self.setup_script)
             self.assertNotEqual(code, 0, argv)
             self.assertIn(f"{self.far.there(state)} is {WSL_NOTE}", out + err, argv)
             self.assertLessEqual(len([line for line in (out + err).splitlines() if record in line]), 2, argv)
         os.unlink(state)
         settings = self.wsl_link(self.home / ".agents" / "workflow.toml")
-        for argv in (("show",), ("--yes", "--rewrite-settings")):
-            code, out, err = self.run_there(*argv, script=self.script if argv[0] == "show" else self.script.with_name("setup.py"))
+        for argv in (("--dry-run",), ("--yes", "--rewrite-settings")):
+            code, out, err = self.run_there(*argv, script=self.setup_script)
             self.assertEqual(code, 2, argv)
             self.assertEqual(err.splitlines()[0],
                              f"error: {self.far.there(settings)}: cannot be read: Invalid argument (it is {WSL_NOTE})")
@@ -300,14 +307,14 @@ class WslLinkSeenFromWindowsCase(TreeCase):
     def test_in_the_clone(self) -> None:
         self.wsl_link(self.clone / "beta" / "linked", str(self.clone / "alpha"))
         self.wsl_link(self.clone / "beta" / "references.md")
-        code, out, err = self.run_there("validate")
+        code, out, err = self.run_there(script=self.validate_script)
         self.assertEqual((code, err), (1, ""))
         self.assertEqual(out.splitlines(), [
             "beta/linked: [symlink] is a link; no link is committed, and Codex skips a linked file inside a skill",
             "beta/references.md: [symlink] is a link; no link is committed, and Codex skips a linked file inside a skill",
             "2 problems",
         ])
-        code, out, err = self.run_there("render")
+        code, out, err = self.install_there()
         self.assertEqual((code, out), (2, ""))
         self.assertEqual(len(err.splitlines()), 2)
         self.assertFalse((self.home / ".agents").exists())
@@ -335,21 +342,22 @@ class ProjectLinksOfBothSidesCase(TreeCase):
         self.links = [self.project / ".claude" / "skills" / "alpha", self.project / ".agents" / "skills" / "alpha"]
 
     run_there = WslLinkSeenFromWindowsCase.run_there
+    install_there = WslLinkSeenFromWindowsCase.install_there
+    setup_script = WslLinkSeenFromWindowsCase.setup_script
 
     def render_here(self) -> tuple[int, dict, str]:
-        code, out, err = support.run(
-            "render", "--json", "--home", str(self.home), "--project", str(self.project))
+        code, out, err = support.install("--json", "--home", str(self.home), str(self.project))
         return code, json.loads(out), err
 
     def render_there(self) -> tuple[int, dict, str]:
-        code, out, err = self.run_there("render", "--json", "--project", self.far.there(self.project))
-        return code, json.loads(out), err
+        code, out, err = self.install_there("--json", self.far.there(self.project))
+        return code, json.loads(out)["install"], err
 
     def project_items(self, report: dict) -> dict[str, str]:
         return {item["name"]: item["status"] for item in report["project"]["items"] if item["kind"] == "link"}
 
     def test_a_relative_link_wsl_made_reads_from_windows_as_setups_link(self) -> None:
-        self.assertEqual(self.run_there("render")[0], 0)      # the home, from Windows
+        self.assertEqual(self.install_there()[0], 0)      # the home, from Windows
         code, report, err = self.render_here()
         self.assertEqual((code, err), (0, ""), report["errors"])
         texts = [fsio.look(link).target for link in self.links]

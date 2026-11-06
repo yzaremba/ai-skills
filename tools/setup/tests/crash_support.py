@@ -347,7 +347,7 @@ class World:
         return plan
 
     def uninstall(self) -> list[tuple[str, str]]:
-        """The whole way back, as ``uninstall --project`` and then
+        """The whole way back, as ``--uninstall DIR`` and then
         ``uninstall`` do it. Returns what was kept."""
         kept: list[tuple[str, str]] = []
         for project in (True, False):

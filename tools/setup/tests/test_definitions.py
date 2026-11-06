@@ -1,4 +1,4 @@
-"""Tests for the role definitions ``render`` generates for each provider.
+"""Tests for the role definitions the install generates for each provider.
 
 Run from the repository root:
     python -m unittest discover -s tools/setup/tests
@@ -11,7 +11,7 @@ run commands (runner), one on a model with no effort setting (quick) and
 one with no entry point at all (silent). ``RepositoryCase`` renders the
 repository's own roles and holds whatever they say.
 
-These tests are about the definitions: they run ``render`` with the parts up
+These tests are about the definitions: they run the install with the parts up
 to ``roles`` (``DefinitionsCase.PARTS``). What the ``entry`` part adds, a
 loaded role's skill, a starting role's profile and the project level, is in
 ``test_entry``.
@@ -43,6 +43,7 @@ from wfsetup.locations import Locations
 
 CLAUDE = "claude-code"
 CODEX = "codex"
+SETTINGS_KEY = "home:.agents/workflow.toml"   # the user's settings file, in the record once setup wrote it
 
 # A description that YAML cannot take plain: a colon and a space, quotes of
 # both kinds, a backslash, a hash after a space, a leading bracket.
@@ -373,7 +374,7 @@ class FilesCase(DefinitionsCase):
         # The Codex model of the same tier takes one.
         self.assertEqual(self.codex_file("quick")["model_reasoning_effort"], "medium")
         self.write(self.user_file, '[providers.codex.tiers]\nfast = "gpt-unlisted"\n')
-        self.assertEqual(self.render()[0], 0)
+        self.assertEqual(self.render("--rewrite-settings", "--allow-unlisted")[0], 0)
         self.assertEqual(self.codex_file("quick")["model_reasoning_effort"], "medium")  # unlisted: unchecked, kept
 
     def test_the_body_is_the_notice_the_role_its_includes_its_bindings_and_the_actions(self) -> None:
@@ -415,7 +416,7 @@ class FilesCase(DefinitionsCase):
         self.assertNotIn("--", comment)
         self.assertIn("roles/worker/ (ROLE.md, role.toml)", comment)
         self.assertIn("providers/claude-code/actions.md", comment)
-        self.assertIn("run `python tools/setup/workflow_setup.py render`", comment)
+        self.assertIn("run `python tools/setup/setup.py`", comment)
         self.assertEqual(body.count("<!--"), 1)
 
         raw = (self.codex_agents / "worker-hard.toml").read_text(encoding="utf-8")
@@ -585,12 +586,12 @@ class FilesCase(DefinitionsCase):
         self.assertIn(f"    worker.toml: up to date: as generated ({size:,} bytes; model gpt-6.1-sol, effort medium)", out.splitlines())
 
     def test_help_states_the_options_and_the_rule(self) -> None:
-        code, out, _ = support.run("render", "--help")
+        code, out, _ = support.setup("--help")
         flat = " ".join(out.split())
         self.assertEqual(code, 0)
         for text in ("--overwrite-edited", "the process alone is installed", "<role>-hard",
                      "Edit, Write, NotebookEdit; Bash, PowerShell, Monitor; Agent", "read-only sandbox",
-                     "one generated file, key or block was kept that --overwrite-edited would replace"):
+                     "a generated file, key or block that was edited by hand was kept"):
             self.assertIn(text, flat)
 
 
@@ -630,7 +631,7 @@ class StableCase(DefinitionsCase):
         (other_home / ".codex").mkdir()
         with mock.patch.object(locations, "CLONE", other_clone), \
                 mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
-            code, _, err = support.run("render", "--home", str(other_home))
+            code, _, err = support.install("--home", str(other_home))
         self.assertEqual((code, err), (0, ""))
         first, second = self.generated(), self.generated(other_home)
         self.assertEqual(set(first), ALL_FILES)
@@ -720,13 +721,14 @@ class DependsCase(DefinitionsCase):
     def test_a_user_level_override_of_one_roles_tier_changes_that_roles_files_only(self) -> None:
         """R8.3, at the user level."""
         self.assertEqual(self.render()[0], 0)
-        hashes = {key: entry.get("sha256") for key, entry in self.entries().items()}
+        hashes = {key: entry.get("sha256") for key, entry in self.entries().items() if key != SETTINGS_KEY}
         changed = self.changed_by(lambda: self.write(self.user_file, '[roles.worker]\ntier = "frontier"\n'))
         self.assertEqual(changed, {".claude/agents/worker.md", ".codex/agents/worker.toml"})
         self.assertEqual(self.claude_file("worker")[0]["model"], "fable")
         self.assertEqual(self.codex_file("worker")["model"], "gpt-6-astra")
         self.assertEqual(self.claude_file("worker-hard")[0]["model"], "opus")  # the hard definition is its own
-        after = {key: entry.get("sha256") for key, entry in self.entries().items()}
+        # The settings file is the user's own (and setup adds the mapping to it): not a generated file.
+        after = {key: entry.get("sha256") for key, entry in self.entries().items() if key != SETTINGS_KEY}
         self.assertEqual(
             {key for key in after if after[key] != hashes[key]},
             {"home:.claude/agents/worker.md", "home:.codex/agents/worker.toml"},
@@ -749,7 +751,7 @@ class DependsCase(DefinitionsCase):
         self.assertEqual(self.render()[0], 0)
         before, record = self.generated(), self.manifest_file.read_bytes()
         self.write(self.project_file, '[roles.worker]\ntier = "frontier"\n')
-        code, report, err = self.report("--project", str(self.project))
+        code, report, err = self.report(str(self.project))
         self.assertEqual((code, err, report["plan"]), (0, "", []))
         self.assertEqual(self.generated(), before)
         self.assertEqual(self.manifest_file.read_bytes(), record)
@@ -934,17 +936,16 @@ class CacheCase(DefinitionsCase):
                 before = tree(self.root)
                 with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
                     runs = {
-                        "validate": support.run("validate", "--home", str(self.home)),
-                        "show": support.run("show", "roles", "--home", str(self.home)),
-                        "doctor": support.run("doctor", "--home", str(self.home)),
-                        "render": support.run("render", "--home", str(self.home)),
+                        "validate": support.validate("--home", str(self.home)),
+                        "doctor": support.setup("--check", "--home", str(self.home)),
+                        "setup": support.install("--home", str(self.home)),
                     }
                 for command, (code, out, err) in runs.items():
                     with self.subTest(command=command):
                         self.assertNotEqual(code, 0)
                         said = [line for line in (out + err).splitlines() if "cache.long" in line]
                         self.assertTrue(said and all(line.endswith(fault) for line in said), out + err)
-                        # ``doctor`` says a fault of a dictionary under its check
+                        # ``--check`` says a fault of a dictionary under its check
                         # of the sources and again under each check it stops,
                         # as it does for any other fault of that file.
                         if command != "doctor":
@@ -1064,7 +1065,7 @@ class CacheCase(DefinitionsCase):
 def support_validate(case: DefinitionsCase) -> tuple[int, str, str]:
     """``validate`` on the case's clone."""
     with mock.patch.object(homes.Host, "current", classmethod(lambda cls: case.host)):
-        return support.run("validate", "--home", str(case.home))
+        return support.validate("--home", str(case.home))
 
 
 class NoRolesCase(DefinitionsCase):
@@ -1091,7 +1092,7 @@ class NoRolesCase(DefinitionsCase):
         self.assertEqual(report["counts"]["file_remove"], 11)
         self.assertEqual(report["definitions"], [])
         self.assertIn("0 files written, 11 removed", report["summary"])
-        self.assertEqual([key for key, entry in self.entries().items() if entry["kind"] == "file"], [])
+        self.assertEqual([key for key, entry in self.entries().items() if entry["kind"] == "file" and key != SETTINGS_KEY], [])
         before = tree(self.root)
         code, report, _ = self.report()
         self.assertEqual((code, report["plan"], report["stale"]), (0, [], []))
@@ -1122,7 +1123,8 @@ class NoRolesCase(DefinitionsCase):
         plan.apply()
         code, report, _ = self.report()
         self.assertEqual(code, 0)
-        self.assertEqual(self.user_file.read_text(encoding="utf-8"), 'install = []\n\n[roles.worker]\ntier = "deep"\n')
+        # Setup adds the tier and effort mapping at the end of the file; what the user wrote stays as it was.
+        self.assertTrue(self.user_file.read_text(encoding="utf-8").startswith('install = []\n\n[roles.worker]\ntier = "deep"\n'))
         self.assertNotIn("home:.agents/workflow.toml", [item["key"] for item in report["stale"]])
 
 
@@ -1173,7 +1175,7 @@ class EditedCase(DefinitionsCase):
             self.assertEqual(tree(self.root), before)
             flat = " ".join(out.split())
             self.assertIn("worker.toml: kept: edited by hand since setup wrote it, and kept; --overwrite-edited backs "
-                          "it up and replaces it, or remove the file and run render again", flat)
+                          "it up and replaces it, or remove the file and run setup.py again", flat)
             self.assertIn("1 edited by hand and kept, which --overwrite-edited would replace", out.splitlines()[-1])
         code, report, _ = self.report()
         self.assertEqual((code, report["exit_code"], report["counts"]["edited"], report["errors"]), (3, 3, 1, []))
@@ -1240,7 +1242,8 @@ class EditedCase(DefinitionsCase):
 
 
 class GateCase(DefinitionsCase):
-    def refused(self, *expected: str) -> str:
+    def refused(self, *expected: str, early: bool = False) -> str:
+        """``early``: refused by the check of the settings, before a plan is made: nothing is printed."""
         before = tree(self.root)
         for argv in ((), ("--dry-run",)):
             code, out, err = self.render(*argv)
@@ -1248,13 +1251,16 @@ class GateCase(DefinitionsCase):
             self.assertEqual(tree(self.root), before)
             for text in expected:
                 self.assertIn(text, err)
-            self.assertIn("stopped: ", out.splitlines()[-1])
-            self.assertIn("nothing was written", out.splitlines()[-1])
+            if early:
+                self.assertEqual(out, "")
+            else:
+                self.assertIn("stopped: ", out.splitlines()[-1])
+                self.assertIn("nothing was written", out.splitlines()[-1])
         return err
 
     def test_a_profile_that_does_not_resolve_stops_before_any_write(self) -> None:
         self.write(self.user_file, '[roles.worker]\neffort = "max"\n[providers.codex.tiers]\nstandard = "gpt-5.5"\n')
-        err = self.refused('role worker, provider codex: the model "gpt-5.5" does not accept the effort "max"')
+        err = self.refused('role worker, provider codex: the model "gpt-5.5" does not accept the effort "max"', early=True)
         self.assertIn("it accepts: low, medium, high, xhigh", err)
         self.assertNothingAt(self.claude_skills)
         self.assertNothingAt(self.manifest_file)

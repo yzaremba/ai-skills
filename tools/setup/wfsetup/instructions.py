@@ -1,5 +1,5 @@
 """Whether both providers load a project's ``AGENTS.md``: the check
-``instruction-files`` of ``doctor --project DIR``.
+``instruction-files`` of ``setup.py --check DIR``.
 
 The project's ``AGENTS.md`` holds the lesson index of the ``project-memory``
 skill, so a provider that does not load the file does not see the index.
@@ -570,12 +570,12 @@ def _codex(context: Any, project: Path) -> list[Any]:
 
 
 def check(context: Any) -> list[Any]:
-    """The check ``instruction-files`` of ``doctor``; see the module."""
+    """The check ``instruction-files`` of ``--check``; see the module."""
     from . import doctor
 
     project = context.homes.project
     if project is None:
         return [doctor.info(
-            f"no project was named: `doctor --project DIR` checks that both providers load DIR/{AGENTS}"
+            f"no project was named: `setup.py --check DIR` checks that both providers load DIR/{AGENTS}"
         )]
     return _claude(context, project) + _codex(context, project)

@@ -14,13 +14,13 @@ How a command uses it
     result = plan.run(dry_run=args.dry_run)        # or describe() / apply()
     for line in result.lines: print(line)
 
-    record = read_record(roots)                    # what doctor reads
+    record = read_record(roots)                    # what ``--check`` reads
     for key, entry in record: record.path(key), entry["kind"], entry.get("sha256")
 
     recover(roots)                                 # first, in a command that surveys the disk
     plan_reversal(roots).run(dry_run=False)        # what uninstall is made of
     remove_state(roots)                            # once nothing is left
-    leftovers(roots)                               # what a killed run left; doctor reads it
+    leftovers(roots)                               # what a killed run left; ``--check`` reads it
     unlisted_backups(roots), discard_backups(roots)   # backups no record lists; only on request
 
 Two records, two states
@@ -114,7 +114,7 @@ Backups
     backups directory. A backup that was written for a change that was
     then not made stays, and stays listed. A file there that no record
     lists (the record was removed by hand) is left where it is, named in
-    one line by the next run that writes and by ``doctor``, and removed
+    one line by the next run that writes and by ``--check``, and removed
     only by ``discard_backups``, which a command calls when the user asks
     for exactly that.
 
@@ -184,13 +184,13 @@ What an interrupted run leaves, and who removes it
     (``fsio.temporary_names``), in exactly the directories of the paths
     its pending list names, its state directory and its backups. It says
     so in one line. A command that looks at the disk to decide what to do
-    (``render``, ``uninstall``) does this first (``recover``), so that a
+    (the install, ``--uninstall``) does this first (``recover``), so that a
     leftover is never taken for a file of the user's; a plan counts a
     recorded temporary as absent when it asks whether a directory is
     empty. Nothing else is removed: no backup, and no file or directory
     that merely has a name like ``.wfsetup-<hex>.tmp``. Those are the
     user's as far as setup can tell; ``leftovers`` lists them for
-    ``doctor``. A dry run names the same and removes nothing. One place is
+    ``--check``. A dry run names the same and removes nothing. One place is
     setup's own by its name, the state directory: a file directly in it
     under a temporary name, or a claim on a lock, is a piece of a lock or
     of a record that a killed run left, and the run that takes the lock
@@ -251,7 +251,7 @@ Undoing (R8.1)
     setup's own part is as setup wrote it: that part is taken out, and
     the file is left holding the rest, as the user's (``Result.left``);
     one that setup's part is no longer in at all is left as it is.
-    ``release_file`` does the same for ``render``. A file that holds
+    ``release_file`` does the same for the install. A file that holds
     again exactly what the backup of the original holds needs no
     undoing, and its entry goes. A directory setup created below a
     directory of setup's that is a link now is left, as the user's:
@@ -382,7 +382,7 @@ REPLACEABLE = (REMOVED_LINK, REMOVED_DIRECTORY)
 # a version its owner had edited since setup's last write (the settings file
 # setup rewrites on request). Such a file is made from what its owner put
 # there, so its hash says "as setup left it" of content that is not setup's
-# alone. A caller that undoes the record (``uninstall``) does not remove it
+# alone. A caller that undoes the record (``--uninstall``) does not remove it
 # on the strength of that hash.
 REWRITTEN = "rewritten"
 
@@ -691,7 +691,7 @@ class Plan:
     ) -> None:
         """A file setup writes whole: UTF-8, LF. ``inputs`` is the caller's
         digest of what the file was generated from, kept in the record for
-        ``doctor``. ``replace`` says what may be overwritten (``OWN``,
+        ``--check``. ``replace`` says what may be overwritten (``OWN``,
         ``EDITED``, ``ANY``); anything else there is a conflict. With
         ``ANY``, a user's file that already holds ``text`` is left the
         user's.
@@ -1372,7 +1372,7 @@ def unlisted_backups(roots: Roots, project: bool = False, record: Record | None 
 def discard_backups(roots: Roots, *, project: bool = False, follow_config_symlinks: bool = False) -> list[Path]:
     """Remove the backups that the record of the home, or of the project,
     does not list, because the user asked for exactly that
-    (``uninstall --discard-backups``). Returns what was removed. A backup
+    (``--uninstall --discard-backups``). Returns what was removed. A backup
     a record lists is never removed here."""
     removed: list[Path] = []
     with lock.held(roots, project=project, create=False, follow=follow_config_symlinks) as mine:
@@ -1471,7 +1471,7 @@ class Leftovers:
 
 
 def leftovers(roots: Roots) -> Leftovers:
-    """For a command that only reads (``doctor``): what an interrupted run
+    """For a command that only reads (``--check``): what an interrupted run
     left and the next run that writes removes (``temporaries``, ``lock``),
     the backups no record lists (``unlisted``), and what is merely named
     like a temporary of setup's beside a recorded path (``lookalikes``).
@@ -2928,7 +2928,7 @@ class _Fold:
             pass  # what was there before setup is there again: nothing is left to undo
         elif tail and carried.left(tail).strip():
             # Setup's part goes, and what it carries stays, as the user's.
-            # A file that was there before setup (``render`` takes up what
+            # A file that was there before setup (the install takes up what
             # an earlier uninstall left) held that part alone, and is not
             # put back over what it holds now.
             if not self._put(ident, key, _State(FILE, data=carried.left(tail), mode=state.mode, real=state.real)):
@@ -3188,7 +3188,7 @@ class _Fold:
             found = unlisted_backups(self.roots, project, self.record)
             if found:
                 where = self.roots.backups_dir_of(project)
-                option = "uninstall --discard-backups" + (" --project DIR" if project else "")
+                option = "setup.py --uninstall" + (" DIR" if project else "") + " --discard-backups"
                 lines.append(
                     f"{len(found)} backup{'' if len(found) == 1 else 's'} under {where} that no record lists "
                     f"{'was' if len(found) == 1 else 'were'} left as {'it is' if len(found) == 1 else 'they are'}; "

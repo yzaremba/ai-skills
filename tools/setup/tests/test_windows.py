@@ -67,7 +67,7 @@ def short_form(path: Path | str) -> str:
 
 def uninstall(case: RenderCase, *argv: str, home: Path | str | None = None) -> tuple[int, dict, str]:
     with mock.patch.object(homes.Host, "current", classmethod(lambda cls: case.host)):
-        code, out, err = support.run("uninstall", "--json", *argv, "--home", str(home or case.home))
+        code, out, err = support.setup("--uninstall", "--json", *argv, "--home", str(home or case.home))
     return code, json.loads(out) if out.startswith("{") else {}, err
 
 
@@ -213,7 +213,7 @@ class LinkCaseCase(RenderCase):
         before = tree(self.root)
         retyped = other_case(self.home)
         with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
-            code, out, err = support.run("render", "--json", "--home", retyped)
+            code, out, err = support.install("--json", "--home", retyped)
         if not WINDOWS:
             self.assertEqual((code, out), (2, ""))
             self.assertIn("--home: ", err)
@@ -310,6 +310,13 @@ class CloneCheckCase(HomesCase):
         self.assertIs(standing.shared, False)
         self.assertIn("inside WSL, reached over the network name; a junction cannot lead there", standing.why)
         self.assertIsNone(homes.clone_warning(found))
+
+    def test_check_asks_a_scratch_home_too_on_windows(self) -> None:
+        where = Locations(home=self.home, clone=self.clone, real_home=False)
+        context = doctor.Context(where, argparse.Namespace(), homes.Host(homes.WINDOWS, {"PATH": ""}, ()))
+        with mock.patch.object(os.path, "realpath", return_value=WSL_SHARE + "\\clone"):
+            (found,) = doctor.check_clone(context)
+        self.assertEqual((found.severity, found.detail), (doctor.WARNING, homes.WINDOWS_CLONE_LINE))
 
     def test_doctor_gives_the_same_verdict(self) -> None:
         def verdict(real: str) -> doctor.Finding:
@@ -555,7 +562,7 @@ class ShortNameCase(RenderCase):
     def test_a_home_given_short_and_then_long_is_one_home(self) -> None:
         start = tree(self.long_home)
         with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
-            code, out, err = support.run("render", "--json", "--home", self.short_home)
+            code, out, err = support.install("--json", "--home", self.short_home)
         self.assertEqual((code, err), (0, ""))
         report = json.loads(out)
         self.assertEqual(report["counts"]["create"], 6)
@@ -565,7 +572,7 @@ class ShortNameCase(RenderCase):
         before = tree(self.root)
         for home in (self.long_home, self.short_home, other_case(self.short_home)):
             with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
-                code, out, err = support.run("render", "--json", "--home", str(home))
+                code, out, err = support.install("--json", "--home", str(home))
             self.assertEqual((code, err, json.loads(out)["plan"]), (0, "", []), home)
             self.assertEqual(tree(self.root), before)
         code, report, err = uninstall(self, home=self.long_home)
@@ -600,7 +607,7 @@ class ShortNameCase(RenderCase):
 
 @unittest.skipUnless(WINDOWS, "junctions are made on Windows")
 class JunctionInstallCase(UninstallCase):
-    """``setup.py``, ``render`` and ``uninstall``, as the
+    """``setup.py``, with and without ``--uninstall``, as the
     user runs them: every link is a junction, and none is ever entered."""
 
     def links(self) -> list[Path]:
@@ -626,13 +633,13 @@ class JunctionInstallCase(UninstallCase):
         skill = self.clone / "beta" / "SKILL.md"
         was = skill.read_bytes()
         skill.write_bytes(was.replace(b"claude-code, codex", b"claude-code (no longer for both)"))
-        out = self.done("render", "--apply-codex-settings", *self.at_home)
+        out = self.done("install", "--codex-settings", "on", *self.at_home)
         self.assertIn("remove link home:.agents/skills/beta", out)
         self.assertNothingAt(self.codex_skills / "beta")
         self.assertTrue(fsio.is_junction(self.claude_skills / "beta"))
         self.assertEqual(sorted(os.listdir(self.clone / "beta")), ["SKILL.md", "scripts"])   # the sentinel
         skill.write_bytes(was)
-        self.done("render", "--apply-codex-settings", *self.at_home)
+        self.done("install", "--codex-settings", "on", *self.at_home)
         self.assertEqual(picture(self.clone), before["clone"])
 
         self.take_back()
@@ -673,10 +680,18 @@ class JunctionRenderCase(RenderCase):
             self.assertLinked(link, self.clone / ("rules/sample" if link.name == "sample" else link.name))
 
     def test_a_junction_whose_target_is_gone_is_swept_as_a_link(self) -> None:
+        # A skill that no source lists and nothing names, so the run does not stop at validate once it is gone.
+        retired = self.clone / "retired"
+        retired.mkdir()
+        (retired / "SKILL.md").write_text(
+            (self.clone / "solo" / "SKILL.md").read_text(encoding="utf-8").replace("solo", "retired"), encoding="utf-8")
+        self.write(self.user_file, 'install = ["alpha", "beta", "solo", "sample", "retired"]\n')
         self.assertEqual(self.render()[0], 0)
+        link = self.claude_skills / "retired"
+        self.assertTrue(fsio.is_junction(link))
+        self.write(self.user_file, 'install = ["alpha", "beta", "solo", "sample"]\n')   # no longer installed
         moved = self.root / "moved away"
-        shutil.move(str(self.clone / "solo"), str(moved))
-        link = self.claude_skills / "solo"
+        shutil.move(str(retired), str(moved))
         seen = fsio.look(link)
         self.assertEqual((seen.kind, seen.directory, seen.junction), (fsio.LINK, False, True))
         self.assertTrue(fsio.is_junction(link))
@@ -685,7 +700,7 @@ class JunctionRenderCase(RenderCase):
         self.assertEqual(sorter.entry(link).kind, homes.LINK_BROKEN)
         code, report, err = self.report()
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(report["plan"], ["remove link home:.claude/skills/solo"])
+        self.assertEqual(report["plan"], ["remove link home:.claude/skills/retired"])
         self.assertNothingAt(link)
         self.assertEqual(sorted(os.listdir(moved)), ["SKILL.md"])
 
@@ -766,12 +781,16 @@ class LongPathCase(RenderCase):
 
     def run_at(self, command: str, home: Path, *argv: str) -> tuple[int, str, str]:
         with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
-            return support.run(command, *argv, "--home", str(home))
+            if command == "install":
+                return support.install(*argv, "--home", str(home))
+            if command == "setup.py":
+                return support.setup(*argv, "--home", str(home))
+            return support.setup("--uninstall", *argv, "--home", str(home))
 
     def test_just_below_the_limit_everything_works(self) -> None:
         home = self.deep_home(259 - self.LONGEST_TAIL - 2)
         start = tree(home)
-        code, out, err = self.run_at("render", home)
+        code, out, err = self.run_at("install", home)
         self.assertEqual((code, err), (0, ""), out)
         link = home / ".claude" / "skills" / "alpha"
         self.assertGreater(len(str(link)), 230)
@@ -787,7 +806,7 @@ class LongPathCase(RenderCase):
             if length != 250:
                 os.makedirs("\\\\?\\" + str(home) + "\\.claude")
             before = tree(Path("\\\\?\\" + str(self.root / "deep")))
-            for command, argv in (("render", ()), ("doctor", ("--only", "links")), ("uninstall", ())):
+            for command, argv in (("install", ()), ("setup.py", ("--check", "--only", "links")), ("uninstall", ())):
                 code, out, err = self.run_at(command, home, *argv)
                 self.assertNotIn("Traceback", out + err)
                 if code == 0 and not err:
@@ -795,7 +814,7 @@ class LongPathCase(RenderCase):
                 lines = err.splitlines()
                 self.assertTrue(lines and all(line.startswith("error: ") for line in lines), (command, out, err))
                 self.assertLessEqual(len([line for line in lines if "deep" in line]), 2, err)
-                if command == "render":
+                if command == "install":
                     self.assertEqual(tree(Path("\\\\?\\" + str(self.root / "deep"))), before)   # nothing half made
             shutil.rmtree("\\\\?\\" + str(self.root / "deep"), True)
 
@@ -934,21 +953,19 @@ class LineEndingCase(UninstallCase):
         self.start(earlier=False)
         script = self.tool()
         before = self.files()
-        project = ("--project", str(self.project))
+        project = (str(self.project),)
         runs = [
             (("setup.py", "--yes", "--rewrite-settings"), 0), (("setup.py", "--yes", "--rewrite-settings", str(self.project)), 0),
-            (("render", "--apply-codex-settings"), 0), (("render", *project), 0),
-            (("render", "--json", "--dry-run", *project), 0),
-            (("homes",), 0), (("homes", "--json"), 0), (("show",), 0), (("show", "--json", *project), 0),
-            (("validate",), 0), (("doctor", "--no-collab", "--skip", "models", "--no-versions"), None),
-            (("doctor", "--json", "--no-collab", "--skip", "models", "--no-versions", *project), None),
-            (("uninstall", "--dry-run"), 0), (("uninstall", "--dry-run", "--json", *project), 0),
-            (("render", "--help"), 0), (("render", "--no-such-option"), 2), (("show", "no.such.key"), 2),
+            (("setup.py", "--yes", "--codex-settings", "on"), 0), (("setup.py", "--yes", "--manager-default", *project), 0),
+            (("setup.py", "--json", "--dry-run", *project), 0),
+            (("validate.py",), 0), (("setup.py", "--check", "--no-collab", "--skip", "models", "--no-versions"), None),
+            (("setup.py", "--check", "--json", "--no-collab", "--skip", "models", "--no-versions", str(self.project)), None),
+            (("setup.py", "--uninstall", "--dry-run"), 0), (("setup.py", "--uninstall", "--dry-run", "--json", str(self.project)), 0),
+            (("setup.py", "--help"), 0), (("setup.py", "--no-such-option"), 2), (("setup.py", "--dry-run", str(self.root / "nowhere")), 2),
         ]
         printed = 0
         for argv, expected in runs:
-            program = script.with_name("setup.py") if argv[0] == "setup.py" else script
-            done = self.child(program, *argv[(argv[0] == "setup.py"):])
+            done = self.child(script.with_name(argv[0]), *argv[1:])
             said = done.stdout + done.stderr
             if expected is not None:
                 self.assertEqual(done.returncode, expected, (argv, said.decode("utf-8", "replace")[-600:]))
@@ -974,7 +991,7 @@ class LineEndingCase(UninstallCase):
                 self.assertNotIn(b"\r", data, name)
         self.assertGreaterEqual(kept_crlf, 2)                # the project's settings.json and config.toml
 
-        for argv in (("uninstall", *project), ("uninstall",)):
+        for argv in (("--uninstall", str(self.project)), ("--uninstall",)):
             done = self.child(script, *argv)
             self.assertEqual((done.returncode, done.stderr), (0, b""), done.stdout.decode("utf-8", "replace")[-600:])
             self.assertNotIn(b"\r", done.stdout)
@@ -984,12 +1001,12 @@ class LineEndingCase(UninstallCase):
         script = self.tool()
         home = self.root / "hôme Zoë 日本語"
         (home / ".claude").mkdir(parents=True)
-        for argv in (("homes",), ("render", "--dry-run"), ("homes", "--json")):
+        for argv in (("--dry-run",), ("--dry-run", "--json")):
             done = self.child(script, *argv, home=home)
             self.assertEqual((done.returncode, done.stderr), (0, b""), done.stdout.decode("utf-8", "replace")[-400:])
             self.assertIn("hôme Zoë 日本語", done.stdout.decode("utf-8"))
             self.assertNotIn(b"\r", done.stdout)
-        done = self.child(script, "show", home=home / "nöt thére")
+        done = self.child(script, "--dry-run", home=home / "nöt thére")
         self.assertEqual((done.returncode, done.stdout), (2, b""))
         self.assertIn("nöt thére", done.stderr.decode("utf-8"))
         self.assertNotIn(b"\r", done.stderr)

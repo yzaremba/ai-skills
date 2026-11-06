@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Set up and inspect the workflow: settings, and later the installed files.
+"""Check the clone's sources (skills, rules, roles, providers and the shipped
+settings) and print every problem found.
 
 Usage:
-    python tools/setup/workflow_setup.py <command> [options]
-    python tools/setup/workflow_setup.py --help
+    py -3 tools/setup/validate.py [options]      (Windows)
+    python3 tools/setup/validate.py [options]
+    python3 tools/setup/validate.py --help
 
-It can be run by path from any directory. The code is in the package
-``wfsetup`` beside this file; each command is one module under
-``wfsetup/commands``.
+It can be run by path from any directory, and starts as ``setup.py`` does.
+The code is in the package ``wfsetup`` beside this file; the program is
+``wfsetup/validate_program.py``.
 
 Standard library only, Python 3.11 or later, the same code on Linux and
 Windows.
@@ -51,9 +53,9 @@ def _interrupted(exc: BaseException) -> int:
 
 
 def main() -> int:
-    """Run one command; see ``wfsetup.cli``."""
+    """Run the program; see ``validate_program``."""
     if sys.version_info < (3, 11):
-        sys.stderr.write("error: workflow_setup.py needs Python 3.11 or later\n")
+        sys.stderr.write("error: validate.py needs Python 3.11 or later\n")
         return 2
     # No bytecode is written. The tool runs from the shared clone, and the
     # clone is changed only by `git pull`: a run must not leave `__pycache__`
@@ -83,10 +85,11 @@ def main() -> int:
         here = str(Path(__file__).resolve().parent)
         if here not in sys.path:
             sys.path.insert(0, here)
+        from wfsetup import validate_program
         from wfsetup.cli import run_from_command_line
     except KeyboardInterrupt as exc:
         return _interrupted(exc)
-    return run_from_command_line()
+    return run_from_command_line(validate_program.main)
 
 
 def _leave(code: int) -> None:

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import shutil
 import sys
@@ -24,15 +25,15 @@ from unittest import mock
 
 TESTS = Path(__file__).resolve().parent
 SETUP = TESTS.parent
-SCRIPT = SETUP / "workflow_setup.py"
 SETUP_SCRIPT = SETUP / "setup.py"
+VALIDATE_SCRIPT = SETUP / "validate.py"
 DEFAULTS = SETUP / "defaults.toml"
 REPOSITORY = SETUP.parents[1]
 
 if str(SETUP) not in sys.path:
     sys.path.insert(0, str(SETUP))
 
-from wfsetup import cli, fileops, fsio, homes, locations, program, settingsfile  # noqa: E402
+from wfsetup import cli, fileops, fsio, homes, locations, program, render, settingsfile, validate_program  # noqa: E402
 from wfsetup.locations import Locations  # noqa: E402
 
 # A test builds its scratch world with ``fsio``'s own functions (a link, a
@@ -41,7 +42,7 @@ from wfsetup.locations import Locations  # noqa: E402
 # such base, and changes nothing outside a run's bounds.
 fsio._BASE = fsio.bounds([tempfile.gettempdir()])
 
-# ``doctor --project`` looks for a ``CLAUDE.md`` in every directory above the
+# ``setup.py --check DIR`` looks for a ``CLAUDE.md`` in every directory above the
 # project. For a scratch project it stops below the temporary directory: a
 # file of this machine's own above it (the user's ``.claude/CLAUDE.md``,
 # where the temporary directory is inside the home) is no part of a test.
@@ -294,23 +295,46 @@ def set_compaction_tokens(file: Path, tokens: int | None) -> None:
     file.write_text(text, encoding="utf-8", newline="\n")
 
 
-def run(*argv: str) -> tuple[int, str, str]:
-    """Run the command line in this process: exit code, stdout, stderr."""
-    out, err = io.StringIO(), io.StringIO()
-    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        try:
-            code = cli.main(list(argv))
-        except SystemExit as exc:  # argparse: a usage error, or --help
-            code = exc.code
-    return code, out.getvalue(), err.getvalue()
-
-
 def setup(*argv: str) -> tuple[int, str, str]:
     """``run``, for the program ``setup.py``: exit code, stdout, stderr."""
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         try:
             code = cli.main(list(argv), program.main)
+        except SystemExit as exc:
+            code = exc.code
+    return code, out.getvalue(), err.getvalue()
+
+
+def install(*argv: str, project_changed: bool = True) -> tuple[int, str, str]:
+    """A run of ``setup.py`` that applies its plan (``--yes``, unless the run
+    is a ``--dry-run``). With ``--json`` the report is the install part of
+    the object ``setup.py`` prints, the settings beside it left out.
+
+    The project's settings file in these tests is written by hand, standing
+    for the run that wrote it, and the run that follows is to set the two keys
+    of ``.claude/settings.json`` that file asks for: ``project_changed`` says
+    so to the install, as ``setup.py`` does for a run that wrote the file
+    (R6.1). ``False`` is a refresh, as ``test_program`` runs it."""
+    real = render.execute
+
+    def execute(*args, **how):
+        how["project_changed"] = project_changed
+        return real(*args, **how)
+
+    with mock.patch.object(render, "execute", execute):
+        code, out, err = setup(*(argv if "--dry-run" in argv else ("--yes", *argv)))
+    if "--json" in argv and out.lstrip().startswith("{"):
+        out = json.dumps(json.loads(out)["install"], indent=2, ensure_ascii=False) + "\n"
+    return code, out, err
+
+
+def validate(*argv: str) -> tuple[int, str, str]:
+    """``run``, for the program ``validate.py``: exit code, stdout, stderr."""
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            code = cli.main(list(argv), validate_program.main)
         except SystemExit as exc:
             code = exc.code
     return code, out.getvalue(), err.getvalue()
@@ -391,7 +415,7 @@ class ScratchCase(unittest.TestCase):
 
     The clone holds the fixture defaults and, when ``FILLED``, the fixture
     dictionaries and roles. The command line run in this process
-    (``run``, ``show``) works on that clone, not on the repository.
+    (``run``) works on that clone, not on the repository.
     """
 
     FILLED = True
@@ -448,25 +472,14 @@ class ScratchCase(unittest.TestCase):
         scratch home and project. For tests that hold whatever they say."""
         return Locations(home=self.home, project=self.project if project else None, clone=REPOSITORY)
 
-    def show(self, *argv: str, project: bool = True) -> tuple[int, str, str]:
-        places = ["--home", str(self.home)]
-        if project:
-            places += ["--project", str(self.project)]
-        return run("show", *argv, *places)
-
-    def show_repository(self, *argv: str) -> tuple[int, str, str]:
-        """``show`` on the repository itself, with the scratch home."""
-        with mock.patch.object(locations, "CLONE", REPOSITORY):
-            return run("show", *argv, "--home", str(self.home))
-
     def install_tool(self) -> Path:
-        """Copy the tool into the fake clone and return its script, so a
+        """Copy the tool into the fake clone and return its script, setup.py, so a
         child process runs the real code on the fixtures."""
         target = self.clone / "tools" / "setup"
-        shutil.copyfile(SCRIPT, target / SCRIPT.name)
         shutil.copyfile(SETUP_SCRIPT, target / SETUP_SCRIPT.name)
+        shutil.copyfile(VALIDATE_SCRIPT, target / VALIDATE_SCRIPT.name)
         shutil.copytree(SETUP / "wfsetup", target / "wfsetup", ignore=shutil.ignore_patterns("__pycache__"))
-        return target / SCRIPT.name
+        return target / SETUP_SCRIPT.name
 
 
 class CloneCase(ScratchCase):

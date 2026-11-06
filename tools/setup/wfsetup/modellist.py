@@ -1,7 +1,7 @@
 """A provider's own model list, read without a session, and how it compares
 with the provider's dictionary (gate G11).
 
-How ``settingsfile`` and ``doctor`` use it
+How ``settingsfile`` and ``--check`` use it
 
     known = dictionary.load(where, "codex")
     environ = homes.child_environment(found)        # never the real home's for a scratch home
@@ -41,7 +41,7 @@ How the program is started
     environment given (or ``program_file`` is used, where ``homes`` found
     it), and the file found is started with the rest of the command as a
     fixed argument list: no shell, nothing from a settings file, standard
-    input closed. Its environment is the one given: ``settingsfile`` and ``doctor``
+    input closed. Its environment is the one given: ``settingsfile`` and ``--check``
     give ``homes.child_environment``, which for a scratch home points the
     provider at that home and never at the real one. This module reads no
     credentials and passes none of its own. On a timeout
@@ -192,7 +192,7 @@ class Comparison:
 
     def new_models_line(self) -> str | None:
         """The line for the models the list offers and the dictionary lacks,
-        or None when there is none. Doctor makes it a warning; render prints
+        or None when there is none. ``--check`` makes it a warning; the install prints
         it."""
         if not self.new_models:
             return None
@@ -358,7 +358,7 @@ def run_program(argv: tuple[str, ...], environ: Mapping[str, str], timeout: floa
     """Start a program as ``_run`` does (a fixed argument list, no shell,
     standard input closed, ended with what it started on a timeout) and
     return its exit code, what it printed, and the first line of its
-    standard error. Any exit code is an answer here: ``doctor`` starts
+    standard error. Any exit code is an answer here: ``--check`` starts
     programs whose code is part of what they say. A ``ProgramFailed`` when
     it could not be started, did not finish in time or printed too much."""
     with fsio.scratch_file() as out, fsio.scratch_file() as err:

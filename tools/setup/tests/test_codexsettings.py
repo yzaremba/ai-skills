@@ -1,5 +1,5 @@
 """Tests for the Codex settings: ``setup.py --codex-settings`` and the
-check ``codex-settings`` of ``doctor``.
+check ``codex-settings`` of ``setup.py --check``.
 
 Run from the repository root:
     python -m unittest discover -s tools/setup/tests
@@ -135,6 +135,18 @@ class SettingsCase(DoctorCase):
         data = text if isinstance(text, bytes) else text.encode("utf-8")
         self.config.write_bytes(data)
         return data
+
+    @staticmethod
+    def profile_shown(out: str) -> list[str]:
+        """The lines of the profile printed as text: one note, its lines indented under its heading."""
+        lines = out.splitlines()
+        at = next(n for n, line in enumerate(lines) if line.startswith("note: the permission profile `workflow`, as text"))
+        shown = []
+        for line in lines[at + 1:]:
+            if not line.startswith("    "):
+                break
+            shown.append(line[4:])
+        return shown
 
     def go(self, *argv: str, host: homes.Host | None = None) -> tuple[int, str, str]:
         """``setup.py --yes`` over the scratch home, with the item the tests say as APPLY, DEFAULT and REMOVE."""
@@ -455,13 +467,14 @@ class ProfileCase(SettingsCase):
         self.assertIn("go through command-by-command approval", flat)
         self.assertIn("default_permissions: not set, for the same reason", flat)
         lines = out.splitlines()
-        self.assertIn("note:     [permissions.workflow]", lines)
-        self.assertIn('note:     extends = ":workspace"', lines)
-        self.assertIn('note:     [permissions.workflow.filesystem.":workspace_roots"]', lines)
-        self.assertIn('note:     ".git" = "write"', lines)
+        shown = self.profile_shown(out)
+        self.assertIn("[permissions.workflow]", shown)
+        self.assertIn('extends = ":workspace"', shown)
+        self.assertIn('[permissions.workflow.filesystem.":workspace_roots"]', shown)
+        self.assertIn('".git" = "write"', shown)
         self.assertIn("to use it you would, yourself: remove sandbox_mode", flat)
         # The printed profile is the one that would be written.
-        printed = "\n".join(line[len("note:     "):] for line in lines if line.startswith("note:     "))
+        printed = "\n".join(shown)
         self.assertNotIn("note: ", lines)
         self.assertEqual(tomllib.loads(printed)["permissions"]["workflow"],
                          codexsettings.profile_data(os.path.normpath(str(self.root / "trees"))))
@@ -497,7 +510,7 @@ class ProfileCase(SettingsCase):
         self.assertIn("permission profiles are beta in Codex", flat)
         self.assertIn("no worktree root is in the profile", flat)
         lines = out.splitlines()
-        printed = "\n".join(line[len("note:     "):] for line in lines if line.startswith("note:     "))
+        printed = "\n".join(self.profile_shown(out))
         self.assertEqual(tomllib.loads(printed)["permissions"]["workflow"], codexsettings.profile_data(None))
         # A second run writes nothing.
         home = self.snapshot(self.home)
@@ -715,7 +728,7 @@ class WorktreeRootCase(SettingsCase):
         code, out, err = self.go(APPLY, ROOT, str(trees))
         self.assertEqual(code, 0)
         self.assertNotIn("trees", self.config.read_bytes().decode("utf-8"))
-        self.assertIn(f"note:     {json.dumps(str(trees))} = \"write\"", out.splitlines())
+        self.assertIn(f"{json.dumps(str(trees))} = \"write\"", self.profile_shown(out))
 
     def test_a_run_without_the_options_keeps_the_root_and_the_profile(self) -> None:
         trees = self.root / "trees"
@@ -1409,7 +1422,7 @@ class ProbeCase(SettingsCase):
         self.user('sandbox_mode = "workspace-write"\n')
         steps = self.steps()
         text = "\n".join(steps)
-        self.assertIn("doctor starts none", steps[0])
+        self.assertIn("--check starts none", steps[0])
         self.assertIn('sandbox_mode = "workspace-write"', steps[0])
         self.assertIn("codex -c \"default_permissions=':read-only'\"", text)
         self.assertIn("git init; git commit --allow-empty -m first", text)

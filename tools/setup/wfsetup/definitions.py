@@ -9,7 +9,7 @@ How it is used
         found.inputs                                     # the digest the record keeps
         found.model, found.effort
 
-    definitions.digests(where, providers)    # {(provider, definition): inputs}; what doctor compares
+    definitions.digests(where, providers)    # {(provider, definition): inputs}; what ``--check`` compares
     definitions.user_level(where)            # the same locations without the project
     definitions.materials(where, providers, select)   # what a definition is made from, before a format
 
@@ -107,7 +107,7 @@ a role opens its stage file without searching the disk for the skill
 (``skills_place``). It is written from ``~``, which is the same text in
 every home; only a home that a provider's variable moved out of the user's
 home gets that directory in full, in the files of that home alone. A run
-of ``render`` gives its own homes (``homes_found``), so the directory named
+of the install gives its own homes (``homes_found``), so the directory named
 is the one that run links the skills into.
 
 The inputs digest (``Generated.inputs``)
@@ -149,13 +149,13 @@ PROVIDERS = (CLAUDE_CODE, CODEX)
 # 4: the section says where the skills are installed.
 # 5: it names each skill's directory once, above that skill's rows, and no
 #    longer in every row.
-# 6: a run of render names the skills directory of its own homes, so a home
+# 6: a run of the install names the skills directory of its own homes, so a home
 #    that a provider's variable moved gets other text from the same sources;
 #    that directory is in the digest.
 # Not raised for the cache key: the same inputs give the same text. A role
 # gets the key by a change of its ``role.toml``, which is an input.
 FORMAT = 6
-# Every digest ``render`` records starts with "render:"; see ``render``.
+# Every digest the install records starts with "render:"; see ``render.py``.
 INPUTS_SCHEME = f"render:role-definition:{FORMAT}"
 
 # The tools a Claude Code definition denies (code.claude.com/docs/en/tools-reference,
@@ -188,7 +188,7 @@ OWNS = "owns"
 # A definition above this many bytes is worth a look; nothing enforces it.
 SIZE_FLAG = 16_000
 
-RENDER_COMMAND = "python tools/setup/workflow_setup.py render"
+RENDER_COMMAND = "python tools/setup/setup.py"
 
 _SUFFIX = {CLAUDE_CODE: ".md", CODEX: ".toml"}
 _PLAIN = re.compile(r"[A-Za-z][A-Za-z0-9._-]*")
@@ -414,7 +414,7 @@ class Selection:
     needed: dict[str, tuple[str, ...]] = dataclasses.field(default_factory=dict)
 
     def notes(self) -> list[str]:
-        """One line for each unit added as a dependency: render prints them."""
+        """One line for each unit added as a dependency: the install prints them."""
         return [f"{name}: installed as a dependency of {', '.join(self.needed[name])}" for name in sorted(self.needed)]
 
 
@@ -701,7 +701,7 @@ def inputs_digest(provider: str, definition: str, role: str, files: dict[str, st
     role that has rows, the only text it is in. ``cache`` is the cache value
     written into the file; it counts only where there is one, so the digest
     of a file without it is what it was. Another generator of
-    ``render`` gives a ``scheme`` of its own, and in ``more`` whatever else
+    the install gives a ``scheme`` of its own, and in ``more`` whatever else
     its text is made from."""
     rows = list(rows)
     form = {

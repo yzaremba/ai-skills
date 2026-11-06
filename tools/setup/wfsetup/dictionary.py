@@ -27,8 +27,8 @@ A dictionary records what was checked about one provider on one day:
         compaction_tokens     optional: how many tokens of an invoked skill
                               the provider keeps after a compaction. A role
                               that can be loaded is held to it on this
-                              provider (``validate``, ``doctor``,
-                              ``render``); a provider that documents no
+                              provider (``validate.py``, ``--check``,
+                              the install); a provider that documents no
                               such cut has no key, and there a loaded
                               role's size is reported and not limited
     [models.<name>]           one table per known model

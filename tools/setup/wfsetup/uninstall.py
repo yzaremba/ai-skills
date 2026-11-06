@@ -20,11 +20,11 @@ What is kept, and why (``report["kept"]``; the entry stays in the record)
       missing;
     - a path that is, or lies under, a link, without ``follow``: the plan
       would be refused for it, so it is taken out of the plan and the rest
-      is done, as ``render`` skips such a place;
+      is done, as the install skips such a place;
     - a path of a home whose real place is on the other side of the
       machine: never written from this side, with or without ``follow``.
       A project's paths are the project's on either side, as for
-      ``render``.
+      the install.
 
 What is left (``report["left"]``; the user's from now on, no entry stays)
     - a directory setup created that holds something of the user's;
@@ -37,7 +37,7 @@ What is left (``report["left"]``; the user's from now on, no entry stays)
       removed; keeping the whole file instead would leave setup's
       instructions in effect for ``codex --profile`` and the uninstall
       unfinished. It is said once, here, and not as restored. A later
-      ``render`` takes the file up again and writes setup's keys before
+      the install takes the file up again and writes setup's keys before
       what it holds. A profile setup's part is no longer in at all is
       left as it is;
     - the settings file setup wrote, once it holds anything its owner
@@ -72,7 +72,7 @@ The settings file setup wrote
     set: it is left as it is (``report["left"]``), with ``keep_settings``
     or without.
 
-What ``render --overwrite-edited`` replaced
+What ``setup.py --overwrite-edited`` replaced
     ``fileops`` puts it back where it was. A backup that holds such text
     which could not be put back is taken out of the record by the way back
     (``fileops.Result.unlisted``) and so stays, like any backup no record
@@ -102,7 +102,7 @@ from .manifest import BACKUPS_NAME, MANIFEST_NAME, Manifest, Roots
 
 REPORT_SCHEMA_VERSION = 1
 EXIT_KEPT = 3
-PROG = "workflow_setup.py"
+PROG = "setup.py"
 
 HOME = "home"
 PROJECT = "project"
@@ -154,7 +154,7 @@ def _other_side(found: homes.Homes, roots: Roots, manifest: Manifest, project: b
     """The paths of the user-level record whose real place is on the other
     side. A link is an entry of the directory it is in, so it is asked of
     that. A project is the project's on either side of the machine, as it
-    is for ``render``: there only a link in the way is asked about."""
+    is for the install: there only a link in the way is asked about."""
     kept: dict[Path, str] = {}
     if project or found.host.other is None:
         return kept
@@ -213,7 +213,7 @@ def _settings_yours(path: Path, entry: dict[str, Any], keep_settings: bool, foll
 def _backup_of(roots: Roots, entry: dict[str, Any] | None) -> str | None:
     """The backup that belongs to a kept entry: of the file as it was
     before setup, or else of the file as it was before setup replaced text
-    of the user's in it on request (``render --overwrite-edited``)."""
+    of the user's in it on request (``setup.py --overwrite-edited``)."""
     original = (entry or {}).get("original")
     found = original.get("backup") if isinstance(original, dict) else None
     if not isinstance(found, str):
@@ -545,7 +545,7 @@ def _touched(roots: Roots, project: bool, before: dict[str, Any]) -> bool:
 def _unlisted_why(count: int) -> str:
     return (
         f"it holds {_count(count, 'backup')} that no record lists, which setup does not remove by itself; "
-        f"`{PROG} uninstall {DISCARD_OPTION}` removes them"
+        f"`{PROG} --uninstall {DISCARD_OPTION}` removes them"
     )
 
 
@@ -624,13 +624,13 @@ def _foreign_why(directory: Path, held: list[str] | None = None) -> str:
     shown = ", ".join(held[:6]) + (f", and {len(held) - 6} more" if len(held) > 6 else "")
     return (
         f"the directory holds something setup did not put there ({shown or 'it cannot be listed'}), which setup "
-        "does not remove. Move it away or remove it, and run uninstall again: the directory then goes"
+        "does not remove. Move it away or remove it, and run setup.py --uninstall [DIR] again: the directory then goes"
     )
 
 
 def discard(found: homes.Homes, *, project: bool = False, dry_run: bool = False, follow: bool = False,
             confirm: Any = None) -> tuple[list[Path], bool]:
-    """What ``uninstall --discard-backups`` does: name the backups that the
+    """What ``--uninstall --discard-backups`` does: name the backups that the
     record of the home, or of the project, does not list, and remove them
     once ``confirm`` (called with the list) says yes. Returns the list, and
     whether it was removed. A backup a record lists is never touched."""
@@ -719,7 +719,7 @@ def report_lines(report: dict[str, Any]) -> list[str]:
                 lines.append(f"    backup: {item['backup']}")
             lines.append(f"    to finish: {item['finish']}")
     lines.extend(f"note: {note}" for note in report["notes"])
-    again = f"`{PROG} uninstall" + (f" --project {report['project']}`" if report["scope"] == PROJECT else "`")
+    again = f"`{PROG} --uninstall" + (f" {report['project']}`" if report["scope"] == PROJECT else "`")
     state = report["state"]
     if state is not None:
         what = "state directory"

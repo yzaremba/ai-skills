@@ -19,7 +19,7 @@ A path is never stored as this machine writes it (R6.10). It is stored as
 anchor's own directory:
 
     home:     the user's home (``--home``)
-    project:  the project (``--project``)
+    project:  the project (``DIR``)
     clone:    the repository setup runs from; only ever a link's target,
               never written to
     <name>:   a further directory a command names in ``Roots.extra``, for a
@@ -909,7 +909,7 @@ class Manifest:
 class Record:
     """Both records of a run, read as one.
 
-    ``entries`` and ``backups`` are what a command such as ``doctor`` reads;
+    ``entries`` and ``backups`` are what a check such as ``--check`` reads;
     ``path(key)`` turns an entry's key into a path of this machine.
     ``recovered`` and ``dropped`` count the changes of an interrupted run
     that were found made (wholly, or half), and not made, when the record

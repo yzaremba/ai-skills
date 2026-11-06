@@ -1,6 +1,6 @@
 """Source validation: every problem of the clone's sources, at once.
 
-``render`` and ``doctor`` run this before anything else. Nothing is written,
+``setup.py`` and ``setup.py --check`` run this before anything else. Nothing is written,
 nothing is executed and no validated script is imported: a Python script is
 read through its syntax tree, a Node script and every text through patterns.
 
@@ -19,10 +19,10 @@ What is validated: the skills (a directory at the clone's root that holds
 ``tools/setup/defaults.toml``. A skill named in ``OWN_SETUP`` has a setup of
 its own and is checked for its frontmatter only.
 
-What ``render`` would refuse of the sources, this reports first: a name
+What the install would refuse of the sources, this reports first: a name
 too long for a file's name, a Windows device name, two names that differ
 only in letter case, a loaded role named as a skill, a carriage return of
-its own or a line that reads as one of setup's markers in a text ``render``
+its own or a line that reads as one of setup's markers in a text the install
 embeds, a control character in a single-line field.
 
 What cannot be checked from the text, and is not claimed:
@@ -79,8 +79,8 @@ RULES: dict[str, str] = {
     "role-skill-name": "a role that is loaded as a skill has the name of a skill",
     "field-control": "a single-line field holds a control character, a line break or a direction override",
     "field-length": "a single-line field is longer than its limit",
-    "text-carriage-return": "a text render embeds holds a carriage return that is not part of a CRLF line end",
-    "text-marker": "a text render embeds holds a line that reads as one of setup's block markers",
+    "text-carriage-return": "a text the install embeds holds a carriage return that is not part of a CRLF line end",
+    "text-marker": "a text the install embeds holds a line that reads as one of setup's block markers",
     "provider-actions-size": "a provider's actions.md is larger than its limit",
     "provider-name": "shared text names a provider's tool or uses a provider's substitution (R2.4)",
     "role-toml": "role.toml: a key, a type or a value is not the format of roles/README.md",
@@ -119,7 +119,7 @@ NOTE_LIMIT = 200
 # (``<id>-hard.toml``, ``<id>.config.toml``, a temporary name beside it), and
 # a provider's own limit on a skill's name is of this order.
 ID_LIMIT = 64
-# The single-line fields ``render`` writes into a definition's head.
+# The single-line fields the install writes into a definition's head.
 TITLE_LIMIT = 80
 DESCRIPTION_LIMIT = 400
 FIELD_LIMIT = 200          # any other string of a role, a binding or a dictionary
@@ -473,7 +473,7 @@ class _Run:
             self.add(file, "field-length", f"{len(value):,} characters; at most {limit}", key=key)
         if MARKER_LINE.fullmatch(value):
             self.add(file, "text-marker", "reads as one of setup's block markers (workflow-setup:start or :end), "
-                                          "and would end or open a block where render embeds it", key=key)
+                                          "and would end or open a block where the install embeds it", key=key)
 
     def loader(self, file: Path, rule: str, lines: list[str]) -> None:
         """Problems from the lines a loader gave: ``<file>: <key>: <text>``."""
@@ -1245,9 +1245,9 @@ def _action_sections(run: _Run) -> dict[str, set[str]]:
 
 
 def _check_loaded(run: _Run) -> None:
-    """The skill of each role that can be loaded, made as ``render`` makes
-    it for each provider that has a dictionary, and measured as ``render``
-    and ``doctor`` measure it. The profile is the shipped one (``NO_HOME``).
+    """The skill of each role that can be loaded, made as the install makes
+    it for each provider that has a dictionary, and measured as the install
+    and ``--check`` measure it. The profile is the shipped one (``NO_HOME``).
     Sources the skills cannot be made from have a fault another rule
     reports; where none did, the reason is reported here."""
     where = run.where
@@ -1281,8 +1281,8 @@ def _check_loaded(run: _Run) -> None:
 
 
 def _check_embedded(run: _Run) -> None:
-    """The texts ``render`` embeds whole: each role's ``ROLE.md``, the
-    shared sections and each provider's action notes. ``render`` joins
+    """The texts the install embeds whole: each role's ``ROLE.md``, the
+    shared sections and each provider's action notes. the install joins
     them with CRLF read as LF, and refuses a text that then still holds a
     carriage return; a line that reads as one of setup's markers would end
     setup's own block where the text is written into one."""
@@ -1308,11 +1308,11 @@ def _check_embedded(run: _Run) -> None:
             bare = line[:-1] if line.endswith("\r") else line
             if "\r" in bare:
                 run.add(file, "text-carriage-return", "holds a carriage return that is not part of a CRLF line "
-                                                      "end; render writes LF and refuses the text", line=number)
+                                                      "end; the install writes LF and refuses the text", line=number)
             if MARKER_LINE.fullmatch(bare):
                 run.add(file, "text-marker", "the line reads as one of setup's block markers "
                                              "(workflow-setup:start or :end), and would end or open a block where "
-                                             "render embeds the text; reword it", line=number)
+                                             "the install embeds the text; reword it", line=number)
 
 
 def _strings(value: Any, key: str = "") -> list[tuple[str, str]]:
@@ -1533,7 +1533,7 @@ def _check_dependencies(run: _Run) -> None:
 
 
 def _made_for(run: _Run) -> dict[str, tuple[str, ...]]:
-    """For each role that can be read, the providers ``render`` makes a
+    """For each role that can be read, the providers the install makes a
     file for it on, of those that have a dictionary: a definition
     (``definitions.providers_of``), the skill of a loaded role, the profile
     of a starting role on Codex. A role whose ``role.toml`` is at fault is

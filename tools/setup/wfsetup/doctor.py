@@ -1,8 +1,7 @@
-"""What ``doctor`` checks: a registry of checks over one read-only context.
+"""What ``setup.py --check`` checks: a registry of checks over one read-only context.
 
-How the command uses it
+How `setup.py --check` uses it
 
-    for check in doctor.CHECKS: check.add_arguments(parser)    # a check's own option
     context = doctor.Context(where, args)
     chosen, left_out = doctor.select(args, only=args.only, skip=args.skip)
     report = doctor.report(context, doctor.run(context, chosen), left_out)
@@ -10,25 +9,27 @@ How the command uses it
     report["exit_code"]
 
 A check
-    ``Check(name, run, fine, default=True, switch=None, configure=None)``.
+    ``Check(name, run, fine, default=True, switch=None)``.
     ``run(context)`` returns findings and writes nothing. A finding has a
     severity (``error``, ``warning``, ``info``, ``ok``), a detail line and,
     where it is about one thing, that thing as ``subject``. A check that
     returns no finding is fine, and ``fine`` is its one ``ok`` line. A check
-    that cannot be made (a provider that is not installed, a home never
-    rendered) says so as ``info``. One that raises is reported as an
+    that cannot be made (a provider that is not installed, a home setup
+    never ran on) says so as ``info``. One that raises is reported as an
     ``error`` finding of its own name, and the checks after it still run.
 
     ``default`` is whether the check runs when nothing asks for it.
     ``switch`` names an option of the command (the attribute of its parsed
     arguments) that turns a default check off (``--no-versions``) or a
-    non-default one on; ``configure(parser)`` adds that option. ``--only``
-    names the checks to run and ``--skip`` those to leave out.
+    non-default one on; the option is one of the program's (``program``
+    holds ``--no-versions``, ``--codex-probe`` and ``--no-collab``).
+    ``--only`` names the checks to run and ``--skip`` those to leave out.
 
 Adding a check
     Write ``def check_<what>(context) -> list[Finding]`` and add one
-    ``Check(...)`` line to ``CHECKS``. The command is not edited: it takes
-    its options, its choices and its order from ``CHECKS``. A step that
+    ``Check(...)`` line to ``CHECKS``. The program is not edited for it: it
+    takes its choices and its order from ``CHECKS``; a check with its own
+    option adds that option to ``program.build_parser``. A step that
     extends a check replaces that check's function in its line (``codex
     settings``: ``codex_settings`` gives the values read, for a function
     that wraps it).
@@ -40,29 +41,29 @@ The context
     dictionaries, the effective settings, and ``probe``.
 
 The probe
-    ``probe`` is ``render``'s own planning, asked what it would do now and
+    ``probe`` is the install's own planning, asked what it would do now and
     never run: a ``render.Run`` filled by ``render.PARTS`` and swept, whose
-    plan is thrown away. Each item says what ``render`` found at one path
+    plan is thrown away. Each item says what the install found at one path
     (create, up to date, update, edited, conflict, skipped) and each stale
     item what it would remove, so the checks compare "what should be there"
-    with "what is there" by the rules of ``render`` and not by a second
-    copy of them. It also keeps the inputs digest ``render`` would record
+    with "what is there" by the rules of the install and not by a second
+    copy of them. It also keeps the inputs digest the install would record
     for each generated file, which is what drift is told by. It is None
-    while the sources have problems: ``render`` does not plan from those.
+    while the sources have problems: the install does not plan from those.
 
 Severities, where the step left the choice
     missing   Something the record lists that is gone from disk is an
               error: what the user holds as installed is not there. What
-              ``render`` would create and the record does not list is a
+              the install would create and the record does not list is a
               warning once the home (or the project) has a record: the
-              clone gained it since the last ``render``, as after a pull.
+              clone gained it since the last run, as after a pull.
               On a home with no record at all it is one ``info`` line
-              (nothing was rendered yet), and so are the generated files
+              (nothing was installed yet), and so are the generated files
               on a home whose record holds none (its ``install``
               lacks ``roles``). Roles left out of the home's
               ``install`` are one ``info`` line: the probe, like
-              ``render``, then asks for none of them. Something in the
-              way that setup did not make is an error: ``render`` stops
+              the install, then asks for none of them. Something in the
+              way that setup did not make is an error: the install stops
               on it.
     collaboration skill
               Its doctor's own severities are kept: a check it fails as an
@@ -161,7 +162,7 @@ STARTERS = {
 }
 
 # What makes a directory look like a clone of this repository, without git.
-CLONE_MARKS = (("tools", "setup", "workflow_setup.py"), ("roles",))
+CLONE_MARKS = (("tools", "setup", "setup.py"), ("roles",))
 _CLONE_DEPTH = 8
 
 
@@ -202,11 +203,6 @@ class Check:
     fine: str
     default: bool = True
     switch: str | None = None
-    configure: Callable[[Any], None] | None = None
-
-    def add_arguments(self, parser: Any) -> None:
-        if self.configure is not None:
-            self.configure(parser)
 
 
 @dataclass(frozen=True)
@@ -224,11 +220,11 @@ class Outcome:
 # --- The context -----------------------------------------------------------------
 
 class Probe(render.Run):
-    """``render``'s planning, kept and never run; see the module."""
+    """The install's planning, kept and never run; see the module."""
 
     def __init__(self, found: homes.Homes, sources: validate.Report) -> None:
         # Through links: a place that is a link on this side is looked at
-        # where it leads, as ``render --follow-config-symlinks`` writes it.
+        # where it leads, as ``setup.py --follow-config-symlinks`` writes it.
         super().__init__(found, sources, None, follow=True)
         self.inputs: dict[str, str] = {}
 
@@ -321,8 +317,8 @@ class Context:
         return "" if side is None else f" (the {side} side's; read from here, never written)"
 
 
-NOT_PLANNED = "not checked: the clone's sources have problems (see the check `sources`), and render plans from valid sources only"
-NEVER_RENDERED = "nothing to check: no run of setup has written to this home yet; `render` installs"
+NOT_PLANNED = "not checked: the clone's sources have problems (see the check `sources`), and setup plans from valid sources only"
+NEVER_RENDERED = "nothing to check: no run of setup has written to this home yet; `setup.py` installs"
 
 
 _inside = paths.inside
@@ -356,7 +352,7 @@ class Fact:
     key: str                  # the record's key of the file
     part: str | None          # "key <name>" or "block <name>" inside a user-owned file
     detail: str
-    generated: bool = False   # a file ``render`` generates
+    generated: bool = False   # a file the install generates
 
     @property
     def subject(self) -> str:
@@ -427,9 +423,9 @@ def _survey(context: Context) -> list[Fact]:
                     facts.append(Fact(GONE, key, part, "setup's block is no longer in the file"))
                 elif not blocks.as_written(data, block, wrote):
                     how = (
-                        "render writes setup's entries into it again and keeps the rest"
+                        "setup writes its entries into it again and keeps the rest"
                         if syntax == blocks.GITIGNORE else
-                        f"render keeps it and reports it, and `render {render.OVERWRITE_OPTION}` backs the file up "
+                        f"setup keeps it and reports it, and `setup.py {render.OVERWRITE_OPTION}` backs the file up "
                         "and writes the block again"
                     )
                     facts.append(Fact(EDITED, key, part, f"changed by hand since setup wrote it; {how}"))
@@ -455,14 +451,14 @@ def _survey(context: Context) -> list[Fact]:
             elif not jsonkeys.same(current[name], wrote):
                 facts.append(Fact(
                     EDITED, key, part,
-                    f"changed by hand since setup set it to {shown}; render keeps it and reports it, and "
-                    f"`render {render.OVERWRITE_OPTION}` sets it again",
+                    f"changed by hand since setup set it to {shown}; setup keeps it and reports it, and "
+                    f"`setup.py {render.OVERWRITE_OPTION}` sets it again",
                 ))
     return facts
 
 
 def _forgotten(probe: Probe | None) -> set[tuple[str, str | None]]:
-    """What the record lists, is gone, and ``render`` would no longer make:
+    """What the record lists, is gone, and the install would no longer make:
     it takes the entry out of the record, and nothing is missing."""
     found: set[tuple[str, str | None]] = set()
     for item in ([] if probe is None else probe.stale):
@@ -494,15 +490,18 @@ def check_sources(context: Context) -> list[Finding]:
 
 def check_drift(context: Context) -> list[Finding]:
     """A generated file whose recorded inputs are not today's; a project's
-    key or block that ``render`` would write again; what it would remove."""
+    key or block that the install would write again; what it would remove."""
     record = context.record
-    if not record.home.on_disk and not (record.project is not None and record.project.on_disk):
-        return [info(NEVER_RENDERED)]
     probe = context.probe
+    # What the user is to do by hand (R6.4, R10.3), also on a project that
+    # setup never wrote to: a fresh checkout has no record.
+    notices = [] if probe is None else [warning(note) for note in probe.notices]
+    if not record.home.on_disk and not (record.project is not None and record.project.on_disk):
+        return [*notices, info(NEVER_RENDERED)]
     if probe is None:
         return [info(NOT_PLANNED)]
-    again = "the sources or settings it was made from changed since it was written; run render"
-    findings = []
+    again = "the sources or settings it was made from changed since it was written; run setup.py"
+    findings = notices
     for key, wanted in sorted(probe.inputs.items()):
         found = record.get(key)
         if found is not None and _generated(found) and found.get("inputs") != wanted:
@@ -516,7 +515,7 @@ def check_drift(context: Context) -> list[Finding]:
     for item in probe.stale:
         subject = _item_subject(item)
         if item.status in (render.REMOVE, render.RELEASE):
-            findings.append(warning(f"{subject}: {item.says}; run render", subject))
+            findings.append(warning(f"{subject}: {item.says}; run setup.py", subject))
         elif item.status == render.KEPT:
             findings.append(warning(f"{subject}: {item.says}", subject))
     return findings
@@ -532,7 +531,7 @@ def check_hand_edits(context: Context) -> list[Finding]:
             detail = fact.detail
             if fact.part is None and fact.generated and "edited by hand" in detail:
                 detail += (
-                    f"; render keeps it and reports it, and `render {render.OVERWRITE_OPTION}` backs it up and "
+                    f"; setup keeps it and reports it, and `setup.py {render.OVERWRITE_OPTION}` backs it up and "
                     "replaces it"
                 )
             findings.append(warning(f"{fact.subject}: {detail}", fact.subject))
@@ -545,26 +544,26 @@ def check_hand_edits(context: Context) -> list[Finding]:
         for name in extra:
             if name in carried.RISKS:
                 findings.append(warning(
-                    f"{key}: {name} is set after setup's part: {carried.RISKS[name]}. render keeps it; remove it "
+                    f"{key}: {name} is set after setup's part: {carried.RISKS[name]}. setup keeps it; remove it "
                     "from the file if the role should run as setup wrote it", key,
                 ))
         plain = [name for name in extra if name not in carried.RISKS]
         if plain:
             findings.append(info(
                 f"{key}: after setup's part it also holds {', '.join(plain)}, which Codex does not write there "
-                "itself; render keeps it as yours", key,
+                "itself; setup keeps it as yours", key,
             ))
     return findings
 
 
 def roles_are_on(home_roles: dict[str, Any] | None) -> bool:
-    """Whether the home's roles are on, so that render would add the skills
+    """Whether the home's roles are on, so that setup would add the skills
     only they need."""
     return home_roles is not None and bool(home_roles["on"])
 
 
 def check_missing(context: Context) -> list[Finding]:
-    """What the record lists and is gone; what ``render`` would create and
+    """What the record lists and is gone; what the install would create and
     is not there; what is in the way. See the module for the severities."""
     record = context.record
     probe = context.probe
@@ -575,17 +574,17 @@ def check_missing(context: Context) -> list[Finding]:
             continue
         if fact.ident in forgotten:
             findings.append(info(
-                f"{fact.subject}: {fact.detail}, and render would no longer make it; the next render takes it "
+                f"{fact.subject}: {fact.detail}, and setup would no longer make it; the next run takes it "
                 "out of the record", fact.subject,
             ))
         elif fact.part is None and not fact.generated:
             findings.append(warning(f"{fact.subject}: {fact.detail}", fact.subject))
         else:
-            findings.append(error(f"{fact.subject}: {fact.detail}; run render to have it written again", fact.subject))
+            findings.append(error(f"{fact.subject}: {fact.detail}; run setup.py to have it written again", fact.subject))
     if probe is None:
         return findings + [info(NOT_PLANNED)]
 
-    findings.extend(error(f"render cannot plan the install: {line}") for line in probe.errors)
+    findings.extend(error(f"setup cannot plan the install: {line}") for line in probe.errors)
     # The roles turned off by the setting: said, since nothing of them is
     # then missing. Off by the option is no fact of the install (the probe
     # is given no option).
@@ -593,7 +592,7 @@ def check_missing(context: Context) -> list[Finding]:
     line = render.process_alone_line(home_roles)
     if line is not None:
         findings.append(info(
-            f"{line}; render removes what an earlier run generated, unless it was edited by hand"
+            f"{line}; setup removes what an earlier run generated, unless it was edited by hand"
         ))
     home_rendered = bool(record.home.on_disk)
     project_rendered = record.project is not None and bool(record.project.on_disk)
@@ -602,7 +601,7 @@ def check_missing(context: Context) -> list[Finding]:
     )
     waiting: dict[str, list[str]] = {"home": [], "roles": [], "project": []}
     # A home whose install lacks roles also lacks the skills only the roles
-    # need (render leaves them out): those are the "roles" wait, not missing.
+    # need (setup leaves them out): those are the "roles" wait, not missing.
     roles_only: set[str] = set()
     if home_rendered and not home_generated and roles_are_on(home_roles):
         try:
@@ -615,7 +614,7 @@ def check_missing(context: Context) -> list[Finding]:
         subject = _item_subject(item)
         if item.status == render.CONFLICT:
             says = item.says if item.says.startswith(str(item.path)) else f"{item.path}: {item.says}"
-            findings.append(error(f"{says}; render stops on it and writes nothing", subject))
+            findings.append(error(f"{says}; setup stops on it and writes nothing", subject))
         elif item.status == render.ERROR:
             findings.append(error(item.says, subject))
         elif item.status == render.NEEDS_FLAG:
@@ -649,8 +648,8 @@ def check_missing(context: Context) -> list[Finding]:
                 waiting[group].append(subject)
             else:
                 findings.append(warning(
-                    f"{subject}: not installed: render would create it, and the record does not list it (the "
-                    "clone or the settings gained it since the last render); run render", subject,
+                    f"{subject}: not installed: setup would create it, and the record does not list it (the "
+                    "clone or the settings gained it since the last run); run setup.py", subject,
                 ))
     for (provider, place), (says, names) in skipped.items():
         findings.append(info(
@@ -658,17 +657,17 @@ def check_missing(context: Context) -> list[Finding]:
         ))
     if waiting["home"]:
         findings.append(info(
-            f"not rendered yet: no run of setup has written to this home; render would create "
+            f"not installed yet: no run of setup has written to this home; setup would create "
             f"{len(waiting['home'])} links and files"
         ))
     if waiting["roles"]:
         findings.append(info(
             f"no role definition or entry point is installed: the record holds no generated file (the home's "
-            f"install lacks roles); render would write {len(waiting['roles'])} files"
+            f"install lacks roles); setup would write {len(waiting['roles'])} files"
         ))
     if waiting["project"]:
         findings.append(info(
-            f"not rendered in the project yet: `render --project` would write {len(waiting['project'])} things "
+            f"not installed in the project yet: `setup.py DIR` would write {len(waiting['project'])} things "
             f"there ({', '.join(waiting['project'])})"
         ))
     return findings
@@ -697,15 +696,15 @@ def check_links(context: Context) -> list[Finding]:
             continue
         if seen.kind == fsio.ABSENT:
             if (paths.fold_key(key), None) in forgotten:
-                findings.append(info(f"{key}: the link is gone, and render would no longer make it", key))
+                findings.append(info(f"{key}: the link is gone, and setup would no longer make it", key))
             else:
-                findings.append(error(f"{key}: the link is missing; setup made it a link to {recorded}. Run render", key))
+                findings.append(error(f"{key}: the link is missing; setup made it a link to {recorded}. Run setup.py", key))
             continue
         if seen.kind != fsio.LINK:
             findings.append(error(f"{key}: no longer a link: a {seen.kind} is there; setup made it a link to {recorded}", key))
             continue
         real = os.path.realpath(path)
-        # A project's link is told by where it leads, as render tells it
+        # A project's link is told by where it leads, as the install tells it
         # (R3.4): the other side's link has its own text and form, and a
         # link made by hand and taken over has the user's.
         in_project = key.partition(":")[0] == fileops.PROJECT
@@ -718,7 +717,7 @@ def check_links(context: Context) -> list[Finding]:
             ))
         elif not os.path.exists(real):
             findings.append(error(
-                f"{key}: the link's target does not exist: {seen.target} (a moved or removed clone?); run render "
+                f"{key}: the link's target does not exist: {seen.target} (a moved or removed clone?); run setup.py "
                 "from the clone in use", key,
             ))
         elif not _inside(real, clone):
@@ -760,7 +759,7 @@ def check_duplicate_skills(context: Context) -> list[Finding]:
     try:
         installed = definitions.home_selection(context.user_level, context.sources.skills).units
     except SetupError:
-        installed = frozenset(context.sources.skills)  # the check `missing` says why: render cannot plan the install
+        installed = frozenset(context.sources.skills)  # the check `missing` says why: setup cannot plan the install
     project = context.homes.project
     findings = []
     looked = 0
@@ -823,7 +822,7 @@ def holds_clone(directory: Path, skills: Iterable[str] = ()) -> bool:
     """Whether a directory is a clone of this repository by what it holds:
     the marks of ``looks_like_clone``, or a ``.git`` entry beside one of
     the clone's skills (a clone from before the setup tool). The check
-    ``other-clones`` and ``render`` share the rule."""
+    ``other-clones`` and the install share the rule."""
     return looks_like_clone(directory) or (
         os.path.lexists(directory / ".git") and any(_is_skill(directory / name) for name in skills)
     )
@@ -1235,7 +1234,11 @@ def check_profiles(context: Context) -> list[Finding]:
         found = context.resolution
     except SetupError as exc:
         return [error(line) for line in exc.lines]
-    findings = [warning(note) for note in found.notes]
+    findings = [
+        warning(f"{file}: {key} is an old key; use {replacement}", file)
+        for file, key, replacement in settings.old_keys(context.where)
+    ]
+    findings += [warning(note) for note in found.notes]
     return findings or [fine(f"{len(found.profiles)} profiles resolve, and every setting matches something")]
 
 
@@ -1249,7 +1252,7 @@ def check_interrupted_run(context: Context) -> list[Finding]:
         findings.append(warning(
             f"an earlier run of setup was interrupted: {record.recovered} of its changes were made and are taken as "
             f"installed{made}; {record.dropped} were not made and are dropped{left}. Nothing is unrecorded; the next "
-            "render completes the record and makes what is missing"
+            "setup completes the record and makes what is missing"
         ))
     roots = context.roots
     found = fileops.leftovers(roots)
@@ -1266,13 +1269,13 @@ def check_interrupted_run(context: Context) -> list[Finding]:
     if found.lock:
         findings.append(warning(
             f"an interrupted run left pieces of its start or of its lock ({named(found.lock)}); the next run that "
-            "writes, or `uninstall`, removes them"
+            "writes, or `setup.py --uninstall [DIR]`, removes them"
         ))
     if found.unlisted:
         findings.append(warning(
             f"{len(found.unlisted)} backups are under a state directory and no record lists them "
             f"({named(found.unlisted)}); setup removes none of them by itself. Look at them, then "
-            "`uninstall --discard-backups` (with --project DIR for a project's) removes them"
+            "`setup.py --uninstall [DIR] --discard-backups` removes them"
         ))
     if found.lookalikes:
         findings.append(info(
@@ -1333,7 +1336,7 @@ def check_loaded_skill_size(context: Context) -> list[Finding]:
     if not made:
         return [info("no role is loaded as a skill")]
     if context.rendered():
-        # A home that was rendered is judged by what is installed in it: a
+        # A home that was installed is judged by what is installed in it: a
         # role whose skill is not there (the home's ``install`` lacks ``roles``) is cut by
         # nothing.
         places = {
@@ -1428,34 +1431,25 @@ def check_collaboration_skill(context: Context) -> list[Finding]:
 
 # --- The registry ----------------------------------------------------------------
 
-def _switch(option: str, text: str) -> Callable[[Any], None]:
-    def configure(parser: Any) -> None:
-        parser.add_argument(option, action="store_true", help=text)
-    return configure
-
-
 CHECKS: tuple[Check, ...] = (
     Check("sources", check_sources, "the clone's sources have no problem"),
     Check("drift", check_drift, "every generated file was made from the sources and settings as they are now"),
     Check("hand-edits", check_hand_edits, "every generated file, block and key is as setup wrote it"),
-    Check("missing", check_missing, "everything the record lists is there, and render would create nothing"),
+    Check("missing", check_missing, "everything the record lists is there, and setup would create nothing"),
     Check("links", check_links, "every recorded link is there and leads into the clone"),
     Check("duplicate-skills", check_duplicate_skills, "no skill setup installs is in a second skill location"),
     Check("other-clones", check_other_clones, "no link leads into another clone of this repository"),
     Check("clone", check_clone, "the clone can be read by both sides"),
     Check("models", check_models, "every mapped model is in its provider's list"),
-    Check("versions", check_versions, "every provider is a version the dictionaries were checked on", switch="no_versions",
-          configure=_switch("--no-versions", "do not start `<program> --version`; the check `versions` is left out")),
-    Check("codex-settings", codexsettings.check, "the Codex settings are as the framework needs",
-          configure=codexsettings.configure_check),
+    Check("versions", check_versions, "every provider is a version the dictionaries were checked on", switch="no_versions"),
+    Check("codex-settings", codexsettings.check, "the Codex settings are as the framework needs"),
     Check("profiles", check_profiles, "every profile resolves"),
     Check("interrupted-run", check_interrupted_run, "no run of setup was interrupted"),
     Check("loaded-skill-size", check_loaded_skill_size, "no loaded role is over the compaction limit"),
     Check(instructions.NAME, instructions.check, "both providers load the project's AGENTS.md"),
     Check("discovery", discovery.check_discovery, "each provider lists what setup installed"),
     Check("collaboration-skill", check_collaboration_skill, "the collaboration skill's doctor reports no problem",
-          switch="no_collab",
-          configure=_switch("--no-collab", "do not start the collaboration skill's own doctor; that check is left out")),
+          switch="no_collab"),
 )
 
 
@@ -1540,13 +1534,13 @@ def report_lines(found: dict[str, Any]) -> list[str]:
     started = list(found.get("starts_programs") or [])
     if started:
         banner = (
-            f"doctor: setup itself writes nothing. The {'check' if len(started) == 1 else 'checks'} "
+            f"check: setup itself writes nothing. The {'check' if len(started) == 1 else 'checks'} "
             f"{', '.join(started)} {'starts a program' if len(started) == 1 else 'start programs'} of the "
             "providers, which may write state of their own into their own home; left out with "
             f"{', '.join(STARTERS[name] for name in started)}"
         )
     else:
-        banner = f"doctor: setup itself writes nothing, and this run starts no program of a provider"
+        banner = f"check: setup itself writes nothing, and this run starts no program of a provider"
     lines = [
         banner,
         f"clone: {found['clone']}",

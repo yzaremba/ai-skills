@@ -1,6 +1,6 @@
-"""What ``render`` installs, as parts that fill one plan.
+"""What the install writes, as parts that fill one plan.
 
-How the command uses it
+How the program uses it
 
     for part in render.PARTS: part.add_arguments(parser)   # a part's own options
     outcome = render.execute(homes, sources, args)          # plan, show, apply
@@ -25,7 +25,7 @@ A part
     ``entry`` (R4.4, R4.5: how a session becomes a role, built by ``entry``,
     and what a project gets).
 
-The project (``--project``)
+The project (``DIR``)
     A run without a project writes nothing in any project. With one, the
     home is refreshed as always, from the user-level settings, and the
     ``entry`` part adds, in the project: the definitions its settings
@@ -48,8 +48,7 @@ The project (``--project``)
     Both keys are set, changed and taken out only by a run that changed the
     project's choices (``execute``'s ``project_changed``: ``setup.py DIR``
     wrote the project's ``.agents/workflow.toml`` or was given
-    ``--manager-default`` or ``--no-manager-default``; the old ``render
-    --project`` always). Any other run leaves them as they are, set or not,
+    ``--manager-default`` or ``--no-manager-default``). Any other run leaves them as they are, set or not,
     and what the record holds of them, even where the home's mapping now
     gives the role another effort (R6.1): the file is tracked, and one
     user's mapping is not the project's. A note says so.
@@ -122,7 +121,7 @@ What ``Run.file`` decides for one generated file, in this order
     not edited, whatever follows; it is written again with that after
     the new text. Replaced on request, an edited profile keeps every key
     of it that is not setup's. A file there that setup did not write and
-    whose keys are all ones Codex writes itself (what ``uninstall``
+    whose keys are all ones Codex writes itself (what ``--uninstall``
     leaves) is written over, with setup's text before what it holds, and
     not a conflict; any other file there is. A key after setup's part
     that Codex does not write itself is named in the profile's line.
@@ -131,7 +130,7 @@ What ``Run.file`` decides for one generated file, in this order
     ``release``: setup's part is taken out and the rest left, as yours.
     ``inputs`` goes into the record with the file's hash. It starts with
     ``GENERATED_PREFIX``, which is how the stale sweep knows a file is one
-    ``render`` generates and not, say, a settings file ``settingsfile`` wrote.
+    the install generates and not, say, a settings file ``settingsfile`` wrote.
 
 Stale files
     A generated file in the record that no part asked for is removed when it
@@ -173,7 +172,7 @@ What ``Run.link`` decides for one link, in this order
 
 Stale links
     After the parts, every link the user-level record holds that no part
-    asked for is one ``render`` would no longer make: its skill left the
+    asked for is one the install would no longer make: its skill left the
     clone, or its compatibility line no longer names that provider, or the
     provider is gone. It is removed when it still points where setup pointed
     it, forgotten when it is no longer there, and kept and reported when the
@@ -191,7 +190,7 @@ Nothing is written when there is a conflict or an error in the plan: the
 report is made, ``Outcome.errors`` holds one line per conflict, and the plan
 is not run. A failure while the plan is applied is another matter: it leaves
 ``execute`` as the ``SetupError`` of ``fileops``, which says how many changes
-were made; they are recorded, the next run goes on, and ``uninstall`` undoes
+were made; they are recorded, the next run goes on, and ``--uninstall`` undoes
 them.
 
 Exit codes
@@ -251,7 +250,7 @@ NEW_FILE = "write, in a new file"   # what a block's item says where setup creat
 # Where a project's items are, in an item's ``place``.
 PROJECT = "project"
 
-# How the ``inputs`` of every file ``render`` generates starts.
+# How the ``inputs`` of every file the install generates starts.
 GENERATED_PREFIX = "render:"
 
 FOLLOW_OPTION = "--follow-config-symlinks"
@@ -262,7 +261,7 @@ def _repository_around(path: Path, clone: Path) -> Path | None:
     """The clone of this repository that the real path of ``path`` is, or
     lies inside: the clone setup runs from, or a directory that holds what
     a clone holds (``doctor.looks_like_clone``), at the path or above it.
-    None where there is none. The rule under which ``render`` writes
+    None where there is none. The rule under which the install writes
     nothing in a place, so a ``.git`` entry alone does not count: a user
     may keep a home's own directory under git."""
     from . import doctor
@@ -276,7 +275,7 @@ def _repository_around(path: Path, clone: Path) -> Path | None:
 
 @dataclass
 class Item:
-    """One link or generated file ``render`` looked at."""
+    """One link or generated file the install looked at."""
 
     name: str
     path: Path
@@ -306,7 +305,7 @@ class Item:
 
 @dataclass(frozen=True)
 class Part:
-    """One thing ``render`` installs; see the module."""
+    """One thing the install writes; see the module."""
 
     name: str
     fill: Callable[["Run"], None]
@@ -339,7 +338,7 @@ _fold = paths.fold_key
 
 
 class Run:
-    """One run of ``render``: the homes, the sources, the record as it is,
+    """One run of the install: the homes, the sources, the record as it is,
     and the plan the parts fill."""
 
     def __init__(self, found: homes.Homes, sources: Sources, options: Any = None, *, follow: bool = False,
@@ -376,6 +375,7 @@ class Run:
         self._project_selection: definitions.Selection | None = None   # the project's units; see ``project_selection``
         self._project_selection_read = False
         self.notes: list[str] = []                 # what a part says beside its items; printed as notes
+        self.notices: list[str] = []               # the notes `--check` reports as warnings (R6.4, R10.3)
         self.model_notes: list[str] = []           # the model-list note (R3.2): printed after every other note
         # Called once the plan has run, been shown or been refused: a part's
         # note that reads the disk as the run left it.
@@ -523,7 +523,7 @@ class Run:
                 self.plan.adopt_link(path, target)
                 return settle(UP_TO_DATE, (
                     f"linked to {item.target} by a link made by hand, which setup takes over: "
-                    "`uninstall --project` leaves it, and taking the skill off the project's list removes it"
+                    "`setup.py --uninstall DIR` leaves it, and taking the skill off the project's `install` list removes it"
                 ))
         if entry.kind == homes.PLAIN:
             return settle(CONFLICT, f"{path}: {entry.describe()}, and setup did not make it")
@@ -677,7 +677,7 @@ class Run:
         elif seen.kind != fsio.FILE:
             return settle(CONFLICT, f"{path}: a {seen.kind} is there, where setup would write a file")
         elif carry and known is None and carried.only_codexs(there or b""):
-            # What ``uninstall`` (or a sweep) left of setup's file: the part
+            # What ``--uninstall`` (or a sweep) left of setup's file: the part
             # that was not setup's, alone. Setup's text goes before it again.
             try:
                 keep = carried.tail_text(b"\n" + carried.left((there or b"").removeprefix(b"\xef\xbb\xbf")))
@@ -703,7 +703,7 @@ class Run:
                 return settle(
                     EDITED,
                     f"edited by hand since setup wrote it, and kept; {OVERWRITE_OPTION} backs it up and replaces "
-                    "it, or remove the file and run render again",
+                    "it, or remove the file and run setup.py again",
                 )
             policy = fileops.EDITED
             settle(REPLACE, "edited by hand since setup wrote it; backed up and replaced")
@@ -738,7 +738,7 @@ class Run:
             if not self.overwrite(item.path):
                 item.status, item.says = EDITED, (
                     f"edited by hand since setup wrote it, and kept; {OVERWRITE_OPTION} backs it up and replaces "
-                    "it, keeping every key of it that is not setup's, or remove the file and run render again"
+                    "it, keeping every key of it that is not setup's, or remove the file and run setup.py again"
                 )
                 return None
             keep, why = carried.extracted(there, text)
@@ -830,7 +830,7 @@ class Run:
                     item.status = EDITED
                     item.says = (
                         f"changed by hand since setup set it (it is {was}, setup set {shown}), and kept; "
-                        f"{OVERWRITE_OPTION} sets it again, or remove the key and run render again"
+                        f"{OVERWRITE_OPTION} sets it again, or remove the key and run setup.py again"
                     )
                     return item
                 item.status, item.says = REPLACE, f"changed by hand since setup set it (it was {was}); set to {shown} again"
@@ -842,7 +842,7 @@ class Run:
                     item.says = (
                         f"is {was}, which setup did not set, and kept: setup does not replace a value of yours, so "
                         f"it is not set to {shown}. {OVERWRITE_OPTION} sets it, and {was} is put back when setup "
-                        "takes its key out; or remove the key and run render again"
+                        "takes its key out; or remove the key and run setup.py again"
                     )
                     return item
                 item.status = REPLACE
@@ -920,7 +920,7 @@ class Run:
                 item.status = EDITED
                 item.says = (
                     f"edited by hand since setup wrote it, and kept; {OVERWRITE_OPTION} backs the file up and "
-                    "writes the block again, or remove the block with its markers and run render again"
+                    "writes the block again, or remove the block with its markers and run setup.py again"
                 )
                 return item
             item.status, item.says = REPLACE, "edited by hand since setup wrote it; the file is backed up and the block written again"
@@ -933,7 +933,7 @@ class Run:
                 item.says = (
                     "setup's markers are in the file with other text between them than setup writes, and the "
                     f"install record does not hold the block: kept as it is. {OVERWRITE_OPTION} backs the file up "
-                    "and writes the block in its place, or take the markers out and run render again"
+                    "and writes the block in its place, or take the markers out and run setup.py again"
                 )
                 return item
             item.status = REPLACE
@@ -1143,6 +1143,11 @@ class Run:
             return
         self.plan.ignore(exclude, add=add, remove=remove, replace=fileops.ANY if self.overwrite(exclude) else fileops.OWN)
 
+    def notice(self, text: str) -> None:
+        """A note that `--check` also reports, as a warning."""
+        self.notes.append(text)
+        self.notices.append(text)
+
     def codex_tracked(self, path: Path) -> bool | None:
         """Whether git tracks the project's ``.codex/config.toml`` (R6.4):
         asked once per run; None where ``git`` could not be asked."""
@@ -1171,7 +1176,7 @@ class Run:
         if key is not None and self._recorded(key, "text", "blocks", "") is not None:
             self.plan.forget_block(path, name="")
         if span is not None:
-            self.notes.append(
+            self.notice(
                 f"project: {path}: lines {span[0] + 1}-{span[1]} are setup's old ignore block; setup lists in "
                 f"{fileops.GIT_INFO_EXCLUDE} now and never edits it again: remove those lines"
             )
@@ -1345,7 +1350,7 @@ def fill_project_skills(run: Run, selection: definitions.Selection) -> None:
     if cut:
         run.notes.append(
             f"project: {', '.join(sorted(cut))} not linked into {project} ({form.why}); run "
-            f"`render --project {_windows_path(str(project))}` from Windows, whose junctions this side then keeps"
+            f"`setup.py {_windows_path(str(project))}` from Windows, whose junctions this side then keeps"
         )
     if made and form.form == homes.FORM_ABSOLUTE and form.why:
         run.notes.append(f"project: {form.why}")
@@ -1594,7 +1599,7 @@ def _old_codex_block(run: Run, path: Path) -> None:
     if recorded:
         run.plan.forget_block(path, name=entry.BLOCK_NAME)
     if span is not None:
-        run.notes.append(
+        run.notice(
             f"project: {path}: lines {span[0] + 1}-{span[1]} are setup's old Codex block (git tracks the file, "
             "so setup never edits it): remove those lines"
         )
@@ -1708,7 +1713,7 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
                 tracked = run.codex_tracked(path)
                 if tracked is not False:
                     # R6.4: nothing is written into a file git tracks, or may track.
-                    run.notes.append(
+                    run.notice(
                         f"project: {path} " + (
                             "is tracked by git" if tracked else "was not checked: git could not be started, did not answer or failed"
                         ) + f", so setup writes nothing there: Codex sessions in the project will not start as {role}"
@@ -1724,7 +1729,7 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
                         f"setup to set {key} for the starting role {role}, and a key cannot be set twice in "
                         "one TOML file, so setup writes nothing: your value stays in effect, and a Codex "
                         f"session in this project does not start as {role}. Remove the key from the file, or "
-                        f"set {entry.MANAGER_DEFAULT_KEY} = false for this project, and run render again"
+                        f"set {entry.MANAGER_DEFAULT_KEY} = false for this project, and run setup.py again"
                         for key in taken_keys
                     ])
                 item = run.block(provider, path, entry.BLOCK_NAME, content, fileops.HEAD)
@@ -1853,7 +1858,7 @@ MODEL_LIST_PART = "model-list"
 
 def fill_model_list(run: Run) -> None:
     """Where this run renders the Codex home, a note on the models Codex's own
-    list offers and the dictionary lacks (R3.2), as ``doctor`` warns of them
+    list offers and the dictionary lacks (R3.2), as ``--check`` warns of them
     (R3.1). It writes nothing and never changes the exit code: a list that
     cannot be read is one line, also where the program is not on PATH.
     Nothing is started where Codex is not installed (no home, no program) or
@@ -1883,7 +1888,7 @@ PARTS: tuple[Part, ...] = (
     Part("rules", fill_rules),
     Part("roles", fill_roles),
     Part("entry", fill_entry),
-    Part("codex-settings", codexsettings.fill),   # its options: setup.py, and the old render
+    Part("codex-settings", codexsettings.fill),   # its options: setup.py
     Part(MODEL_LIST_PART, fill_model_list),
 )
 
@@ -2178,7 +2183,7 @@ def report_lines(report: dict[str, Any]) -> list[str]:
                 f"{_profile(one)}, and the loaded skill keeps "
                 f"{_profile({'model': one['loaded_model'], 'effort': one['loaded_effort']})}: it is installed at the "
                 "user level, where a provider's own skill wins over a project's of the same name, so nothing is "
-                f"generated for it here. `show roles --project {project['path']}` prints the project's profile"
+                "generated for it here"
             )
     if report["stale"]:
         lines.append("no longer installed:")
@@ -2190,7 +2195,7 @@ def report_lines(report: dict[str, Any]) -> list[str]:
     if report["errors"]:
         lines.append("  none: the run stopped before the plan")
     else:
-        lines.extend(f"  {line}" for line in (report["plan"] or [fileops.UP_TO_DATE]))
+        lines.extend(f"  {line}" for line in (report["plan"] or [report.get("plan_empty", fileops.UP_TO_DATE)]))
     lines.extend(f"note: {note}" for note in report["notes"])
     lines.append(report["summary"])
     return lines

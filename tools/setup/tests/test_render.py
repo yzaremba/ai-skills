@@ -1,4 +1,4 @@
-"""Tests for ``render``: the skills and the rules, linked into scratch homes.
+"""Tests for the install: the skills and the rules, linked into scratch homes.
 
 Run from the repository root:
     python -m unittest discover -s tools/setup/tests
@@ -109,7 +109,7 @@ class RenderCase(TreeCase):
         host = host or self.host
         places = ["--home", str(self.home)] if home else []
         with mock.patch.object(homes.Host, "current", classmethod(lambda cls: host)):
-            return support.run("render", *argv, *places)
+            return support.install(*argv, *places)
 
     def report(self, *argv: str, **how) -> tuple[int, dict, str]:
         code, out, err = self.render("--json", *argv, **how)
@@ -215,7 +215,7 @@ class LinksCase(RenderCase):
         code, out, _ = self.render("--dry-run")
         lines = out.splitlines()
         self.assertEqual(code, 0)
-        self.assertEqual(lines[0], "dry run: nothing is changed")
+        self.assertIn("dry run: nothing is changed", lines)
         self.assertIn(f"clone: {self.clone}", lines)
         self.assertIn(f"claude-code: {self.claude}", lines)
         self.assertIn(f"  skills: {self.claude_skills}", lines)
@@ -233,14 +233,14 @@ class LinksCase(RenderCase):
         )
 
     def test_help_states_the_exit_codes_and_the_cowork_limit(self) -> None:
-        code, out, _ = support.run("render", "--help")
+        code, out, _ = support.setup("--help")
         flat = " ".join(out.split())
         self.assertEqual(code, 0)
-        for option in ("--dry-run", "--follow-config-symlinks", "--home", "--project", "--json"):
+        for option in ("--dry-run", "--follow-config-symlinks", "--home", "DIR", "--json"):
             self.assertIn(option, flat)
         self.assertIn("A Cowork session on the desktop does not load a linked user-level rule", flat)
         self.assertIn("3 when the rest was done", flat)
-        self.assertIn("2 on an error or a conflict", flat)
+        self.assertIn("2 when the run cannot do what was asked", flat)
 
 
 class IdempotenceCase(RenderCase):
@@ -835,10 +835,13 @@ class UnsharedCloneWarningCase(RenderCase):
         patch.start()
         self.addCleanup(patch.stop)
 
+    @unittest.skipIf(os.name == "nt", "a Windows host refuses such a clone instead of warning (CloneCase)")
     def test_it_warns_and_installs(self) -> None:
         code, out, err = self.render("--dry-run")
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(out.splitlines()[1:3], [f"clone: {self.clone}", f"  warning: {homes.CLONE_WARNING}"])
+        lines = out.splitlines()
+        at = lines.index("dry run: nothing is changed")
+        self.assertEqual(lines[at + 1:at + 3], [f"clone: {self.clone}", f"  warning: {homes.CLONE_WARNING}"])
         code, out, err = self.render()
         self.assertEqual(code, 0, err)
         self.assertIn(f"  warning: {homes.CLONE_WARNING}", out.splitlines())
@@ -859,18 +862,20 @@ class UnsharedCloneWarningCase(RenderCase):
         self.assertIsNone(report["clone_warning"])
         self.assertFalse([line for line in render.report_lines(report) if "warning" in line])
 
-    def test_the_old_setting_is_no_fault_in_any_file(self) -> None:
+    def test_the_old_setting_is_an_old_key_like_any_other(self) -> None:
         self.write(self.user_file, "[setup]\nallow_unshared_clone = true\n")
         self.write(self.project_file, "[setup]\nallow_unshared_clone = true\n")
-        code, out, err = self.render("--dry-run", "--project", str(self.project))
-        self.assertEqual((code, err), (0, ""))
-        self.assertIn(f"  warning: {homes.CLONE_WARNING}", out.splitlines())
+        code, out, err = self.render("--dry-run", str(self.project))
+        self.assertEqual(code, 2)
+        for file in (self.user_file, self.project_file):
+            self.assertIn(f"{file}: setup.allow_unshared_clone is an old key", err)
+        self.assertNotIn(homes.CLONE_WARNING, out)
 
     def test_the_help_of_each_command_names_the_settings(self) -> None:
         for command, words in (
-            ("render", ("The roles are an item of `install`", "Put `roles` back in `install`")),
+            ("setup.py", ("The roles are an item of `install`", "When it does not, the process alone is installed")),
         ):
-            code, out, _ = support.run(command, "--help")
+            code, out, _ = support.setup("--help")
             self.assertEqual(code, 0)
             flat = " ".join(out.split())
             for word in words:
@@ -881,7 +886,7 @@ class UnsharedCloneWarningCase(RenderCase):
 
 
 class ModelListCase(RenderCase):
-    """``render`` reads Codex's list and prints the new-model note (R3.2)."""
+    """The install reads Codex's list and prints the new-model note (R3.2)."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -899,6 +904,13 @@ class ModelListCase(RenderCase):
         self.assertEqual(err, "", out)
         return code, out
 
+    def assertAsked(self) -> None:
+        """Codex's list was asked for; setup asks for it again for each plan it makes (the
+        settings check, the plan that is refused or not, the one applied)."""
+        calls = self.stub.calls()
+        self.assertTrue(calls)
+        self.assertEqual({tuple(call) for call in calls}, {("debug", "models")})
+
     def test_a_new_model_prints_the_line_at_the_end(self) -> None:
         self.stub.answer(provider_stub.LIVE, provider_stub.fixture("model-list-new-model.json"))
         code, out = self.note()
@@ -906,14 +918,14 @@ class ModelListCase(RenderCase):
         lines = out.splitlines()
         self.assertEqual(lines[-2], "note: codex: in the list and not in the dictionary: gpt-7-nova "
                                     "(the dictionary may be stale)")
-        self.assertEqual(self.stub.calls(), [["debug", "models"]])
+        self.assertAsked()
 
     def test_a_dry_run_reads_it_too(self) -> None:
         self.stub.answer(provider_stub.LIVE, provider_stub.fixture("model-list-new-model.json"))
         code, out = self.note("--dry-run")
         self.assertEqual(code, 0)
         self.assertIn("gpt-7-nova", out)
-        self.assertEqual(self.stub.calls(), [["debug", "models"]])
+        self.assertAsked()
 
     def test_a_list_that_equals_the_dictionary_prints_nothing(self) -> None:
         self.stub.answer(provider_stub.LIVE, provider_stub.fixture("model-list-equal.json"))
@@ -973,7 +985,7 @@ class ProjectCase(RenderCase):
         super().setUp()
         self.project_claude = self.project / ".claude" / "skills"
         self.project_agents = self.project / ".agents" / "skills"
-        self.arg = ("--project", str(self.project))
+        self.arg = (str(self.project),)
 
     def ignored(self) -> list[str]:
         text = self.exclude_file.read_text(encoding="utf-8")
@@ -984,7 +996,7 @@ class ProjectCase(RenderCase):
 
 
 class ProjectLinksCase(ProjectCase):
-    """``render --project``: the project's skills, linked in the form for the
+    """``setup.py DIR``: the project's skills, linked in the form for the
     side and listed in the project's ignore block."""
 
     def test_the_links_are_made_in_both_places(self) -> None:
@@ -1106,7 +1118,7 @@ class ProjectLinksCase(ProjectCase):
         lines = [note for note in report["notes"] if "not linked into" in note]
         self.assertEqual(len(lines), 1)
         self.assertIn("alpha, solo not linked into", lines[0])
-        self.assertIn(f"run `render --project {self.project}` from Windows", lines[0])
+        self.assertIn(f"run `setup.py {self.project}` from Windows", lines[0])
 
     def test_a_wsl_drive_path_is_named_as_windows_names_it(self) -> None:
         self.assertEqual(render._windows_path("/mnt/d/proj/sub"), "D:\\proj\\sub")
@@ -1123,9 +1135,9 @@ class ProjectLinksCase(ProjectCase):
         self.assertIn("note: project: the clone is in the Linux file system: Windows sessions will not see the links", out)
 
     def test_the_help_says_what_a_project_gets(self) -> None:
-        code, out, _ = support.run("render", "--help")
+        code, out, _ = support.setup("--help")
         self.assertEqual(code, 0)
-        self.assertIn("With --project, the skills the project lists", out)
+        self.assertIn("With DIR, the skills the project lists", out)
 
 
 class ProjectLinkThereCase(ProjectCase):
@@ -1181,8 +1193,8 @@ class ProjectLinkThereCase(ProjectCase):
         item = self.link_items(report)[".claude/skills/alpha"]
         self.assertEqual(item["status"], render.UP_TO_DATE)
         self.assertIn("a link made by hand, which setup takes over", item["says"])
-        self.assertIn("`uninstall --project` leaves it", item["says"])
-        self.assertIn("taking the skill off the project's list removes it", item["says"])
+        self.assertIn("`setup.py --uninstall DIR` leaves it", item["says"])
+        self.assertIn("taking the skill off the project's `install` list removes it", item["says"])
         self.assertEqual(self.record()["entries"]["project:.claude/skills/alpha"],
                          {"kind": "link", "target": "clone:alpha", "adopted": True})
         self.assertEqual(fsio.look(link).target, text)
@@ -1259,6 +1271,7 @@ class ProjectLinkThereCase(ProjectCase):
         self.assertNotIn(str(self.project_agents / "alpha"), self.stale_paths(report))
         self.assertIn(".agents/skills/alpha", self.ignored())
 
+    @unittest.skipIf(os.name == "nt", "a Windows host has WSL for its other side, which keeps such a link")
     def test_on_a_one_sided_host_a_link_of_a_unit_the_home_gained_is_removed(self) -> None:
         self.write(self.user_file, self.ONLY_BETA)
         self.write(self.project_file, self.LIST)
@@ -1316,9 +1329,9 @@ class ProjectLinkThereCase(ProjectCase):
         self.assertFalse(os.path.isabs(fsio.look(self.project_claude / "alpha").target))
 
     def test_the_help_says_what_is_kept_at_a_projects_path(self) -> None:
-        code, out, _ = support.run("render", "--help")
+        code, out, _ = support.setup("--help")
         self.assertEqual(code, 0)
-        self.assertIn("A link already at a project's path that leads to the skill's", out)
+        self.assertIn("A link already at a project's path that leads to the skill's", " ".join(out.split()))
 
 
 class ProjectRuleCopyCase(ProjectCase):
@@ -1408,6 +1421,7 @@ class ProjectRuleCopyCase(ProjectCase):
         self.assertEqual((code, err), (0, ""), out)
         self.assertEqual(self.exclude_file.read_bytes(), exclude)
 
+    @unittest.skipUnless(POSIX, "the view from WSL is rebuilt on a POSIX file system")
     def test_the_copy_of_the_other_side_is_kept_while_claude_code_is_not_here(self) -> None:
         self.assertEqual(self.render(*self.arg)[0], 0)
         shutil.rmtree(self.claude)     # Claude Code is not on this side
@@ -1420,9 +1434,9 @@ class ProjectRuleCopyCase(ProjectCase):
         self.assertNothingAt(self.copy)
 
     def test_the_help_says_a_project_gets_a_copy(self) -> None:
-        code, out, _ = support.run("render", "--help")
+        code, out, _ = support.setup("--help")
         self.assertEqual(code, 0)
-        self.assertIn("are copied, not", out)
+        self.assertIn("are copied, not", " ".join(out.split()))
 
 
 class ExcludeFileCase(ProjectCase):
@@ -1453,7 +1467,7 @@ class ExcludeFileCase(ProjectCase):
 
     def uninstall(self, project: Path) -> tuple[int, str, str]:
         with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
-            return support.run("uninstall", "--home", str(self.home), "--project", str(project))
+            return support.setup("--uninstall", "--home", str(self.home), str(project))
 
     def test_the_block_lands_in_the_exclude_file(self) -> None:
         code, out, err = self.render(*self.arg)
@@ -1469,7 +1483,7 @@ class ExcludeFileCase(ProjectCase):
 
     def test_a_linked_worktree_lists_in_the_common_directory_and_the_way_back_takes_it_out(self) -> None:
         worktree, exclude = self.worktree()
-        code, out, err = self.render("--project", str(worktree))
+        code, out, err = self.render(str(worktree))
         self.assertEqual((code, err), (0, ""), out)
         self.assertEqual(self.listed(exclude), self.links)
         self.assertNothingAt(worktree / ".gitignore")
@@ -1478,7 +1492,7 @@ class ExcludeFileCase(ProjectCase):
         backups = [item for item in self.record(worktree)["backups"] if item["path"] == "git-info:exclude"]
         self.assertEqual(len(backups), 1)
         self.assertTrue(backups[0]["backup"].startswith("project:.agents/workflow-setup/backups/"), backups)
-        self.assertEqual(self.render("--project", str(worktree))[0], 0)
+        self.assertEqual(self.render(str(worktree))[0], 0)
         self.assertEqual(self.listed(exclude), self.links)
         code, out, err = self.uninstall(worktree)
         self.assertEqual((code, err), (0, ""), out)
@@ -1488,7 +1502,7 @@ class ExcludeFileCase(ProjectCase):
         worktree, exclude = self.worktree()
         admin = self.root / "repository" / ".git" / "worktrees" / "wt"
         (admin / "gitdir").write_bytes(str(self.root / "elsewhere" / ".git").encode("utf-8") + b"\n")
-        code, out, err = self.render("--project", str(worktree))
+        code, out, err = self.render(str(worktree))
         self.assertEqual((code, err), (0, ""), out)
         self.assertIn("does not name this project's .git file back; setup lists nothing in an exclude file", out)
         self.assertEqual(exclude.read_bytes(), support.GIT_EXCLUDE)
@@ -1522,7 +1536,7 @@ class ExcludeFileCase(ProjectCase):
         # A project that never was one: no list, and no .gitignore either.
         fresh = self.root / "fresh"
         self.write(fresh / ".agents" / "workflow.toml", self.LIST)
-        code, out, err = self.render("--project", str(fresh))
+        code, out, err = self.render(str(fresh))
         self.assertEqual((code, err), (0, ""), out)
         self.assertIn("not a git repository's top (no .git)", out)
         self.assertNotIn("left as it is", out)

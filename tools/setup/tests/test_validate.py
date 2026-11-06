@@ -18,6 +18,8 @@ _sys.path[:0] = {str(_Path(__file__).resolve().parent)} - set(_sys.path)
 
 import json
 import os
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -697,7 +699,7 @@ class MachinePathTests(TreeCase):
 
 class NameTests(TreeCase):
     """Review findings S10 and S11, and the minor on device names: what
-    ``render`` would refuse, or a home could not hold, is reported here."""
+    the install would refuse, or a home could not hold, is reported here."""
 
     def test_an_id_longer_than_a_file_name_made_from_it_may_be(self) -> None:
         # A role id leaves room for ``-hard``: the hard definition is a file too.
@@ -764,7 +766,7 @@ class NameTests(TreeCase):
         self.assertIn("differs from 'Sample' only in letter case", self.messages("id-case")[0])
 
     def test_a_loaded_role_named_as_a_skill(self) -> None:
-        # ``render`` stops on it; before, validation passed it.
+        # the install stops on it; before, validation passed it.
         self.role("alpha")
         self.assertClean()   # not loaded: no skill is made of it
         file = self.clone / "roles" / "alpha" / "role.toml"
@@ -778,7 +780,7 @@ class NameTests(TreeCase):
 
 
 class EmbeddedTextTests(TreeCase):
-    """Review finding S11: what ``render`` embeds, and would refuse or be
+    """Review finding S11: what the install embeds, and would refuse or be
     broken by."""
 
     def set_key(self, file: str, key: str, value: str) -> None:
@@ -1901,7 +1903,7 @@ class AllAtOnceTests(TreeCase):
 
     def test_the_command_prints_them_and_exits_1(self) -> None:
         self.break_things()
-        code, out, err = support.run("validate", "--home", str(self.home))
+        code, out, err = support.validate("--home", str(self.home))
         self.assertEqual((code, err), (1, ""))
         lines = out.splitlines()
         self.assertEqual(lines[-1], "10 problems")
@@ -1911,7 +1913,7 @@ class AllAtOnceTests(TreeCase):
 
     def test_the_command_as_json(self) -> None:
         self.break_things()
-        code, out, err = support.run("validate", "--json", "--home", str(self.home))
+        code, out, err = support.validate("--json", "--home", str(self.home))
         self.assertEqual((code, err), (1, ""))
         report = json.loads(out)
         self.assertEqual(report["schema_version"], 2)
@@ -1926,37 +1928,49 @@ class AllAtOnceTests(TreeCase):
 
 class CommandTests(TreeCase):
     def test_a_clean_clone_exits_0(self) -> None:
-        self.assertEqual(support.run("validate", "--home", str(self.home)), (0, "no problems: 4 skills, 2 roles\n", ""))
-        code, out, err = support.run("validate", "--json", "--home", str(self.home))
+        self.assertEqual(support.validate("--home", str(self.home)), (0, "no problems: 4 skills, 2 roles\n", ""))
+        code, out, err = support.validate("--json", "--home", str(self.home))
         self.assertEqual((code, err), (0, ""))
         self.assertTrue(json.loads(out)["ok"])
         self.assertEqual(json.loads(out)["problems"], [])
 
     def test_one_problem_is_counted_in_the_singular(self) -> None:
         self.skill(name="name: other")
-        code, out, _ = support.run("validate", "--home", str(self.home))
+        code, out, _ = support.validate("--home", str(self.home))
         self.assertEqual(code, 1)
         self.assertEqual(out.splitlines()[-1], "1 problem")
 
     def test_its_own_error_exits_2(self) -> None:
         with mock.patch.object(locations, "CLONE", self.root / "nowhere"):
-            code, out, err = support.run("validate", "--home", str(self.home))
+            code, out, err = support.validate("--home", str(self.home))
         self.assertEqual((code, out), (2, ""))
         self.assertTrue(err.startswith("error: "), err)
         self.assertEqual(err.count("\n"), 1)
-        code, out, err = support.run("validate", "--home", "")
+        code, out, err = support.validate("--home", "")
         self.assertEqual((code, out), (2, ""))
-        code, _, err = support.run("validate", "--jso")
+        code, _, err = support.validate("--jso")
         self.assertEqual(code, 2)
 
     def test_the_rules_are_listed(self) -> None:
-        code, out, err = support.run("validate", "--rules")
+        code, out, err = support.validate("--rules")
         self.assertEqual((code, err), (0, ""))
         self.assertEqual([line.split(": ", 1)[0] for line in out.splitlines()], list(validate.RULES))
-        self.assertEqual(json.loads(support.run("validate", "--rules", "--json")[1]), validate.RULES)
+        self.assertEqual(json.loads(support.validate("--rules", "--json")[1]), validate.RULES)
 
-    def test_the_command_is_listed(self) -> None:
-        self.assertIn("validate", support.run("--help")[1])
+    def test_the_help_names_the_program_and_its_options(self) -> None:
+        code, out, err = support.validate("--help")
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("usage: validate.py", out)
+        for option in ("--json", "--rules", "--home", "--project"):
+            self.assertIn(option, out)
+
+    def test_the_script_runs_by_path(self) -> None:
+        done = subprocess.run(
+            [sys.executable, "-B", str(support.VALIDATE_SCRIPT), "--rules"], stdin=subprocess.DEVNULL,
+            capture_output=True, env=support.child_environment(), timeout=120, check=False,
+        )
+        self.assertEqual((done.returncode, done.stderr), (0, b""))
+        self.assertEqual([line.split(": ", 1)[0] for line in done.stdout.decode("utf-8").splitlines()], list(validate.RULES))
 
     def test_the_command_writes_nothing(self) -> None:
         def snapshot() -> dict[str, tuple[int, int]]:
@@ -1966,8 +1980,8 @@ class CommandTests(TreeCase):
             }
 
         before = snapshot()
-        support.run("validate", "--home", str(self.home))
-        support.run("validate", "--json", "--home", str(self.home))
+        support.validate("--home", str(self.home))
+        support.validate("--json", "--home", str(self.home))
         self.assertEqual(snapshot(), before)
 
 
@@ -1988,12 +2002,12 @@ class RepositoryTests(support.ScratchCase):
 
     def test_the_command_on_the_repository(self) -> None:
         with mock.patch.object(locations, "CLONE", support.REPOSITORY):
-            code, out, err = support.run("validate", "--home", str(self.home))
+            code, out, err = support.validate("--home", str(self.home))
         self.assertEqual((code, err), (0, ""), out)
 
     def test_the_validators_own_files_hold_no_machine_path(self) -> None:
         package = support.SETUP / "wfsetup"
-        for file in (package / "validate.py", package / "commands" / "validate.py", Path(__file__)):
+        for file in (package / "validate.py", package / "validate_program.py", support.VALIDATE_SCRIPT, Path(__file__)):
             text = file.read_text(encoding="utf-8")
             for kind, pattern in validate.MACHINE_PATHS:
                 self.assertIsNone(pattern.search(text), (file.name, kind))

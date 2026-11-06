@@ -30,7 +30,7 @@ from unittest import mock
 import support
 from crash_support import World, differences, gone_pid, tree
 from lock_child import FILES, plan_of
-from wfsetup import blocks, fileops, fsio, lock
+from wfsetup import blocks, fileops, fsio, lock, paths
 from wfsetup.errors import EXIT_ERROR, SetupError
 
 CHILD = support.TESTS / "lock_child.py"
@@ -199,7 +199,7 @@ class HeldTests(LockCase):
 
     def test_the_command_line_says_it_in_one_line_and_exits_with_2(self) -> None:
         child, release = self.holder()
-        code, out, err = support.run("uninstall", "--home", str(self.world.home))
+        code, out, err = support.setup("--uninstall", "--home", str(self.world.home))
         release.write_bytes(b"")
         child.communicate(timeout=60)
         self.assertEqual(code, EXIT_ERROR, (out, err))
@@ -253,7 +253,7 @@ class StaleTests(LockCase):
     def test_uninstall_on_the_command_line_takes_it_away_too(self) -> None:
         pristine = tree(self.world.root)
         self.killed()
-        code, out, err = support.run("uninstall", "--home", str(self.world.home))
+        code, out, err = support.setup("--uninstall", "--home", str(self.world.home))
         self.assertEqual((code, err), (0, ""), out)
         self.assertEqual(differences(pristine, tree(self.world.root)), [])
 
@@ -367,6 +367,22 @@ class StaleTests(LockCase):
         self.assertFalse(slow._clear(stale, said))
         self.assertEqual(self.lock.read_bytes(), live)
         self.assertEqual(self.temporaries(), [])
+
+    def test_a_link_made_in_wsl_where_the_state_belongs_is_said_to_be_one(self) -> None:
+        self.roots.state_dir.parent.mkdir(parents=True, exist_ok=True)
+        self.roots.state_dir.write_bytes(b"")           # what Windows shows of such a link: a file
+        with mock.patch.object(paths, "is_wsl_link", lambda path: Path(path) == self.roots.state_dir):
+            with self.assertRaises(SetupError) as caught:
+                lock.Lock(self.roots).check_place()
+        self.assertEqual(
+            caught.exception.lines,
+            [f"{self.roots.state_dir} is a link made in WSL, which Windows cannot follow; setup keeps its state there"],
+        )
+        self.roots.state_dir.unlink()
+        self.roots.state_dir.write_bytes(b"")
+        with self.assertRaises(SetupError) as caught:
+            lock.Lock(self.roots).check_place()
+        self.assertIn("is there and is not a directory", caught.exception.lines[0])
 
 
 class DocumentedTests(unittest.TestCase):

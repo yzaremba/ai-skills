@@ -16,7 +16,7 @@ project, each in the state directory it guards, beside the record and the
 backups: a run that writes to a project takes the project's lock, and the
 home's only if it writes to the home too. So a project that two homes use
 (the two sides of one machine) is written by one run at a time whichever
-home it runs from. A run that only reads (a dry run, ``doctor``, ``show``)
+home it runs from. A run that only reads (a dry run, ``--check``)
 takes no lock: a record is replaced by one rename, so a reader sees the old
 one or the new one, never a part.
 
@@ -438,6 +438,8 @@ class Lock:
                     f"{directory}: is a link (to {seen.target}); setup keeps its state there and does not write "
                     "through a link unless --follow-config-symlinks is given"
                 )
+            if paths.is_wsl_link(directory):
+                raise SetupError(f"{directory} is a link made in WSL, which Windows cannot follow; setup keeps its state there")
             # Judged by the one look: a directory that another run takes
             # away in this instant was a directory.
             if seen.kind not in (fsio.DIRECTORY, fsio.LINK) or (seen.kind == fsio.LINK and not seen.directory):
@@ -771,7 +773,7 @@ def held(roots: Any, *, project: bool = False, create: bool = True, follow: bool
 
 
 def holder(roots: Any, project: bool = False) -> tuple[dict[str, Any] | None, str, str] | None:
-    """For a command that only reads (``doctor``): who holds the lock of
+    """For a command that only reads (``--check``): who holds the lock of
     this home (or project), the verdict on that run and, for ``UNKNOWN``,
     why. None when no lock is there. Nothing is changed."""
     try:

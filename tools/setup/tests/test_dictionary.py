@@ -772,11 +772,11 @@ class OddPlacesTests(support.CloneCase):
 
 
 class FilledIsolationTests(support.ScratchCase):
-    def test_show_providers_and_a_bare_show_open_both(self) -> None:
-        for argv in (("providers",), ()):
-            with self.subTest(argv=argv):
+    def test_the_providers_group_and_every_group_open_both(self) -> None:
+        for groups in (("providers",), schema.GROUPS):
+            with self.subTest(groups=groups):
                 with mock.patch.object(tomlio, "load", wraps=tomlio.load) as load:
-                    self.assertEqual(self.show(*argv)[0], 0)
+                    settings.resolve(self.locations(), groups)
                 opened = {call.args[0] for call in load.call_args_list}
                 self.assertLessEqual({self.claude_code_dictionary, self.codex_dictionary}, opened)
 
@@ -784,13 +784,12 @@ class FilledIsolationTests(support.ScratchCase):
 class IsolationTests(support.CloneCase):
     """R5.3: only a reader of the providers group opens a dictionary."""
 
-    def test_show_process_does_not_open_the_dictionaries(self) -> None:
+    def test_the_other_groups_do_not_open_the_dictionaries(self) -> None:
         with mock.patch.object(dictionary, "load_all", side_effect=AssertionError("opened")) as load_all:
             with mock.patch.object(tomlio, "load", wraps=tomlio.load) as load:
-                # Not "roles" alone: it resolves the profiles (test_profiles.py).
-                for key in ("process", "process.docs_dir", "roles.high_stakes", "roles.coder", "memory.dir"):
-                    with self.subTest(key=key):
-                        self.assertEqual(self.show(key)[0], 0)
+                for group in ("process", "roles", "memory"):
+                    with self.subTest(group=group):
+                        settings.resolve(self.locations(), (group,))
         load_all.assert_not_called()
         self.assertEqual({call.args[0] for call in load.call_args_list}, {self.defaults_file})
 

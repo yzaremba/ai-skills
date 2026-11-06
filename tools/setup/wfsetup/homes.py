@@ -101,7 +101,7 @@ What ``Classifier.standing`` says of a path setup would write
                  under another name: two homes share the directory. Not
                  written again (R6.10: once where two homes share).
     other-side   The real path is on the other side's file system. This run
-                 skips it and says that side owns it; ``doctor`` only reads
+                 skips it and says that side owns it; ``--check`` only reads
                  it. The run on the other side writes it.
     unknown      The path could not be looked at. Nothing is written.
 
@@ -132,7 +132,8 @@ The clone (R6.9)
     not change. On Windows every link is a junction, which leads only to a
     local drive, so a clone off one stops the run with exit code 2 before
     anything is written, a scratch home and ``--dry-run`` included
-    (``require_linkable_clone``); ``clone_warning`` gives None there. A
+    (``require_linkable_clone``); ``clone_warning`` gives None there, and
+    ``--check`` warns with the same line, a scratch home included. A
     scratch home on WSL, and a Linux with no Windows side, are not checked.
 
 Links
@@ -185,7 +186,7 @@ SHARED = "shared"
 HANDLED = "handled"
 OTHER_SIDE = "other-side"
 # Through a link, to a place setup changes under no option: outside the
-# homes of the run, or inside a clone. ``render`` says so for the place.
+# homes of the run, or inside a clone. the install says so for the place.
 OUTSIDE = "outside"
 UNKNOWN = "unknown"
 
@@ -687,7 +688,8 @@ def clone_standing(homes: Homes) -> CloneStanding:
     path = homes.clone
     real = Path(os.path.realpath(path))
     host = homes.host
-    if homes.scratch:
+    if homes.scratch and host.side != WINDOWS:
+        # On Windows a scratch home is not exempt: its junctions lead only to a local drive (R8.7).
         return CloneStanding(path, real, None, "not asked: a scratch home (--home)")
     if host.side == LINUX:
         return CloneStanding(path, real, None, "not asked: this machine has no Windows side")
@@ -758,7 +760,7 @@ def _listed(standing: Standing, place: Place) -> bool:
 
 def report(homes: Homes) -> dict[str, Any]:
     """Everything this module knows of a run, as plain data: what the
-    ``homes`` command prints and ``doctor`` starts from. It reads no file."""
+    report of the homes that ``--check`` starts from. It reads no file."""
     sorter = Classifier(homes)
     clone = clone_standing(homes)
     providers = []

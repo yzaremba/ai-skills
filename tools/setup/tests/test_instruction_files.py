@@ -1,4 +1,4 @@
-"""Tests for the check ``instruction-files`` of ``doctor --project DIR``:
+"""Tests for the check ``instruction-files`` of ``setup.py --check DIR``:
 whether both providers load the project's ``AGENTS.md`` (R7.3, R7.4, R8.5).
 
 Run from the repository root:
@@ -233,7 +233,7 @@ class ClaudeFilesCase(InstructionCase):
     def test_without_a_project_the_check_says_so(self) -> None:
         code, findings = self.only(CHECK)
         self.assertEqual((code, [found["severity"] for found in findings]), (0, [doctor.INFO]))
-        self.assertFinding(findings, doctor.INFO, "doctor --project DIR")
+        self.assertFinding(findings, doctor.INFO, "setup.py --check DIR")
 
     def test_claude_code_not_installed_is_info(self) -> None:
         shutil.rmtree(self.claude)

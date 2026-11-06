@@ -191,7 +191,7 @@ class CarryCase(DoctorCase):
 
     def uninstall(self, code: int = 0) -> dict:
         with mock.patch.object(homes.Host, "current", classmethod(lambda cls: self.host)):
-            got, out, err = support.run("uninstall", "--json", "--home", str(self.home))
+            got, out, err = support.setup("--uninstall", "--json", "--home", str(self.home))
         self.assertEqual((got, err), (code, ""), out)
         return json.loads(out)
 
@@ -261,7 +261,7 @@ class CarryCase(DoctorCase):
         self.assertEqual(code, 0)
         says = self.profile_item(report)["says"]
         self.assertIn("besides what Codex writes there it holds my_own, sandbox_mode", says)
-        self.assertIn("(sandbox_mode changes what a session may do; see doctor)", says)
+        self.assertIn("(sandbox_mode changes what a session may do; see setup.py --check)", says)
         code, findings = self.only("hand-edits")
         self.assertFinding(findings, doctor.INFO, KEY, "my_own", "Codex does not write there itself")
         detail = self.assertFinding(findings, doctor.WARNING, KEY, "sandbox_mode is set after setup's part")

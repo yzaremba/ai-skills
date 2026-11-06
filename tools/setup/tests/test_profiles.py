@@ -453,12 +453,10 @@ class RoleFileTests(support.CloneCase):
                     (line,) = self.problems()
                     with self.assertRaises(SetupError) as caught:
                         profiles.resolve_all(self.where())
-                    code, out, err = self.show("roles")
                 finally:
                     os.chmod(directory, 0o755)
                 self.assertTrue(line.startswith(expected), line)
                 self.assertEqual(caught.exception.lines, [line])
-                self.assertEqual((code, out, err), (2, "", f"error: {line}\n"))
 
     def test_a_directory_that_is_not_a_role_is_skipped(self) -> None:
         self.write(self.clone / "roles" / "_shared" / "gates.md", "## Gates\n")
@@ -519,254 +517,6 @@ class RoleFileTests(support.CloneCase):
         )
 
 
-def _lines(definition: str, provider: str, model: str, effort: str, tier: str, effort_name: str) -> str:
-    profile = "profile.hard" if definition.endswith("-hard") else "profile"
-    head = f"{definition} @ {provider}"
-    return (
-        f'{head}: model = "{model}"  (role: {profile}.tier "{tier}" [role], providers.{provider}.tiers.{tier} [shipped])\n'
-        f'{head}: effort = "{effort}"  (role: {profile}.effort "{effort_name}" [role], '
-        f"providers.{provider}.efforts.{effort_name} [shipped])\n"
-    )
-
-
-SETTINGS_TEXT = (
-    "roles.manager_default = false  (shipped)\n"
-    "roles.high_stakes = false  (shipped)\n"
-    "roles.max_parallel_coders = 3  (shipped)\n"
-)
-TIERS = {"coder": "standard", "coder-hard": "deep", "manager": "standard", "product-manager": "deep"}
-PROFILES_TEXT = "\nresolved profiles (definition @ provider):\n" + "".join(
-    _lines(definition, provider, model, effort, TIERS[definition], effort)
-    for (definition, provider), (model, effort) in DEFAULTS.items()
-)
-
-
-class ShowRolesTests(support.ScratchCase):
-    def test_text_is_the_settings_lines_then_the_profiles(self) -> None:
-        self.assertEqual(self.show("roles"), (0, SETTINGS_TEXT + PROFILES_TEXT, ""))
-        self.assertEqual(self.show("roles", project=False), (0, SETTINGS_TEXT + PROFILES_TEXT, ""))
-
-    def test_only_settings_lines_start_with_the_group(self) -> None:
-        self.write(self.user_file, '[roles.coder]\ntier = "deep"\n')
-        lines = self.show("roles")[1].splitlines()
-        split = lines.index("")
-        self.assertTrue(all(line.startswith("roles.") for line in lines[:split]))
-        self.assertIn('roles.coder.tier = "deep"  (user)', lines[:split])
-        self.assertEqual(lines[split + 1], "resolved profiles (definition @ provider):")
-        self.assertEqual(len(lines[split + 2:]), 16)
-        self.assertFalse(any(line.startswith("roles.") for line in lines[split + 1:]))
-
-    def test_text_names_the_layer_and_the_keys(self) -> None:
-        self.write(self.user_file, '[roles.coder]\ntier = "fast"\n[providers.codex.role_models]\ncoder-hard = "gpt-6-astra"\n')
-        self.write(self.project_file, '[roles.manager]\neffort = "max"\n[providers.claude-code.role_models]\nmanager = "claude-opus-5-5"\n')
-        out = self.show("roles")[1]
-        for line in (
-            'coder @ claude-code: model = "haiku"  (user: roles.coder.tier "fast" [user], providers.claude-code.tiers.fast [shipped])',
-            'coder @ claude-code: effort = none  (the claude-code dictionary lists the model "haiku" as taking no effort '
-            'setting, so none is written; not used: profile.effort "medium" [role], providers.claude-code.efforts.medium [shipped])',
-            'coder @ codex: model = "gpt-6-luna"  (user: roles.coder.tier "fast" [user], providers.codex.tiers.fast [shipped])',
-            'coder-hard @ codex: model = "gpt-6-astra"  (user: providers.codex.role_models.coder-hard [user])',
-            'manager @ claude-code: model = "claude-opus-5-5"  (project: providers.claude-code.role_models.manager [project])',
-            'manager @ claude-code: effort = "max"  (project: roles.manager.effort "max" [project], '
-            "providers.claude-code.efforts.max [shipped]; the claude-code dictionary does not list the model "
-            '"claude-opus-5-5", so the effort "max" is not checked)',
-        ):
-            with self.subTest(line=line):
-                self.assertIn(line + "\n", out)
-
-    def test_high_stakes_in_text(self) -> None:
-        self.write(self.local_file, "[roles]\nhigh_stakes = true\n")
-        out = self.show("roles")[1]
-        self.assertIn("roles.high_stakes = true  (local)\n", out)
-        self.assertIn(
-            'product-manager @ claude-code: model = "fable"  (local: profile.high_stakes_tier "frontier" [role], '
-            "roles.high_stakes [local], providers.claude-code.tiers.frontier [shipped])\n",
-            out,
-        )
-        self.assertEqual(out.count("roles.high_stakes [local]"), 2)
-        self.write(self.user_file, '[roles.product-manager]\ntier = "standard"\n')
-        out = self.show("roles")[1]
-        self.assertNotIn("roles.high_stakes [", out)
-        self.assertIn(
-            'product-manager @ codex: model = "gpt-6.1-sol"  (user: roles.product-manager.tier "standard" [user], '
-            "providers.codex.tiers.standard [shipped])\n",
-            out,
-        )
-
-    def test_high_stakes_in_json(self) -> None:
-        self.write(self.project_file, "[roles]\nhigh_stakes = true\n")
-        report = json.loads(self.show("roles", "--json")[1])["profiles"]
-        raised = report["product-manager"]
-        self.assertEqual(
-            raised["high_stakes"],
-            {"value": True, "layer": "project", "file": str(self.project_file), "key": "roles.high_stakes"},
-        )
-        self.assertEqual(raised["tier"]["key"], "profile.high_stakes_tier")
-        self.assertEqual(
-            {provider: entry["model"]["layer"] for provider, entry in raised["providers"].items()},
-            {"claude-code": "project", "codex": "project"},
-        )
-        for definition in ("coder", "coder-hard", "manager"):
-            with self.subTest(definition=definition):
-                self.assertIsNone(report[definition]["high_stakes"])
-        self.write(self.user_file, '[roles.product-manager]\ntier = "standard"\n')
-        report = json.loads(self.show("roles", "--json")[1])["profiles"]
-        self.assertIsNone(report["product-manager"]["high_stakes"])
-        self.assertEqual(report["product-manager"]["providers"]["codex"]["model"]["layer"], "user")
-
-    def test_an_effort_that_is_not_there_has_no_deciding_layer(self) -> None:
-        self.write(self.user_file, '[roles.coder]\ntier = "fast"\neffort = "max"\n')
-        found = profiles.resolve(self.locations(), "coder", "claude-code")
-        self.assertEqual((found.effort, found.effort_layer), (None, None))
-        self.assertEqual(profiles.resolve(self.locations(), "coder", "codex").effort_layer, "user")
-        entry = json.loads(self.show("roles", "--json")[1])["profiles"]["coder"]["providers"]
-        self.assertEqual(
-            entry["claude-code"]["effort"],
-            {
-                "value": None,
-                "layer": None,
-                "mapping": None,
-                "not_used": {
-                    "value": "max",
-                    "layer": "shipped",
-                    "file": str(self.claude_code_dictionary),
-                    "key": "providers.claude-code.efforts.max",
-                },
-            },
-        )
-        self.assertEqual(entry["codex"]["effort"]["value"], "max")
-        self.assertEqual(entry["codex"]["effort"]["layer"], "user")
-        self.assertIsNone(entry["codex"]["effort"]["not_used"])
-        self.assertEqual(entry["codex"]["effort"]["mapping"]["key"], "providers.codex.efforts.max")
-
-    def test_json_has_profiles_beside_settings(self) -> None:
-        self.write(self.project_file, '[roles.coder]\ntier = "fast"\n[providers.codex.role_models]\ncoder = "gpt-6-sol"\n')
-        code, out, err = self.show("roles", "--json")
-        self.assertEqual((code, err), (0, ""))
-        report = json.loads(out)
-        self.assertEqual(list(report), ["schema_version", "settings", "profiles", "notes"])
-        self.assertEqual(report["notes"], [])
-        self.assertEqual(
-            list(report["settings"]),
-            ["roles.manager_default", "roles.high_stakes", "roles.max_parallel_coders",
-             "roles.coder.tier"],
-        )
-        self.assertEqual(list(report["profiles"]), DEFINITIONS)
-        coder = report["profiles"]["coder"]
-        role_file = str(self.roles_dir / "coder" / "role.toml")
-        self.assertEqual(
-            coder,
-            {
-                "role": "coder",
-                "tier": {"value": "fast", "layer": "project", "file": str(self.project_file), "key": "roles.coder.tier"},
-                "effort": {"value": "medium", "layer": "role", "file": role_file, "key": "profile.effort"},
-                "high_stakes": None,
-                "providers": {
-                    "claude-code": {
-                        "model": {
-                            "value": "haiku",
-                            "layer": "project",
-                            "from": "tier",
-                            "mapping": {
-                                "value": "haiku",
-                                "layer": "shipped",
-                                "file": str(self.claude_code_dictionary),
-                                "key": "providers.claude-code.tiers.fast",
-                            },
-                        },
-                        "effort": {
-                            "value": None,
-                            "layer": None,
-                            "mapping": None,
-                            "not_used": {
-                                "value": "medium",
-                                "layer": "shipped",
-                                "file": str(self.claude_code_dictionary),
-                                "key": "providers.claude-code.efforts.medium",
-                            },
-                        },
-                        "notes": [
-                            'the claude-code dictionary lists the model "haiku" as taking no effort setting, '
-                            "so none is written"
-                        ],
-                    },
-                    "codex": {
-                        "model": {
-                            "value": "gpt-6-sol",
-                            "layer": "project",
-                            "from": "role_models",
-                            "mapping": {
-                                "value": "gpt-6-sol",
-                                "layer": "project",
-                                "file": str(self.project_file),
-                                "key": "providers.codex.role_models.coder",
-                            },
-                        },
-                        "effort": {
-                            "value": "medium",
-                            "layer": "role",
-                            "mapping": {
-                                "value": "medium",
-                                "layer": "shipped",
-                                "file": str(self.codex_dictionary),
-                                "key": "providers.codex.efforts.medium",
-                            },
-                            "not_used": None,
-                        },
-                        "notes": [],
-                    },
-                },
-            },
-        )
-        hard = report["profiles"]["coder-hard"]
-        self.assertEqual((hard["role"], hard["tier"]["key"]), ("coder", "profile.hard.tier"))
-        self.assertEqual(
-            {
-                (definition, provider): (entry["model"]["value"], entry["effort"]["value"])
-                for definition, found in report["profiles"].items()
-                if definition != "coder"
-                for provider, entry in found["providers"].items()
-            },
-            {key: value for key, value in DEFAULTS.items() if key[0] != "coder"},
-        )
-
-    def test_every_other_key_prints_as_before(self) -> None:
-        self.write(self.user_file, '[roles.coder]\ntier = "deep"\n')
-        self.assertEqual(self.show("roles.max_parallel_coders"), (0, "roles.max_parallel_coders = 3  (shipped)\n", ""))
-        self.assertEqual(self.show("roles.coder"), (0, 'roles.coder.tier = "deep"  (user)\n', ""))
-        self.assertNotIn("resolved profiles", self.show()[1])
-        self.assertNotIn("@", self.show()[1])
-        for argv in ((), ("roles.coder",), ("providers",), ("process",)):
-            with self.subTest(argv=argv):
-                self.assertEqual(list(json.loads(self.show(*argv, "--json")[1])), ["schema_version", "settings"])
-
-    def test_an_unaccepted_effort_is_an_error_of_the_command(self) -> None:
-        self.write(self.user_file, '[providers.codex.tiers]\nstandard = "gpt-5.5"\n[roles.manager]\neffort = "max"\n')
-        code, out, err = self.show("roles")
-        self.assertEqual((code, out), (2, ""))
-        self.assertTrue(
-            err.startswith('error: role manager, provider codex: the model "gpt-5.5" does not accept the effort "max"; '),
-            err,
-        )
-        self.assertEqual(err.count("\n"), 1)
-        self.assertEqual(self.show("roles", "--json")[:2], (2, ""))
-        # The roles group itself is sound, so a key inside it still prints.
-        self.assertEqual(self.show("roles.manager.effort"), (0, 'roles.manager.effort = "max"  (user)\n', ""))
-
-    def test_other_lookups_open_neither_role_files_nor_dictionaries(self) -> None:
-        self.write(self.user_file, '[process]\ndocs_dir = "notes"\n')
-        for argv in (("process",), ("memory",), ("roles.max_parallel_coders",), ("roles.coder",)):
-            with self.subTest(argv=argv):
-                with mock.patch.object(tomlio, "load", wraps=tomlio.load) as load:
-                    self.assertEqual(self.show(*argv)[0], 0)
-                self.assertEqual({call.args[0] for call in load.call_args_list}, {self.defaults_file, self.user_file})
-        with mock.patch.object(tomlio, "load", wraps=tomlio.load) as load:
-            self.show("roles")
-        opened = {call.args[0] for call in load.call_args_list}
-        self.assertIn(self.roles_dir / "coder" / "role.toml", opened)
-        self.assertIn(self.codex_dictionary, opened)
-
-
 class UnmatchedTests(support.ScratchCase):
     """Overrides that match nothing are said, as notes, and fail nothing."""
 
@@ -778,7 +528,6 @@ class UnmatchedTests(support.ScratchCase):
     def test_nothing_unmatched_is_no_note(self) -> None:
         self.write(self.user_file, '[roles.coder-hard]\ntier = "frontier"\n[providers.codex.role_models]\nmanager = "gpt-6-sol"\n')
         self.assertEqual(self.notes(), [])
-        self.assertEqual(self.show("roles")[2], "")
 
     def test_a_roles_table_for_an_id_no_definition_has(self) -> None:
         self.write(self.user_file, '[roles.architect]\ntier = "deep"\neffort = "high"\n[roles.coder]\neffort = "high"\n')
@@ -832,38 +581,6 @@ class UnmatchedTests(support.ScratchCase):
             profiles.unmatched(["coder"], ["codex"], {}), []
         )
 
-    def test_show_roles_prints_them_to_stderr_and_exits_with_zero(self) -> None:
-        self.write(self.user_file, '[roles.architect]\ntier = "deep"\n[providers.gemini.tiers]\nfast = "g-1"\n')
-        before = self.show("roles", project=False)
-        self.user_file.unlink()
-        clean = self.show("roles", project=False)
-        self.write(self.user_file, '[roles.architect]\ntier = "deep"\n[providers.gemini.tiers]\nfast = "g-1"\n')
-        code, out, err = before
-        self.assertEqual(code, 0)
-        self.assertEqual(
-            err,
-            f"note: {self.user_file}: roles.architect: no role definition has the id architect, "
-            f"so this override changes nothing; {self.KNOWN}\n"
-            f"note: {self.user_file}: providers.gemini: no provider of this name has a dictionary, "
-            "so this section is not used; providers: claude-code, codex\n",
-        )
-        # Stdout is the settings line that was set, and the same profiles.
-        self.assertEqual(out, clean[1].replace("\n\nresolved", '\nroles.architect.tier = "deep"  (user)\n\nresolved'))
-
-    def test_show_roles_json_carries_them_and_keeps_stderr_empty(self) -> None:
-        self.write(self.project_file, '[roles.architect]\ntier = "deep"\n')
-        code, out, err = self.show("roles", "--json")
-        self.assertEqual((code, err), (0, ""))
-        self.assertEqual(json.loads(out)["notes"], self.notes())
-        self.assertEqual(len(self.notes()), 1)
-
-    def test_other_keys_say_nothing(self) -> None:
-        self.write(self.user_file, '[roles.architect]\ntier = "deep"\n[providers.gemini.tiers]\nfast = "g-1"\n')
-        for argv in ((), ("roles.architect",), ("providers",), ("process",)):
-            with self.subTest(argv=argv):
-                self.assertEqual(self.show(*argv)[2], "")
-                self.assertNotIn("notes", json.loads(self.show(*argv, "--json")[1]))
-
 
 class RepositoryTests(support.ScratchCase):
     """The repository's own roles on its own dictionaries. Subset checks
@@ -899,22 +616,6 @@ class RepositoryTests(support.ScratchCase):
                     self.assertEqual((item.tier.layer, item.model_layer), ("role", "role"))
                     self.assertFalse(item.explicit_model)
         self.assertEqual(len(found.profiles), len({item.definition for item in found.profiles}) * len(providers))
-
-    def test_show_roles_runs_on_the_repository(self) -> None:
-        code, out, err = self.show_repository("roles")
-        self.assertEqual((code, err), (0, ""))
-        lines = out.splitlines()
-        split = lines.index("")
-        self.assertTrue(all(line.startswith("roles.") for line in lines[:split]))
-        profile_lines = lines[split + 2:]
-        self.assertEqual(len(profile_lines) % 2, 0)
-        for definition in self.EXISTING:
-            for provider in ("claude-code", "codex"):
-                with self.subTest(definition=definition, provider=provider):
-                    self.assertTrue(any(line.startswith(f"{definition} @ {provider}: model = ") for line in profile_lines))
-        report = json.loads(self.show_repository("roles", "--json")[1])
-        self.assertLessEqual(set(self.EXISTING), set(report["profiles"]))
-        self.assertEqual(report["notes"], [])
 
 
 if __name__ == "__main__":

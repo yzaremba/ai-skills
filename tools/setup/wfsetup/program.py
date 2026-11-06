@@ -11,6 +11,10 @@ into a project.
              [--manager-default | --no-manager-default] [--high-stakes |
              --no-high-stakes] [--max-parallel-coders N] [--memory-dir DIR]
              [--codex-settings off|on|profile] [--worktree-root DIR]
+    setup.py --check [DIR] [--json] [--home DIR] [--only NAME]... [--skip NAME]...
+             [--no-versions] [--no-collab] [--codex-probe]
+    setup.py --uninstall [DIR] [--home DIR] [--dry-run] [--json]
+             [--follow-config-symlinks] [--keep-settings | --discard-backups [--yes]]
 
 Without DIR the run is about this machine's homes, the Claude Code home and
 the Codex home that are installed. With DIR it is about the project at DIR
@@ -45,7 +49,7 @@ an installed provider's tier or effort mapping, a run adds the mapping at its
 end, its lines as they are, after a backup, with no --rewrite-settings.
 
 In this order: the clone's sources are checked (the check that
-tools/setup/validate.py will run alone), and any problem stops the run; the
+tools/setup/validate.py runs alone), and any problem stops the run; the
 homes are found, a provider named by --provider counting as installed; on a
 Windows machine a clone off a local drive stops the run, and on a machine
 with a Windows side and a WSL side a clone the Windows side cannot read gives
@@ -443,7 +447,7 @@ With on, the settings the framework needs on Codex go into those blocks:
       would do. A default_permissions the file already sets, and a profile
       named "workflow" of your own, are reported and left alone. An earlier
       block that defines the profile with no default_permissions beside it
-      is an error of "doctor --only codex-settings"; a run with on takes
+      is an error of "setup.py --check --only codex-settings"; a run with on takes
       the profile out of it.
     - The Manager's pin: where the Manager is installed for Codex as a
       loadable role, model and model_reasoning_effort, its resolved Codex
@@ -459,7 +463,7 @@ the root of an item that is on, and is an error while the item is off. The
 file is backed up before it is changed, under ~/.agents/workflow-setup/
 backups/. A file that is not valid TOML is refused by the position of the
 fault alone. A block edited by hand is kept and reported, with exit code 3.
-"doctor --only codex-settings" says, without writing, what a run would do now.
+"setup.py --check --only codex-settings" says, without writing, what a run would do now.
 
 Options:
 
@@ -533,6 +537,463 @@ key or block that was edited by hand was kept, or a path was skipped that
 --follow-config-symlinks would write; 130 when interrupted, and 128 plus the
 signal's number when told to end by a signal; 141 when the reader of the
 output went away.
+
+--check. Check an install: the clone's sources, what setup wrote in the homes and,
+with DIR, in a project, and the providers themselves. Only the options below
+are taken with it: --yes, --dry-run and the options that give a value are
+refused.
+
+    setup.py --check [DIR] [--json] [--home DIR]
+             [--only NAME]... [--skip NAME]...
+             [--no-versions] [--no-collab] [--codex-probe]
+
+Setup itself writes nothing, anywhere: no file of a home, a project or the
+clone, no install record, no state directory. A credentials file is never
+opened.
+
+Four checks start a program of a provider, and such a program may write
+state of its own into its own home when it starts (Codex: its databases, an
+installation id, its bundled skills). They are models, versions, discovery
+and collaboration-skill, left out with --skip models, --no-versions,
+--skip discovery and --no-collab; with all four the run starts no program.
+With --home DIR every program is pointed at DIR and its provider homes, and
+never reads or writes the real ones. The first line of the output says
+which of the four ran.
+
+Each check has a name and gives findings, each with a severity and one line:
+
+    error     something is wrong and needs doing; the exit code is 1
+    warning   something to look at; the exit code stays 0
+    info      a fact, or why a check could not be made (a provider that is
+              not installed, a home setup never ran on)
+    ok        the check found nothing
+
+The checks, in the order they run:
+
+    sources              the clone's sources, as `validate.py` checks them: each
+                         problem is an error. Role sizes are info.
+    drift                a generated file (a role definition, a loaded role,
+                         a Codex profile; in a project its definitions, the
+                         starting role's keys, "agent" and "effortLevel" in
+                         .claude/settings.json, and its block; its links and
+                         rule copies whose unit left the project's list)
+                         made from other sources or settings than today's,
+                         and one that the install would no longer make:
+                         warnings. Run setup.py. Also, as warnings and in
+                         a project only, what you are to do by hand: setup's
+                         old block in the project's .gitignore, its old
+                         block in a .codex/config.toml that git tracks,
+                         and that setup writes nothing into a tracked
+                         .codex/config.toml, so that Codex sessions in the
+                         project will not start as the Manager.
+    hand-edits           a generated file whose content is not what setup
+                         wrote, and a block or a key setup wrote that was
+                         changed since: warnings. The install keeps such a thing
+                         and reports it; `setup.py --overwrite-edited` backs
+                         it up and replaces it.
+    missing              what the install record lists and is gone from
+                         disk: an error. What the install would create now and
+                         the record does not list: a warning, and info on a
+                         home (or a project) that was never installed, and
+                         for the generated files of a home whose `install`
+                         lacks `roles`. Roles left out of the home's
+                         `install` are an info line that names the file:
+                         nothing of them is then missing, and what an
+                         earlier run generated is reported by drift as
+                         the install would no longer make it.
+                         Something at a path where the install would
+                         install, which setup did not make: an error, since
+                         the install stops on it. With DIR: a unit of the
+                         project's list (install, and the units it
+                         needs) that is in neither the project nor the home:
+                         a warning, as for any other thing the install would
+                         create now; and the faults of the project's lists,
+                         with their file.
+    links                a link the record lists that is missing, is no
+                         longer a link, leads elsewhere than setup pointed
+                         it, leads to something that does not exist (a moved
+                         or removed clone), or resolves outside the clone:
+                         errors. A project's link is told by where it
+                         leads, as the install tells it: the other side's link
+                         with its own text or form, and one made by hand
+                         that the install took over, are not reported.
+    duplicate-skills     a skill name setup installs that is also in another
+                         skill location of the same provider, with both
+                         paths: a warning. For Codex the deprecated
+                         <codex home>/skills, which it still reads, and it
+                         does not merge two skills of one name; with
+                         a DIR the project's .claude/skills and
+                         .agents/skills. A project's link the record holds
+                         is not reported here: `links` and `drift` judge it.
+    other-clones         a link in a skills or rules directory, or in the
+                         record, that leads into another clone of this
+                         repository, and a clone inside a skills directory:
+                         warnings. The collaboration skill linked from
+                         another clone is info: it runs from the development
+                         clone by intent. A clone is told by what it holds
+                         (tools/setup/setup.py and roles/); git is
+                         not run.
+    clone                whether both sides of the machine can read the clone
+                         this runs from: a warning, with one line, where the
+                         Windows side cannot read it; not asked with --home
+                         on WSL or on a Linux with no Windows side. On
+                         Windows, a clone off a local drive is the same
+                         warning, with --home as well.
+    models               each installed provider's own model list beside its
+                         mapping: an effort a definition resolves to that
+                         the list does not give its model is an error; a
+                         mapped model that is not in the list, or listed as
+                         hidden, or with other efforts than the dictionary
+                         has, a warning; a list that cannot be read, a
+                         warning with the reason. Claude Code has no list:
+                         info. This starts the provider's list command
+                         (`codex debug models`); --skip models leaves the
+                         check out.
+    versions             `<program> --version` of each installed provider: a
+                         version newer than the one its dictionary was
+                         checked on, or older than the oldest supported, or
+                         one that cannot be read, is a warning.
+                         --no-versions leaves the check out.
+    codex-settings       keys of the user's Codex config.toml, each with its
+                         value or as unset:
+                         agents.max_concurrent_threads_per_session (below 8
+                         is a warning),
+                         features.multi_agent_v2.min_wait_timeout_ms, the
+                         wait floor (below 300000 is a warning), with
+                         default_wait_timeout_ms and max_wait_timeout_ms of
+                         that table where they are set (an order Codex
+                         refuses, min <= default <= max broken, is a
+                         warning), sandbox_mode (while it is set Codex
+                         uses it and ignores default_permissions: info) and
+                         default_permissions. No other key is read out of
+                         the file (but project_doc_max_bytes, for the check
+                         instruction-files, and model and
+                         model_reasoning_effort, the Manager's pin below)
+                         and no other value is printed.
+                         A file that cannot be read is a warning that says
+                         where the fault is, not what the line holds. Then,
+                         as info:
+                         whether the blocks `setup.py --codex-settings`
+                         writes are in the file and as setup wrote them, by
+                         the install record; and what that command would do
+                         now and would leave to you (a limit you set
+                         yourself; an [agents] table it cannot add to, with
+                         the line to add; a features.multi_agent_v2 of
+                         yours, with whether its floor is met and the lines
+                         to add; no permission profile while
+                         sandbox_mode is set, which setup never changes, so
+                         that git commands go through approval one by one).
+                         A block of setup's that defines the profile while
+                         the file sets neither default_permissions nor
+                         sandbox_mode is an error: Codex will not start.
+                         --codex-probe adds the steps of the one Codex
+                         session, started by you, that shows whether this
+                         Codex ignores a `-c default_permissions=...`
+                         override while sandbox_mode is set.
+                         The Manager's pin, model and model_reasoning_effort
+                         in the block at the head: a warning where the block
+                         holds other values than the Manager resolves to
+                         now, or where the file sets either key itself
+                         beside setup's blocks, with the lines to delete.
+    profiles             what the settings set for something that is not
+                         there (a role id no definition has, a provider with
+                         no dictionary): warnings. A key of a settings file
+                         that setup no longer reads, with the key that
+                         replaces it: a warning. A profile that does not
+                         resolve: an error.
+    interrupted-run      an earlier run of setup that was stopped half way:
+                         a warning with the changes found made and those
+                         dropped; the temporary files its record lists, its
+                         lock and what its start left (the next run that
+                         writes removes these); a lock setup cannot judge;
+                         backups under a state directory that no record
+                         lists (setup never removes them by itself;
+                         `setup.py --uninstall --discard-backups` does). A file that
+                         is only named like a temporary of setup's is info:
+                         it is left alone.
+    loaded-skill-size    a loaded role whose skill is estimated over what
+                         Claude Code keeps of a skill after a compaction: a
+                         warning. Codex documents no such cut and its
+                         dictionary names no figure: its sizes are info.
+    instruction-files    with DIR, whether both providers load
+                         DIR/AGENTS.md, where the lesson index of the
+                         project-memory skill is; without it, info.
+                         Claude Code reads AGENTS.md directly only while no
+                         CLAUDE.md, .claude/CLAUDE.md or CLAUDE.local.md is
+                         in DIR or in a directory above it. The user's own
+                         CLAUDE.md, the one that lies in the Claude Code
+                         home, is not one of them; a file elsewhere that is
+                         a link to it is. One of the three with no remedy
+                         is an error. The remedies: a line `@AGENTS.md` in
+                         one of those files, the path relative to the file
+                         (only an import written in the file itself is
+                         seen, and not one in a code block, a code span or
+                         an HTML comment; where that cannot be told, none
+                         is found), or
+                         pluginConfigs."agents-md@builtin".options.instructionFiles
+                         set to "claude-md-and-agents-md" in the user's
+                         settings.json; that one key is read from the file
+                         and nothing else, and Claude Code ignores it in a
+                         project's settings files. Under the id
+                         "cc-plugin-agents-md@builtin" alone the setting is
+                         a warning: Claude Code before 2.1.285 ignores that
+                         id. Two ids with different values are a warning
+                         and no remedy. A file over the 4 MiB above which
+                         Claude Code skips an instruction file is said to
+                         be skipped and is not opened: a warning for a
+                         CLAUDE.md, whose import is then no remedy, an
+                         error for DIR/AGENTS.md. A file over three
+                         quarters of that is a warning. An
+                         AGENTS.override.md in DIR that is not empty is a
+                         warning: Codex takes one file from a directory,
+                         the first that is not empty, and it replaces
+                         AGENTS.md there; an empty one is info. The
+                         instruction files Codex loads (its home's, and
+                         DIR's) over three quarters of its limit together
+                         are a warning: 32 KiB, or project_doc_max_bytes in
+                         the user's config.toml when set. DIR is taken by
+                         its real path.
+    discovery            whether each provider itself lists every skill,
+                         loaded role, role definition and starting role that
+                         is installed. Only a provider's own output counts,
+                         never a model's answer. Each item is proven (the
+                         output lists it: ok, with the command), unproven
+                         (no output that was read could list it) or missing
+                         (an output that should list it was read and does
+                         not: an error); one line gives the count of each.
+                         Unproven items are info, all in one line with the
+                         reason for each.
+                         A file the provider could not load (a definition
+                         that does not parse or lacks a required key, a
+                         skill with no SKILL.md) is an error. No session
+                         with a model is started: Codex's skills, loaded
+                         roles and starting role, by `codex debug
+                         prompt-input`, the same with `--profile <role>`,
+                         and the `skills/list` request of `codex
+                         app-server` (experimental in Codex).
+                         Codex's role definitions and everything on Claude
+                         Code are unproven.
+    collaboration-skill  the state of multiagent-collab, by starting that
+                         skill's own doctor with this interpreter, found
+                         through the link in a provider's skills directory.
+                         Each check it fails is reported with its own
+                         severity: its errors are errors here, its warnings
+                         warnings. A doctor that cannot be started, does not
+                         finish or prints what cannot be read is a warning.
+                         Not installed: info. --no-collab leaves it out.
+
+--only NAME runs the named checks and no other; --skip NAME leaves one out.
+Both may be given more than once. A check that fails by a fault of its own
+is reported as an error finding of its name, and the others still run.
+
+Programs started: the list command of a provider, `<program> --version`, the
+collaboration skill's doctor, and the offline commands of the check
+`discovery`. Each has a fixed argument list, no shell and a time limit. None
+starts a session with a model.
+
+A place whose real path is on the other side of the machine (a link from the
+WSL home into the Windows home, or the reverse) is read where it can be read
+and said to be the other side's.
+
+The output: the findings by check, then one line with the counts by
+severity. With --json one object with the same facts ("checks", each with
+"name", "severity" and "findings"; "not_run"; "counts"; "summary";
+"exit_code").
+
+Exit code 0 when no finding is an error, 1 when one is, and 2 when the
+command itself could not run (a directory that is not there, a name that is
+no check), which is printed to stderr; 130 when interrupted with Ctrl-C, and
+128 plus the signal's number when told to end by a signal (143 for
+SIGTERM); 141 when the reader of the output went away.
+
+--uninstall. Take back what setup installed, in this machine's homes or in one
+project.
+
+    setup.py --uninstall [DIR] [--home DIR] [--dry-run] [--json]
+             [--follow-config-symlinks] [--keep-settings]
+    setup.py --uninstall --discard-backups [--yes] [DIR] [--home DIR] [--dry-run]
+             [--follow-config-symlinks]
+
+Only the options above are taken with it; --keep-settings and
+--discard-backups are for --uninstall alone, and --yes only confirms
+--discard-backups.
+
+What is undone
+    Without DIR: what setup did at the user level, in the providers'
+    homes and in ~/.agents. With DIR: what setup did in that
+    project, and nothing else; the homes stay installed. So one project can
+    be taken out of the framework, and a whole install is taken back by
+    `setup.py --uninstall DIR` for each project and then `setup.py --uninstall`.
+
+    Only what the install record lists is touched, and each entry only
+    while it is still as setup left it:
+
+      - a link is removed if it still points where setup pointed it;
+      - a generated file is removed if it still holds what setup wrote;
+        a Codex profile that also holds what Codex or you added after
+        setup's part (Codex writes your answer to "trust this project?"
+        and flags of its interface there) loses setup's keys and is left
+        holding the rest, as yours;
+      - a file of yours that setup edited gets back, byte for byte, what it
+        held before, if nothing changed it since. If it was changed, setup's
+        blocks and keys are taken out, the lines setup removed are put back
+        where they were, and the rest of the file is left as it is;
+      - what an earlier setup removed and recorded is put back: a file from
+        its backup, a link with its own text and form (one into the clone is
+        put back below where the clone is now), a directory;
+      - setup's block of the repository's exclude file (info/exclude in the
+        git directory) goes with the project's record, while it is as setup
+        wrote it;
+      - a directory setup created is removed once it is empty;
+      - the settings file setup wrote (see "The settings file" below).
+
+    A project's skill links (relative ones included, as one side or the
+    other made them) and its rule copy are removed with the rest of its
+    record, and a link the record lists that is already gone is dropped
+    from the record without a fault. A link you made by hand that setup
+    took over (`setup.py DIR`) stays where it is, and is yours: the
+    output lists it as left. Taking the skill off the project's list
+    removes it; `setup.py --uninstall DIR` does not.
+
+    Nothing else is removed: not the collaboration skill's links, not a
+    settings file you wrote yourself, not a project's own settings file
+    that setup found and did not change.
+
+The settings file
+    No value you set in a settings file is removed by `--uninstall`. The file
+    setup wrote (~/.agents/workflow.toml, or with DIR
+    DIR/.agents/workflow.toml) is
+
+      - removed, when setup created it and it holds exactly what setup
+        wrote from its own answers, with nothing else in it;
+      - replaced, byte for byte, by the file that was there before the
+        first run of setup, when nothing but setup has written it since;
+      - left as it is, and yours from then on, in every other case: you
+        edited it since setup wrote it, or setup rewrote a version you
+        had edited (`--rewrite-settings`, or the same confirmed on
+        the screen), so that it holds values you set. The backups of its
+        earlier versions go with the record, as all backups do: copy one
+        first if you want its comments back.
+
+    A file that is left does not keep the uninstall from finishing. With
+    --keep-settings the file is left in every case. --dry-run says which
+    of the three it would be, and names --keep-settings on the line that
+    would remove or replace the file.
+
+What you had `--overwrite-edited` replace
+    Text of yours between setup's markers, and a value of yours at a key
+    setup sets, that `--overwrite-edited` replaced, is put back
+    where it was when setup's block or key goes: your text takes the place
+    of setup's block, and your value the place of setup's, and the file
+    stays. Where that cannot be done exactly, the backup that holds your
+    text is never removed, its path is printed, and the exit code is 3:
+
+      - a block you edited again is kept as it is, like any edited block,
+        with its record and that backup, until you deal with the block;
+      - where the block or the key is gone, the key has another value
+        again, or setup replaced text of yours at the same place more
+        than once, the backup is taken out of the record and stays in
+        the state directory. See "Backups setup does not remove" for how
+        to clear it once you have what you need from it.
+
+What is kept
+    An entry that was changed since setup made it is kept, with the reason
+    and what to do about it: a link that points elsewhere now, a generated
+    file or a block that was edited by hand, a path where something is
+    again that setup removed (its backup is kept, and its path is printed).
+    A path that is, or lies under, a link is kept unless
+    --follow-config-symlinks is given; where the link leads out of the
+    home (or, for a project, out of the project) or into a clone, it is
+    kept with the option too, since setup writes there under no option.
+    A path of a home whose real place is on the other side of the machine
+    (Windows and WSL) is always kept: this side never writes there.
+    Everything else is still undone.
+
+    Left to you, and no longer setup's to answer for: a directory setup
+    created that holds something of yours, a key of a settings file whose
+    value you changed since setup set it, and the settings file of setup
+    once it holds values you set (above). None of them keeps the uninstall
+    from finishing.
+
+The state
+    Setup keeps its state where the record belongs: in
+    ~/.agents/workflow-setup for the user level, and in
+    DIR/.agents/workflow-setup for a project, each with its record
+    (manifest.json), the backups of the files it replaced or removed
+    (backups/<time of the run>/) and, while a run writes, its lock. A
+    project's state is in the project, whole: undoing a project touches
+    nothing of the home, and undoing the home nothing of a project.
+
+    When every entry was removed or restored, the state goes too: the
+    backups the record lists, the record, and the directories that held
+    them. Nothing of setup's is then left.
+
+    While an entry is kept the state stays, with the record of what was
+    kept and the backups it still needs. Do what the output says for each
+    kept entry (put it back as setup wrote it, or remove it) and run
+    `setup.py --uninstall` again: it finishes the job. The last resort, when an entry
+    cannot be dealt with, is to remove the state directory by hand. What
+    is kept is then yours.
+
+Backups setup does not remove
+    Setup removes a backup only together with the record that lists it. A
+    file under a backups directory that no record lists (the record was
+    removed by hand, or the file was put there by something else) is never
+    removed by a run: it may be the only copy of a file of yours.
+    `--uninstall` then leaves the state directory, names the files, and ends
+    with 3. Look at them, and when you need none of them:
+
+        setup.py --uninstall --discard-backups [DIR]
+
+    lists the backups that no record lists and removes them after you
+    confirm (or with --yes; --dry-run only lists). It removes nothing a
+    record lists and undoes nothing.
+
+--dry-run prints what would be removed, restored, left and kept, and
+changes nothing. A second `--uninstall` finds no record, says that there is
+nothing to do, and ends with 0. An interrupted run is
+completed in the record first, as every run is, and then undone.
+
+The whole way back is checked before the first change, so one that is
+refused changes nothing. It is not atomic: if a change fails part way, what
+was undone before it stays undone and the record holds the rest; the error
+says how many changes were made, and running `--uninstall` again goes on. A
+run that fails before its first change (a state directory that cannot be
+written) says that nothing was changed.
+
+The backups are full copies of your files as they were, with everything
+they hold; the ones a record lists are removed with that record.
+
+Known limit. The guards on where setup writes and removes (never inside
+the clone, at a credentials file, or outside the home and the project) hold
+against the disk as the run finds it, not against another program that
+changes the same directories while the run is under way.
+
+One run writes to a home at a time, and one to a project: a second one ends
+at once with exit code 2 and names the run that holds the lock. A run that
+was killed leaves its lock, its unfinished changes and perhaps a file under
+a temporary name that its record lists; the next run that writes clears the
+lock where that process is provably gone (else the message says how),
+settles the changes from the disk, removes those temporary files, and says
+so. A lock taken on another system (a project on a Windows drive, used from
+Windows and from WSL) is never cleared from here: the message names the
+file to remove once no setup run is using the project.
+
+The output: the home or the project, the record, what was removed, what was
+restored, what was left to you, what was kept (each with what it is, why,
+the backup that belongs to it and how to finish), the state, and one line
+that sums it up. With --json one object with the same facts ("scope",
+"removed", "restored", "forgotten", "left", "kept", "plan", "notes",
+"state", "errors", "summary", "exit_code").
+
+Exit code 0 when everything was undone, or there was nothing to do; 3 when
+the rest was done (or, with --dry-run, would be) and something stays that
+you have to deal with: an entry was kept, or the state directory stays for
+backups that no record lists or for something else in it that setup did
+not put there (the output names it); 2 on an error, printed to stderr; 130
+when interrupted with Ctrl-C, and 128 plus the signal's number when told to end by a signal (143
+for SIGTERM): what was undone until then stays undone, and the next run goes
+on; 141 when the reader of the output went away.
 """
 from __future__ import annotations
 
@@ -542,9 +1003,11 @@ import dataclasses
 import json
 import os
 import shlex
+import sys
+from pathlib import Path
 from typing import Any
 
-from . import codexsettings, fileops, gitrepo, homes, locations, paths, render, schema, screen, settings, settingsfile, validate
+from . import codexsettings, doctor, fileops, gitrepo, homes, locations, paths, render, schema, screen, settings, settingsfile, uninstall, validate
 from .errors import SetupError
 
 PROG = "setup.py"
@@ -587,6 +1050,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     settingsfile.add_arguments(parser)
     codexsettings.configure(parser)
+    parser.add_argument(
+        "--check", action="store_true",
+        help="check the clone's sources, what setup installed and the providers, and write nothing; exit code 1 "
+        "on an error. With DIR, the project's checks too. The checks: " + ", ".join(doctor.names()),
+    )
+    parser.add_argument(
+        "--only", action="append", default=[], metavar="NAME",
+        help="for --check: run this check and no other; may be given more than once",
+    )
+    parser.add_argument(
+        "--skip", action="append", default=[], metavar="NAME",
+        help="for --check: leave this check out; may be given more than once",
+    )
+    parser.add_argument(
+        "--uninstall", action="store_true",
+        help="take back what setup installed in this machine's homes, or with DIR in that project; only what is "
+        "still as setup left it. Takes --dry-run, --json, --home, --follow-config-symlinks, --keep-settings and "
+        "--discard-backups",
+    )
+    parser.add_argument(
+        uninstall.KEEP_SETTINGS_OPTION, action="store_true",
+        help="for --uninstall: leave the settings file setup wrote as it is, in every case; it is yours from then "
+        "on. Without it the file is removed, or replaced by the one that was there before setup, only while it "
+        "holds exactly what setup wrote and setup never rewrote a version you had edited; else it is left as well",
+    )
+    parser.add_argument(
+        uninstall.DISCARD_OPTION, action="store_true",
+        help="for --uninstall: undo nothing; list the backups under the state directory that no record lists, and "
+        "remove them after a confirmation (--yes gives it). Setup never removes such a file by itself: it may be "
+        "the only copy of a file of yours",
+    )
     parser.add_argument("--no-versions", action="store_true", help="for --check: do not start `<program> --version`")
     parser.add_argument("--codex-probe", action="store_true", help="for --check: add the Codex probe steps")
     parser.add_argument("--no-collab", action="store_true", help="for --check: leave out the collaboration skill's check")
@@ -619,7 +1113,124 @@ def _old_keys(where: locations.Locations) -> None:
         ])
 
 
+def _refused(args: argparse.Namespace, taken: set[str]) -> list[str]:
+    """The options given that a mode does not take, as they were spelled:
+    ``--no-x`` for an option with a negative form that was given false."""
+    parser = build_parser()
+    defaults = vars(parser.parse_args([]))
+    names = []
+    for name, value in vars(args).items():
+        if name in taken or value == defaults[name]:
+            continue
+        spelled = "--" + name.replace("_", "-")
+        for action in parser._actions:
+            if action.dest == name and isinstance(action, argparse.BooleanOptionalAction):
+                spelled = next(o for o in action.option_strings if o.startswith("--no-") == (value is False))
+        names.append(spelled)
+    return sorted(names)
+
+
+# What a --check run takes; any other option given with it is refused.
+CHECK_OPTIONS = {"project", "check", "json", "home", "only", "skip", "no_versions", "codex_probe", "no_collab"}
+
+
+def _check(args: argparse.Namespace) -> int:
+    """``--check``: the checks of ``doctor.CHECKS``, which write nothing."""
+    refused = _refused(args, CHECK_OPTIONS)
+    if refused:
+        raise SetupError(f"--check writes nothing and takes no {', '.join(refused)}")
+    chosen, left_out = doctor.select(args, only=args.only, skip=args.skip)
+    where = locations.from_args(args, writes=False, project_label="DIR")
+    context = doctor.Context(where, args)
+    found = doctor.report(context, doctor.run(context, chosen), left_out)
+    if args.json:
+        print(json.dumps(found, indent=2, ensure_ascii=False))
+    else:
+        for line in doctor.report_lines(found):
+            print(line)
+    return found["exit_code"]
+
+
+# What an --uninstall run takes; any other option given with it is refused.
+UNINSTALL_OPTIONS = {
+    "project", "uninstall", "json", "home", "dry_run", "follow_config_symlinks", "keep_settings",
+    "discard_backups", "yes",
+}
+
+
+def _uninstall(args: argparse.Namespace) -> int:
+    """``--uninstall``: take back what setup installed, in the homes or in one project."""
+    refused = _refused(args, UNINSTALL_OPTIONS)
+    if refused:
+        raise SetupError(f"--uninstall takes back what setup installed and takes no {', '.join(refused)}")
+    where = locations.from_args(args, project_label="DIR")
+    found = homes.resolve(where)
+    project = where.project is not None
+    if args.discard_backups:
+        return _discard(args, found, project)
+    if args.yes:
+        raise SetupError(f"--yes: only confirms {uninstall.DISCARD_OPTION}; an uninstall asks nothing")
+    outcome = uninstall.execute(
+        found, project=project, dry_run=args.dry_run, follow=args.follow_config_symlinks,
+        keep_settings=args.keep_settings,
+    )
+    if args.json:
+        print(json.dumps(outcome.report, indent=2, ensure_ascii=False))
+    else:
+        for line in uninstall.report_lines(outcome.report):
+            print(line)
+    if outcome.errors:
+        raise SetupError(*outcome.errors)
+    return outcome.code
+
+
+def _discard(args: argparse.Namespace, found: homes.Homes, project: bool) -> int:
+    """``--uninstall --discard-backups``: name the backups no record lists and remove them once confirmed."""
+    for name in ("keep_settings", "json"):
+        if getattr(args, name):
+            raise SetupError(
+                f"{uninstall.DISCARD_OPTION}: is a command of its own; give it without --{name.replace('_', '-')}"
+            )
+
+    def confirm(listed: list[Path]) -> bool:
+        if args.yes:
+            return True
+        if not sys.stdin or not sys.stdin.isatty():
+            raise SetupError(
+                f"{uninstall.DISCARD_OPTION}: needs a confirmation: nothing was removed. Give --yes to remove what "
+                "is listed above"
+            )
+        try:
+            what = "this backup" if len(listed) == 1 else f"these {len(listed)} backups"
+            return input(f"Remove {what} for good? [y/N] (--yes): ").strip().lower() in ("y", "yes")
+        except EOFError:
+            return False
+
+    where = found.project if project else found.home
+    listed = fileops.unlisted_backups(found.roots(), project)
+    if not listed:
+        print(f"nothing to do: no backup under {found.roots().state_dir_of(project)} is unlisted; nothing was changed")
+        return 0
+    print(f"backups of {where} that no record of setup's lists:")
+    for path in listed:
+        print(f"  {path}")
+    if args.dry_run:
+        print("dry run: nothing was removed")
+        return 0
+    removed, done = uninstall.discard(found, project=project, follow=args.follow_config_symlinks, confirm=confirm)
+    print(f"removed: {len(removed)} backup{'' if len(removed) == 1 else 's'}" if done else "nothing was removed")
+    return 0
+
+
 def run(args: argparse.Namespace) -> int:
+    if args.check:
+        return _check(args)
+    if args.uninstall:
+        return _uninstall(args)
+    if args.keep_settings or args.discard_backups:
+        raise SetupError("--keep-settings and --discard-backups are for --uninstall")
+    if args.only or args.skip or args.no_versions or args.codex_probe or args.no_collab:
+        raise SetupError("--only, --skip, --no-versions, --codex-probe and --no-collab are for --check")
     if args.json and not (args.yes or args.dry_run):
         raise SetupError("--json needs --yes or --dry-run: a run that asks questions has no JSON output")
     where = locations.from_args(args, project_label="DIR")
@@ -715,8 +1326,9 @@ def _apply(
             outcome = render.execute(found, sources, args, dry_run=args.dry_run, **options)
             if prepared.kept and outcome.report["summary"].startswith(fileops.UP_TO_DATE):
                 # A settings file was kept: not everything is up to date.
+                outcome.report["plan_empty"] = NOTHING_ELSE
                 outcome.report["summary"] = outcome.report["summary"].replace(
-                    fileops.UP_TO_DATE, "nothing else to do: the rest is up to date", 1
+                    fileops.UP_TO_DATE, NOTHING_ELSE, 1
                 ) + "; the settings file was kept as written or edited by hand"
             if edited is not None:
                 edited[:] = [*by_hand, *outcome.edited]
@@ -734,6 +1346,7 @@ def _apply(
     return render.EXIT_NEEDS_FLAG if prepared.kept and not outcome.code else outcome.code
 
 
+NOTHING_ELSE = "nothing else to do: the rest is up to date"
 COMMIT_MESSAGE = "Set the project's workflow settings"
 
 

@@ -795,7 +795,7 @@ class AdoptedLinkTests(OpsCase):
         ])
         self.adopt()
         self.assertEqual(self.outside_state(), before)
-        self.assertEqual(os.readlink(self.link), self.text)
+        self.assertEqual(os.readlink(self.link).removeprefix("\\\\?\\"), self.text)
         self.assertEqual(
             self.record().get(self.KEY), {"kind": "link", "target": "clone:json-tools", "adopted": True}
         )
@@ -812,11 +812,11 @@ class AdoptedLinkTests(OpsCase):
         result = self.reversal(project=True).apply()
         self.assertIn(f"forget link {self.KEY}, made by hand; it stays, the user's", result.lines)
         self.assertIn(self.KEY, [key for key, _ in result.left])
-        self.assertEqual(os.readlink(self.link), self.text)
+        self.assertEqual(os.readlink(self.link).removeprefix("\\\\?\\"), self.text)
         self.assertIsNone(self.record().get(self.KEY))
         fileops.remove_state(self.roots, project=True)
         self.assertFalse(self.project_state.exists())
-        self.assertEqual(os.readlink(self.link), self.text)
+        self.assertEqual(os.readlink(self.link).removeprefix("\\\\?\\"), self.text)
 
     def test_a_removal_removes_it_and_the_way_back_puts_nothing_back(self) -> None:
         self.adopt()

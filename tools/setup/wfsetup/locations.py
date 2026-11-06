@@ -71,7 +71,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         help="the project whose settings files are read: DIR/.agents/workflow.toml and "
         "DIR/.agents/workflow.local.toml. The project is only ever this directory; it is "
         "not taken from the working directory. Without --project no project file is read. "
-        "An empty DIR is refused. A command that writes (setup.py, render, uninstall) also refuses "
+        "An empty DIR is refused. A command that writes (setup.py, also with --uninstall) also refuses "
         "the home directory itself, a directory that holds the home or the clone, and the clone setup "
         "runs from or a directory inside it",
     )
@@ -99,9 +99,9 @@ def from_args(args: argparse.Namespace, writes: bool = True, project_label: str 
     that is the home, or that is the clone or lies inside it.
 
     ``writes`` is False only for a command that changes nothing in a
-    project (``show``, ``validate``, ``homes``, ``doctor``). Such a command
+    project (``setup.py --check``, ``validate.py``). Such a command
     may be given the clone as its project: the repository is worked on like
-    any project, and a session in it asks ``show`` for its settings.
+    any project.
 
     ``project_label`` is how the project's errors name it: ``--project``,
     or ``DIR`` for the program whose project is its argument.
