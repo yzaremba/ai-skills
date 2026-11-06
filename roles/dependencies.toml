@@ -1,4 +1,4 @@
-# Which skills a skill needs: render installs them where the skill is
+# Which skills a skill needs: setup.py installs them where the skill is
 # installed. The roles' needs are read from bindings.toml and are not
 # written here. Format: README.md, under "dependencies.toml".
 schema_version = 1

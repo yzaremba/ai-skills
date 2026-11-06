@@ -15,8 +15,8 @@ multiagent-collab/                          skill with its own setup; see below
 roles/      README.md  SPECIALISTS.md  bindings.toml  dependencies.toml  _shared/  <role>/ROLE.md  <role>/role.toml
 rules/      avoid-bash-injection-heuristics/    rule, Claude Code only
 providers/  <name>/dictionary.toml  <name>/actions.md   for claude-code and codex
-tools/      setup/            workflow_setup.py  wfsetup/  defaults.toml  tests/
-                              manifest-keys.json  v1-known-hashes.json  build_v1_hashes.py
+tools/      setup/            setup.py  validate.py  wfsetup/  defaults.toml  tests/
+                              manifest-keys.json
             session-profile/  session-record reader and its tests
 docs/       agent-roles-framework.md  v1-to-v2.md
             prd-implementation-slide.html  roles-framework-slide.html   the two slides,
@@ -76,15 +76,15 @@ WFSETUP_TEST_FULL=1 python -B -m unittest discover -s tools/setup/tests -p "test
   output, pinned `-text`. A binary file type gets an explicit `binary` line there.
 - **Paths.** No file holds an absolute path of one machine: no home directory, no
   user name, no drive letter. Use `~`, a path relative to the unit, or a placeholder.
-- **Sources.** `python tools/setup/workflow_setup.py validate` checks every skill, role,
+- **Sources.** `python tools/setup/validate.py` checks every skill, role,
   rule and provider file, a machine path among the faults. Run it after changing one.
 
 ### Setup tool
 
 - **Generated files are never edited.** A role definition, a loaded-role skill or a
-  Codex profile in a provider home, and what `render --project DIR` wrote in a project, are
+  Codex profile in a provider home, and what `setup.py DIR` wrote in a project, are
   made from `roles/`, `providers/` and the settings. Change the source, then run
-  `render`.
+  `python tools/setup/setup.py`.
 - **One write path.** Every change setup makes on a disk goes through
   `tools/setup/wfsetup/fsio.py`; no other module of the package changes the disk, and a
   test reads each module's syntax tree for it.

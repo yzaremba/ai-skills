@@ -48,6 +48,6 @@ Both are changes to a file of the user's or of the project: propose the one that
 
 ## Checking a project
 
-Where the setup tool of this skill's repository is at hand, its `doctor --project <project root>` reports all of this without changing anything: an error where one of the three files is there with neither remedy, a warning for an `AGENTS.override.md` in the project root that is not empty, and a warning when the instruction files a provider loads are over three quarters of its limit.
+Where the setup tool of this skill's repository is at hand, its `setup.py --check <project root>` reports all of this without changing anything: an error where one of the three files is there with neither remedy, a warning for an `AGENTS.override.md` in the project root that is not empty, and a warning when the instruction files a provider loads are over three quarters of its limit.
 
 In a session, the provider shows what it loaded: on Claude Code `/memory` lists the instruction files of the session, `AGENTS.md` among them; on Codex `codex debug prompt-input`, run in the project root, prints the instructions a session would get and starts none.
