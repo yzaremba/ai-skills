@@ -14,7 +14,6 @@ How a command uses it
         entry = sorter.entry(place.path / "json-tools")
         ...                                         # then a fileops.Plan
 
-    homes.report(found)                             # what the homes command prints
     homes.child_environment(found)                  # the environment of a provider's program
 
 Nothing here writes. Nothing here opens a file of a home: a path is looked
@@ -150,7 +149,7 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping
 
 from . import fileops, fsio, gitrepo, paths
 from .errors import SetupError
@@ -198,8 +197,6 @@ LINK_TO_CLONE = "link-to-clone"
 LINK_THIS_SIDE = "link-this-side"
 LINK_OTHER_SIDE = "link-other-side"
 LINK_BROKEN = "link-broken"
-
-REPORT_SCHEMA_VERSION = 1
 
 _OSRELEASE = "/proc/sys/kernel/osrelease"
 _INTEROP = ("/proc/sys/fs/binfmt_misc/WSLInterop", "/proc/sys/fs/binfmt_misc/WSLInterop-late")
@@ -742,98 +739,3 @@ def require_linkable_clone(homes: Homes) -> None:
     real = clone_standing(homes).real
     if not fsio.local_drive_path(str(real)):
         raise SetupError(f"{real}: {WINDOWS_CLONE_LINE}", "nothing was written")
-
-
-# --- The report ---------------------------------------------------------------
-
-def _text(path: Path | None) -> str | None:
-    return None if path is None else str(path)
-
-
-def _listed(standing: Standing, place: Place) -> bool:
-    """Whether the names in a place are listed: a directory of this side.
-    The other side's directory is left to the other side's run. The Codex
-    home itself is not listed: what it holds beside setup's files (sessions,
-    logs, the user's configuration) is no entry setup would make or meet."""
-    return place.directory and standing.writes and place.name != PROFILES
-
-
-def report(homes: Homes) -> dict[str, Any]:
-    """Everything this module knows of a run, as plain data: what the
-    report of the homes that ``--check`` starts from. It reads no file."""
-    sorter = Classifier(homes)
-    clone = clone_standing(homes)
-    providers = []
-    for provider in homes.providers:
-        places = []
-        for place in provider.places:
-            standing = sorter.standing(place.path)
-            entries = []
-            if _listed(standing, place):
-                try:
-                    names = paths.entries(place.path)
-                except SetupError:
-                    names = []
-                for item in names:
-                    if fsio.is_credentials(item):
-                        continue
-                    entry = sorter.entry(item)
-                    entries.append({
-                        "name": item.name, "kind": entry.kind, "target": entry.target,
-                        "real": _text(entry.real), "side": entry.side, "says": entry.describe(),
-                    })
-            try:
-                present = fsio.look(place.path).kind != fsio.ABSENT
-            except SetupError:
-                present = True
-            places.append({
-                "name": place.name, "path": str(place.path), "directory": place.directory,
-                "present": present, "standing": standing.kind, "writes": standing.writes,
-                "side": standing.side, "link": _text(standing.link), "target": standing.target,
-                "real": _text(standing.real), "first": _text(standing.first), "says": standing.describe(),
-                "entries": entries,
-            })
-        providers.append({
-            "name": provider.name, "installed": provider.installed, "program": provider.program,
-            "program_file": provider.program_file, "home": str(provider.home),
-            "home_from": provider.home_from, "home_exists": provider.home_exists,
-            "anchor": provider.anchor, "places": places,
-        })
-    return {
-        "schema_version": REPORT_SCHEMA_VERSION,
-        "side": homes.host.side,
-        "other_side": homes.host.other,
-        "home": str(homes.home),
-        "scratch": homes.scratch,
-        "clone": {"path": str(clone.path), "real": str(clone.real), "shared": clone.shared, "why": clone.why},
-        "providers": providers,
-    }
-
-
-def report_lines(found: dict[str, Any]) -> list[str]:
-    """The report as text, one fact per line."""
-    other = found["other_side"]
-    lines = [
-        f"side: {found['side']}" + (f" (the other side is {other})" if other else " (no other side)"),
-        f"home: {found['home']}" + (" (scratch, --home)" if found["scratch"] else ""),
-    ]
-    clone = found["clone"]
-    shared = {True: "yes", False: "no", None: "not asked"}[clone["shared"]]
-    why = clone["why"].removeprefix("not asked: ")
-    lines.append(f"clone: {clone['real']}")
-    lines.append(f"  shared by both sides: {shared} ({why})")
-    for provider in found["providers"]:
-        program = provider["program_file"] or "not on PATH"
-        there = "exists" if provider["home_exists"] else "does not exist"
-        lines.append("")
-        lines.append(f"{provider['name']}: {'installed' if provider['installed'] else 'not installed'}")
-        lines.append(f"  program {provider['program']}: {program}")
-        anchor = f", anchor {provider['anchor']}:" if provider["anchor"] else ""
-        lines.append(f"  home: {provider['home']} ({provider['home_from']}; {there}{anchor})")
-        for place in provider["places"]:
-            present = "" if place["present"] else " [absent]"
-            lines.append(f"  {place['name']}: {place['path']}{present}")
-            lines.append(f"    {place['says']}")
-            for entry in place["entries"]:
-                lines.append(f"    - {entry['name']}: {entry['says']}")
-    return lines
