@@ -47,7 +47,8 @@ The project (``--project``)
     is setup's again or is no longer wanted.
     Both keys are set, changed and taken out only by a run that changed the
     project's choices (``execute``'s ``project_changed``: ``setup.py DIR``
-    wrote the project's ``.agents/workflow.toml``; the old ``render
+    wrote the project's ``.agents/workflow.toml`` or was given
+    ``--manager-default`` or ``--no-manager-default``; the old ``render
     --project`` always). Any other run leaves them as they are, set or not,
     and what the record holds of them, even where the home's mapping now
     gives the role another effort (R6.1): the file is tracked, and one
@@ -323,6 +324,15 @@ class Outcome:
     errors: list[str] = field(default_factory=list)
     # The project's ``.claude/settings.json`` when this run wrote it (R6.2).
     written: tuple[Path, ...] = ()
+    # The items kept because the user edited them, each as ``(edited_id, text)``:
+    # what the screen asks about (R8.4).
+    edited: tuple[tuple[str, str], ...] = ()
+
+
+def edited_id(path: Path, name: str | None = None) -> str:
+    """How an edited item is named to ``Run``'s ``overwrite``: its path, and
+    for a key or a block the name in it."""
+    return str(path) if name is None else f"{path}#{name}"
 
 
 _fold = paths.fold_key
@@ -333,12 +343,15 @@ class Run:
     and the plan the parts fill."""
 
     def __init__(self, found: homes.Homes, sources: Sources, options: Any = None, *, follow: bool = False,
-                 overwrite: bool = False, stamp: str | None = None, project_changed: bool = True) -> None:
+                 overwrite: bool | frozenset[str] | set[str] = False, stamp: str | None = None,
+                 project_changed: bool = True) -> None:
         self.homes = found
         self.sources = sources
         self.options = options
         self.follow = follow
-        self.overwrite = overwrite
+        # True: every edited item may be replaced (``--overwrite-edited``); a
+        # set: the items whose ``edited_id`` it holds (the screen's answers).
+        self._overwrite = overwrite
         # Whether the project's choices changed in this run; while they did
         # not, the two keys of ``.claude/settings.json`` are left (R6.1).
         self.project_changed = project_changed
@@ -450,6 +463,13 @@ class Run:
         """Say that the project holds something of setup's, so its ignore
         block is kept even when no generated file is listed in it."""
         self._ignore_always = True
+
+    def overwrite(self, path: Path, name: str | None = None) -> bool:
+        """Whether the edited item at ``path`` (a key or a block: ``name`` in
+        it) may be backed up and replaced."""
+        if isinstance(self._overwrite, bool):
+            return self._overwrite
+        return edited_id(path, name) in self._overwrite
 
     def link(self, provider: homes.Provider, place: homes.Place, name: str, target: Path,
              own_setup: bool = False, relative: bool = False) -> Item:
@@ -679,7 +699,7 @@ class Run:
         elif there == data:
             settle(UP_TO_DATE, "as generated")
         elif fsio.sha256(there or b"") != (base or {}).get("sha256"):
-            if not self.overwrite:
+            if not self.overwrite(path):
                 return settle(
                     EDITED,
                     f"edited by hand since setup wrote it, and kept; {OVERWRITE_OPTION} backs it up and replaces "
@@ -715,7 +735,7 @@ class Run:
                 else:
                     item.status, item.says = UPDATE, f"write again: its sources or settings changed{kept}"
                 return whole, fileops.OWN
-            if not self.overwrite:
+            if not self.overwrite(item.path):
                 item.status, item.says = EDITED, (
                     f"edited by hand since setup wrote it, and kept; {OVERWRITE_OPTION} backs it up and replaces "
                     "it, keeping every key of it that is not setup's, or remove the file and run render again"
@@ -806,7 +826,7 @@ class Run:
                 item.says = f"is {shown}" + ("" if known is not None else ", set by you; it stays yours")
             elif name in current and known is not None and not jsonkeys.same(current[name], known.get("value")):
                 was = json.dumps(current[name], ensure_ascii=False)
-                if not self.overwrite:
+                if not self.overwrite(path, name):
                     item.status = EDITED
                     item.says = (
                         f"changed by hand since setup set it (it is {was}, setup set {shown}), and kept; "
@@ -817,7 +837,7 @@ class Run:
             elif name in current and known is None:
                 # A value setup did not write: the user's, until they say otherwise.
                 was = json.dumps(current[name], ensure_ascii=False)
-                if not self.overwrite:
+                if not self.overwrite(path, name):
                     item.status = EDITED
                     item.says = (
                         f"is {was}, which setup did not set, and kept: setup does not replace a value of yours, so "
@@ -896,7 +916,7 @@ class Run:
         elif there is None:
             item.says = f"write, at the {'head' if place == fileops.HEAD else 'end'} of the file"
         elif known is not None and not blocks.as_written(data, there, known.get("sha256")):
-            if not self.overwrite:
+            if not self.overwrite(path, name):
                 item.status = EDITED
                 item.says = (
                     f"edited by hand since setup wrote it, and kept; {OVERWRITE_OPTION} backs the file up and "
@@ -908,7 +928,7 @@ class Run:
         elif known is None:
             # Setup's markers with other text between them than setup would
             # write, and no record of the block: the user's text.
-            if not self.overwrite:
+            if not self.overwrite(path, name):
                 item.status = EDITED
                 item.says = (
                     "setup's markers are in the file with other text between them than setup writes, and the "
@@ -1121,7 +1141,7 @@ class Run:
                 note += f"; the block the record lists in {fileops.GIT_INFO_EXCLUDE} is left as it is"
             self.notes.append(f"project: {note}")
             return
-        self.plan.ignore(exclude, add=add, remove=remove, replace=fileops.ANY if self.overwrite else fileops.OWN)
+        self.plan.ignore(exclude, add=add, remove=remove, replace=fileops.ANY if self.overwrite(exclude) else fileops.OWN)
 
     def codex_tracked(self, path: Path) -> bool | None:
         """Whether git tracks the project's ``.codex/config.toml`` (R6.4):
@@ -1732,7 +1752,7 @@ def _keys_left(run: Run, project: Path) -> None:
     run.notes.append(
         f"{entry.CLAUDE_SETTINGS}: {entry.AGENT_KEY} and {entry.EFFORT_KEY} are left as they are, and so is what "
         f"the record holds of them: this run did not write {_locations(run, project).project_file}, and only a run that "
-        f"writes it sets, changes or removes them"
+        f"writes it, or one given --manager-default or --no-manager-default, sets, changes or removes them"
     )
 
 
@@ -1871,7 +1891,7 @@ PARTS: tuple[Part, ...] = (
 # --- The run --------------------------------------------------------------------
 
 def execute(found: homes.Homes, sources: Sources, options: Any = None, *, dry_run: bool = False,
-            follow: bool = False, overwrite_edited: bool = False, parts: tuple[Part, ...] | None = None,
+            follow: bool = False, overwrite_edited: bool | frozenset[str] | set[str] = False, parts: tuple[Part, ...] | None = None,
             stamp: str | None = None, clone_warning: str | None = None, project_changed: bool = True) -> Outcome:
     """Fill one plan from the parts, then show it (``dry_run``) or apply it.
     The sources are valid and the clone was checked before this is called;
@@ -1915,7 +1935,13 @@ def execute(found: homes.Homes, sources: Sources, options: Any = None, *, dry_ru
         path = found.project / entry.CLAUDE_SETTINGS
         if _bytes_of(path) != before:
             written.append(path)
-    return Outcome(report, code, errors, tuple(written))
+    named = (KEY, BLOCK, codexsettings.KIND)    # the kinds named inside a file
+    edited = tuple(
+        (edited_id(item.path, item.name if item.kind in named else None),
+         str(item.path) if item.kind not in named else f"{item.name} in {item.path}")
+        for item in run.items if item.status == EDITED
+    )
+    return Outcome(report, code, errors, tuple(written), edited)
 
 
 def _bytes_of(path: Path) -> bytes | None:

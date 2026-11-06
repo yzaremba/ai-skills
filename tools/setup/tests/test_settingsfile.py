@@ -572,6 +572,67 @@ class AgainTests(SettingsCase):
         self.assertEqual(self.user_file.read_text(encoding="utf-8"), self.HAND_WRITTEN)
         self.assertFalse((self.home / ".agents" / "workflow-setup").exists())
 
+    def appended(self) -> str:
+        return self.user_file.read_text(encoding="utf-8")
+
+    def test_yes_alone_adds_the_mappings_of_a_hand_written_file_at_its_end(self) -> None:
+        self.write(self.user_file, self.HAND_WRITTEN)
+        out = self.ok("--yes")
+        self.assertIn("its lines are kept as they are; the mapping of claude-code, codex is added at its end", out)
+        self.assertNotIn("--rewrite-settings", out)
+        text = self.appended()
+        self.assertTrue(text.startswith(self.HAND_WRITTEN + "\n[providers."), text)
+        self.assertEqual(self.data()["providers"], PINNED)
+        self.assertEqual(self.data()["process"], {"docs_dir": "sprints"})
+        backups = list(self.backups.rglob("workflow.toml"))
+        self.assertEqual([file.read_text(encoding="utf-8") for file in backups], [self.HAND_WRITTEN])
+        before = self.tree()
+        self.assertIn("nothing to write", self.ok("--yes"))
+        self.assertEqual(self.tree(), before)
+        # A later change still asks for the option.
+        self.assertIn("--rewrite-settings", self.refused("--yes", "--memory-dir", "notes"))
+
+    def test_a_dry_run_says_the_same_without_the_option_note(self) -> None:
+        self.write(self.user_file, self.HAND_WRITTEN)
+        out = self.ok("--yes", "--dry-run")
+        self.assertIn("its lines are kept as they are", out)
+        self.assertNotIn("--rewrite-settings", out)
+        self.assertEqual(self.appended(), self.HAND_WRITTEN)
+
+    def test_a_final_line_break_is_added_where_the_file_has_none(self) -> None:
+        self.write(self.user_file, "# mine\n[process]\ndocs_dir = \"sprints\"")
+        self.ok("--yes")
+        self.assertTrue(self.appended().startswith("# mine\n[process]\ndocs_dir = \"sprints\"\n\n[providers."))
+
+    def test_a_dotted_key_or_a_short_table_stops_as_before(self) -> None:
+        for text in (
+            'providers.claude-code.tiers.fast = "haiku"\n',
+            '[providers.claude-code.tiers]\nfast = "haiku"\n',
+        ):
+            self.write(self.user_file, text)
+            err = self.refused("--yes")
+            self.assertIn("--rewrite-settings", err)
+            self.assertEqual(self.appended(), text)
+
+    def test_a_file_setup_wrote_is_rewritten_for_a_second_provider(self) -> None:
+        both = settingsfile.dictionary.load_all
+        with mock.patch.object(settingsfile.dictionary, "load_all",
+                               lambda where: {k: v for k, v in both(where).items() if k == "claude-code"}):
+            self.ok("--yes", "--memory-dir", "notes")
+        self.assertEqual(sorted(self.data()["providers"]), ["claude-code"])
+        out = self.ok("--yes")
+        self.assertNotIn("its lines are kept", out)
+        self.assertEqual(self.data()["providers"], PINNED)
+        self.assertTrue(self.appended().startswith("# Workflow settings: "))
+
+    def test_a_file_in_the_form_init_wrote_takes_a_change_without_the_option(self) -> None:
+        old = lambda scope: ["Workflow settings: the user layer (~/.agents/workflow.toml).", "Written by setup."]
+        with mock.patch.object(settingsfile, "_header", old):
+            self.ok("--yes", "--memory-dir", "memory")
+        self.assertNotIn("Layers, later wins", self.appended())
+        self.ok("--yes", "--memory-dir", "notes")
+        self.assertEqual(self.data()["memory"], {"dir": "notes"})
+
     def test_with_the_option_it_is_rewritten_after_a_backup(self) -> None:
         self.write(self.user_file, self.HAND_WRITTEN)
         out = self.ok("--yes", "--rewrite-settings", "--memory-dir", "notes")
@@ -693,7 +754,7 @@ class ProjectTests(SettingsCase):
 
     def test_a_project_dry_run_writes_nothing(self) -> None:
         before = self.tree()
-        out = self.ok("--yes", "--dry-run", project=True)
+        out = self.ok("--yes", "--dry-run", "--docs-dir", "sprints", project=True)
         self.assertIn("create file project:.agents/workflow.toml", out)
         self.assertEqual(self.tree(), before)
 

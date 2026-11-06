@@ -465,9 +465,17 @@ def home_selection(where: Locations, skills: Iterable[str]) -> Selection:
     every = units(where, skills)
     found = home_install(where)
     names = _install_names(found, every) if found is not None else []
+    return select(where, names, every)
+
+
+def select(where: Locations, names: Iterable[str], every: set[str], roles_bind: bool = True) -> Selection:
+    """The units the item ``names`` install, closed as ``home_selection``
+    says; ``every`` are ``units``. ``roles_bind`` is False where ``roles``
+    adds nothing (a project)."""
+    names = list(names)
     chosen = {name for name in names if name != schema.ROLES_ITEM}
     first: dict[str, list[str]] = {}
-    if schema.ROLES_ITEM in names:
+    if roles_bind and schema.ROLES_ITEM in names:
         for name in sorted(bound_skills(where) & every - chosen):
             first[name] = [ROLES_NEED]
     return _close(chosen, first, every, where)

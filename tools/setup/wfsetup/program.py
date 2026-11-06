@@ -40,7 +40,9 @@ and under the same lock as the install; --dry-run shows both plans and
 writes neither. A file that was written or edited by hand is rewritten from its
 values (every key kept, comments and layout not) only with --yes together
 with --rewrite-settings, after a backup of it; a file that holds an old key
-stops the run, and the file written holds none.
+stops the run, and the file written holds none. Where such a file lacks only
+an installed provider's tier or effort mapping, a run adds the mapping at its
+end, its lines as they are, after a backup, with no --rewrite-settings.
 
 In this order: the clone's sources are checked (the check that
 tools/setup/validate.py will run alone), and any problem stops the run; the
@@ -53,10 +55,28 @@ nothing. Applying it is not atomic: if a change fails part way, the changes
 before it stay and are recorded, the error says how many, and the next run
 goes on from there.
 
-Nothing asks a question yet: a run applies with --yes, or shows its plan
-with --dry-run and writes nothing, and without either stops and names --yes.
-A key that a settings file still holds under an old name stops the run, with
-the key, its file and what replaces it, and nothing is written.
+Without --yes and --dry-run, on a terminal, setup shows one numbered screen:
+where the run is about (this machine, or the project), the items to install,
+for a project whether its sessions start as the Manager, the process and
+memory settings, the roles settings, each installed provider's tiers and
+efforts, and for this machine the Codex config item, each with its value
+now and the layer and file it comes from. Enter shows the plan, file by file,
+and asks "Apply? [Y/n]": n ends the run with exit code 1 and writes nothing.
+Numbers (3 5) open those options and show the screen again; r and numbers
+(r 3 5) take those keys out of the file the run writes, so that the layer
+below gives them again. A value changed there is written, a value accepted as
+shown is not. An old key is named on the screen with what replaces it, and
+the settings file the run writes does not hold it. The items line asks for
+a checklist of the clone's skills, the rule and `roles` (a needed item ticked and marked, and held ticked while what needs it is; on a project's screen the home's items marked "from this machine" and held ticked) and the Codex item for off, on or on with the profile, then the worktree
+root. A generated file, key or block edited by hand since setup wrote it is
+asked about when the plan is made ("replace, after a backup? [y/N]"), and the
+plan is made again with the answers; one not replaced is kept and reported,
+with exit code 3. A run
+is applied with --yes, or shows its plan with --dry-run and writes nothing;
+without either and without a terminal it stops and names --yes. An
+unattended run (--yes, --dry-run or no terminal) that finds a key a settings
+file holds under an old name stops, with the key, its file and what replaces
+it, and nothing is written.
 
 What is installed, for each provider that is installed (its program is on
 PATH, or its home exists, or --provider names it); a provider that is not
@@ -203,7 +223,8 @@ workflow.toml and workflow.local.toml over the user's):
       whatever it starts as, and it wins over a level saved in the user's
       own settings; --effort and /effort win over it. The two keys are
       set, changed and taken out only by a run that writes DIR/.agents/
-      workflow.toml, as a flag that changes a value of it does. Any other
+      workflow.toml, as a flag that changes a value of it does, or one given
+      --manager-default or --no-manager-default. Any other
       run, a refresh, leaves them as they are, set or not, with what the
       install record holds of them, even where the home's mapping now gives
       the role another effort, and a note says so: .claude/settings.json is
@@ -257,8 +278,9 @@ Turning roles.manager_default off, removing an override, or taking `roles`
 out of the home's `install` makes what an earlier run wrote for it stale: the
 next run with DIR removes it, and a directory setup created that this leaves
 empty. The two keys of .claude/settings.json go only with a run that writes
-DIR/.agents/workflow.toml (--no-manager-default does); any other run leaves
-them.
+DIR/.agents/workflow.toml, or one given --manager-default or
+--no-manager-default (even where the file already holds that value); any
+other run leaves them.
 
 The roles are an item of `install`. They are on when the home's effective
 `install` (~/.agents/workflow.toml over the shipped one) holds `roles`. When
@@ -274,7 +296,8 @@ when the home's roles go off, a project set up with roles keeps what setup
 wrote there (the starting role of roles.manager_default, which names a
 definition the home no longer has, and its own definitions) until a run with
 that DIR takes them out; the starting role's keys in .claude/settings.json,
-until a run with that DIR writes its .agents/workflow.toml.
+until a run with that DIR writes its .agents/workflow.toml or is given
+--manager-default or --no-manager-default.
 
 A provider that is installed and has no dictionary in the clone, or a
 profile that names an effort its model does not accept, stops the run before
@@ -459,7 +482,8 @@ Options:
     --overwrite-edited      replace a generated file, a key or a block that
                             was edited by hand since setup wrote it, after a
                             backup of the file. Without it such a thing is
-                            kept and reported, with exit code 3
+                            kept and reported, with exit code 3;
+                            on the screen each one is asked about instead
     --home DIR              use DIR in place of the user's home directory
                             (for trial runs): the providers' homes are then
                             DIR/.claude and DIR/.codex
@@ -520,7 +544,7 @@ import os
 import shlex
 from typing import Any
 
-from . import codexsettings, fileops, gitrepo, homes, locations, paths, render, schema, settings, settingsfile, validate
+from . import codexsettings, fileops, gitrepo, homes, locations, paths, render, schema, screen, settings, settingsfile, validate
 from .errors import SetupError
 
 PROG = "setup.py"
@@ -533,7 +557,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     # ``dest="project"``: ``locations.from_args`` reads the project from there.
     parser.add_argument("project", metavar="DIR", nargs="?", help="the project to set up as well as the homes")
-    parser.add_argument("--yes", action="store_true", help="apply the plan with no question")
+    parser.add_argument("--yes", action="store_true", help="apply the plan with no question (without it, on a terminal, a screen asks)")
     parser.add_argument("--dry-run", action="store_true", help="print what would be changed, and change nothing")
     parser.add_argument("--json", action="store_true", help="print one JSON object; needs --yes or --dry-run")
     parser.add_argument(
@@ -544,7 +568,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         render.OVERWRITE_OPTION, action="store_true",
         help="replace a generated file, a key or a block that was edited by hand since setup wrote it, after a "
-        "backup of the file. Without it such a thing is kept and reported, with exit code 3",
+        "backup of the file. Without it such a thing is kept and reported, with exit code 3; on the screen "
+        "each one is asked about instead",
     )
     parser.add_argument(
         "--home", metavar="DIR",
@@ -603,20 +628,44 @@ def run(args: argparse.Namespace) -> int:
         # file and the install: absolute, no link followed (as homes.resolve).
         where = dataclasses.replace(where, project=paths.absolute(where.project))
     sources = validate.require(where)
-    # An old key stops every run for now: the screen that would name it and
-    # rewrite the file comes with Phase 5.
-    _old_keys(where)
-    if not (args.yes or args.dry_run):
+    if args.yes or args.dry_run:
+        # An old key stops an unattended run (R10.2).
+        _old_keys(where)
+        return _apply(args, where, sources)
+    if not screen.terminal():
+        _old_keys(where)
         raise SetupError(
-            "nothing is applied without --yes (the screen that asks is not available yet): "
-            "pass --yes to apply the plan, or --dry-run to see it"
+            "nothing is applied without --yes, and standard input is not a terminal, so the screen that asks "
+            "is not shown: pass --yes to apply the plan, or --dry-run to see it"
         )
+    found = _found(args, where)
+    return screen.run(
+        args, where, found, lambda given, edited=None: _apply(given, where, sources, drop_old=True, edited=edited),
+        sources.skills,
+    )
+
+
+def _found(args: argparse.Namespace, where: locations.Locations) -> homes.Homes:
     found = _with_named_providers(homes.resolve(where), args.provider)
     if not found.installed():
         raise SetupError(
             "no provider to install for: neither claude nor codex is on PATH and neither home exists. "
             f"Name one with {PROVIDER_OPTION} claude-code or {PROVIDER_OPTION} codex"
         )
+    return found
+
+
+def _apply(
+    args: argparse.Namespace, where: locations.Locations, sources: Any, *, drop_old: bool = False,
+    edited: list[tuple[str, str]] | None = None,
+) -> int:
+    """Plan and apply (or, with --dry-run, show) the run. ``drop_old``: the
+    screen's, which names an old key and writes the settings file without it.
+    ``edited``: the screen's list, which gets each item kept for an edit of
+    the user's, as ``(id, text)``, and a settings file written by hand that the
+    plan would rewrite (``settingsfile.HAND_ID``, R4.3); ``args.overwrite_edited`` may be the set of
+    ids to replace."""
+    found = _found(args, where)
     homes.require_linkable_clone(found)
     codexsettings.preflight(found, args)
     # One run holds the lock of the home, and of the project, throughout: the
@@ -630,14 +679,16 @@ def run(args: argparse.Namespace) -> int:
         )
     )
     with held:
-        prepared = settingsfile.prepare(where, found, args, dry_run=args.dry_run)
+        prepared = settingsfile.prepare(where, found, args, dry_run=args.dry_run, drop_old=drop_old)
         content = {prepared.target: prepared.data} if prepared.data is not None else {}
+        by_hand = [(settingsfile.HAND_ID + str(prepared.target), str(prepared.target))] if prepared.by_hand else []
         options = dict(
             follow=args.follow_config_symlinks, overwrite_edited=args.overwrite_edited,
             clone_warning=homes.clone_warning(found),
             # The project's keys in .claude/settings.json move only with
             # its settings file (R6.1); a dry run shows the write it plans.
-            project_changed=found.project is not None and prepared.changed,
+            project_changed=found.project is not None and not prepared.kept
+            and (prepared.changed or args.manager_default is not None),
         )
         if not args.dry_run:
             # The install plan is made and checked on the settings as they
@@ -662,6 +713,13 @@ def run(args: argparse.Namespace) -> int:
                 print(line)
         with settings.pending(content if args.dry_run else {}):
             outcome = render.execute(found, sources, args, dry_run=args.dry_run, **options)
+            if prepared.kept and outcome.report["summary"].startswith(fileops.UP_TO_DATE):
+                # A settings file was kept: not everything is up to date.
+                outcome.report["summary"] = outcome.report["summary"].replace(
+                    fileops.UP_TO_DATE, "nothing else to do: the rest is up to date", 1
+                ) + "; the settings file was kept as written or edited by hand"
+            if edited is not None:
+                edited[:] = [*by_hand, *outcome.edited]
             if args.json:
                 print(json.dumps(_json(where, outcome.report), indent=2, ensure_ascii=False))
             else:
@@ -673,7 +731,7 @@ def run(args: argparse.Namespace) -> int:
                         print(line)
     if outcome.errors:
         raise SetupError(*outcome.errors)
-    return outcome.code
+    return render.EXIT_NEEDS_FLAG if prepared.kept and not outcome.code else outcome.code
 
 
 COMMIT_MESSAGE = "Set the project's workflow settings"

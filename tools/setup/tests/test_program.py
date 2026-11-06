@@ -109,7 +109,8 @@ class StopTests(ProgramCase):
     def test_no_terminal_and_no_yes_stops_naming_yes(self) -> None:
         self.claude.mkdir()
         before = self.settled()
-        code, out, err = self.setup()
+        with mock.patch("wfsetup.screen.terminal", return_value=False):
+            code, out, err = self.setup()
         self.assertEqual(code, 2)
         self.assertIn("--yes", err)
         self.assertEqual(self.settled(), before)
@@ -336,6 +337,50 @@ class ProjectKeysTests(ProgramCase):
         self.assertEqual((code, err), (0, ""), out)
         self.assertNothingAt(self.settings)
         self.assertIsNone(self.record_entry())
+
+    def test_the_flag_counts_as_a_change_though_the_file_holds_the_value(self) -> None:
+        self.write(self.project_file, "[roles]\nmanager_default = true\n")
+        data = self.project_file.read_bytes()
+        code, out, err = self.setup("--yes", "--manager-default", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(self.keys(), {"agent": "lead", "effortLevel": "medium"})
+        self.assertEqual(self.project_file.read_bytes(), data)
+        self.assertIn("  git add -- .claude/settings.json\n", out + "\n")
+        self.assertNotIn(".agents/workflow.toml", out.split("git add")[1])
+        # A refresh with no flag still leaves them.
+        code, out, err = self.setup("--yes", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(self.keys(), {"agent": "lead", "effortLevel": "medium"})
+        self.assertTrue(self.left_note(out), out)
+
+    def test_no_manager_default_removes_keys_though_the_file_does_not_hold_the_key(self) -> None:
+        self.assertEqual(self.setup("--yes", "--manager-default", str(self.project))[0], 0)
+        self.write(self.project_file, "[process]\ndocs_dir = \"sprints\"\n")
+        self.assertTrue(self.settings.is_file())
+        code, out, err = self.setup("--yes", "--rewrite-settings", "--no-manager-default", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertNothingAt(self.settings)
+        self.assertIsNone(self.record_entry())
+
+    def test_no_manager_default_removes_keys_of_an_earlier_run_though_the_file_says_false(self) -> None:
+        self.assertEqual(self.setup("--yes", "--manager-default", str(self.project))[0], 0)
+        self.assertEqual(self.keys(), {"agent": "lead", "effortLevel": "medium"})
+        self.write(self.project_file, "[roles]\nmanager_default = false\n")
+        code, out, err = self.setup("--yes", "--no-manager-default", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertNothingAt(self.settings)
+        self.assertIsNone(self.record_entry())
+
+    def test_a_first_run_with_no_value_makes_no_project_file(self) -> None:
+        code, out, err = self.setup("--yes", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertNothingAt(self.project_file)
+        self.assertIn(
+            f"nothing to write: no value is given for {self.project_file}, and it is not created", out)
+        self.assertNotIn("git add", out)
+        code, out, err = self.setup("--yes", "--docs-dir", "sprints", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertTrue(self.project_file.is_file())
 
     def test_a_default_turned_off_by_hand_leaves_them_until_a_run_writes_the_file(self) -> None:
         self.assertEqual(self.setup("--yes", "--manager-default", str(self.project))[0], 0)

@@ -20,11 +20,25 @@ What a run writes
     `--reset KEY` takes KEY out of the file, so that it follows the layer
     below again. The file written holds no old key.
 
+A project's file that is not there is made only when it would hold a key: a
+first run with no value given makes none. A file that is there is written as
+above, also one that holds nothing but ``schema_version``.
+
 A file that setup did not write in its present form (one written by hand, or
 edited since: its content is not the one the install record holds) is not
 rewritten by --yes alone, because --yes cannot have meant its comments and
-layout: --rewrite-settings as well. The file is rewritten from its values;
-the file as it was is copied to the backup directory first.
+layout: --rewrite-settings as well. On the screen the user is asked instead
+(R4.3): the plan finds the file (``Prepared.by_hand``), the screen asks "Rewrite
+it, after a backup? [y/N]", and the plan is made again. Yes is
+--rewrite-settings. No is the screen's option ``keep_by_hand`` (no flag): the
+file is kept as it is, nothing is written to it or backed up, the values not
+written are named, the run goes on with the rest, and it ends with exit code 3
+(``Prepared.kept``). A file that only gets a provider's mappings at its end,
+and one written without an old key, are not asked about. The file is rewritten from its values;
+the file as it was is copied to the backup directory first. One case needs
+no option: where the file lacks only the tier or effort tables of an
+installed provider (and holds no key of such a table), they are added at its
+end and its lines stay as they are, after the same backup.
 
 The model list
     A provider's mapping is checked against the provider's own list where one
@@ -52,6 +66,7 @@ PROG = "setup.py"
 USER = "user"
 PROJECT = "project"
 REWRITE_OPTION = "--rewrite-settings"
+HAND_ID = "settings-file:"     # the screen's id for the by-hand file in its list of edited items: this and the path
 
 # The single-valued settings: key, flag, the name argparse gives it, type.
 _SETTINGS = (
@@ -73,6 +88,11 @@ _MAPS = {
     "tiers": ("tier", "MODEL", schema.TIERS, "--tier"),
     "efforts": ("effort", "VALUE", schema.EFFORTS, "--effort"),
 }
+
+
+# What the screen (``screen``) asks with: the same settings, mappings and checks.
+SINGLE_SETTINGS = _SETTINGS
+MAPPINGS = _MAPS
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
@@ -156,6 +176,16 @@ def _check(key: str, value: Any, source: str) -> None:
     schema.validate(group, content, source, problems)
     if problems:
         raise SetupError(*problems)
+
+
+def check_value(key: str, value: Any, source: str) -> None:
+    """``_check``, for the screen."""
+    _check(key, value, source)
+
+
+def typed_value(kind: str, text: str) -> Any:
+    """``_typed``, for the screen."""
+    return _typed(kind, text)
 
 
 def _typed(kind: str, text: str) -> Any:
@@ -371,7 +401,7 @@ def _header(scope: str) -> list[str]:
     ]
 
 
-def _flat(data: dict[str, Any]) -> dict[str, Any]:
+def flat_keys(data: dict[str, Any]) -> dict[str, Any]:
     flat = {
         key: value
         for group in schema.GROUPS if group in data
@@ -428,6 +458,8 @@ class Prepared:
     _roots: Any = None
     _replaces: bool = False
     _project: bool = False
+    by_hand: bool = False            # the plan rewrites a file written or edited by hand and --rewrite-settings was not given
+    kept: bool = False               # such a file, kept as the screen's user said: not written, the run ends with exit code 3
 
     def apply(self) -> list[str]:
         """Write the file; the lines to tell."""
@@ -440,12 +472,18 @@ class Prepared:
         return lines
 
 
-def prepare(where: locations.Locations, found: homes.Homes, args: argparse.Namespace, *, dry_run: bool) -> Prepared:
+def prepare(
+    where: locations.Locations, found: homes.Homes, args: argparse.Namespace, *, dry_run: bool, drop_old: bool = False
+) -> Prepared:
     """Work out the settings file of this run, from the file as it is and the
     flags, and plan its write. Nothing is asked: a value no flag states is
     accepted as shown. The providers are those of ``found`` that are installed
     and have a dictionary. A fault in a flag, or in the model list, is a
-    ``SetupError`` and nothing is written."""
+    ``SetupError`` and nothing is written.
+
+    With ``drop_old`` (the screen, whose plan the user confirms) a file that
+    holds an old key is written without it, also where it was edited by hand:
+    the plan says so, and ``--rewrite-settings`` is not asked."""
     scope = PROJECT if where.project is not None else USER
     target: Path = where.project_file if scope == PROJECT else where.user_file  # type: ignore[assignment]
     below_layers = ("shipped",) if scope == USER else ("shipped", USER)
@@ -464,8 +502,11 @@ def prepare(where: locations.Locations, found: homes.Homes, args: argparse.Names
         raise SetupError(*exc.lines, "setup changes nothing while a settings file has a fault; correct the file first") from None
     below = settings.resolve(where, layers=below_layers)
     current = [document for document in settings.documents(where) if document.layer == scope]
-    existing = _flat(current[0].data) if current else None
+    existing = flat_keys(current[0].data) if current else None
     flat: dict[str, Any] = dict(existing or {})
+    dropped = [
+        (key, replacement) for file, key, replacement in settings.old_keys(where) if drop_old and file == target
+    ]
 
     def proposed(key: str) -> Any:
         return flat[key] if key in flat else below[key].value
@@ -677,26 +718,46 @@ def prepare(where: locations.Locations, found: homes.Homes, args: argparse.Names
     for note in profiles.unmatched([definition.id for definition in definitions], sorted(dictionaries), entries):
         say(f"note: {note}")
     say("")
-    say("settings:")
-    for key, _, _, _ in _SETTINGS:
-        if key in flat:
-            say(f"  {key} = {tomlio.format_value(flat[key])}  (in this file)")
-        else:
-            say(f"  {key} = {tomlio.format_value(below[key].value)}  ({below[key].layer}; not written)")
-    if schema.INSTALL_KEY in flat:
-        say(f"  {schema.INSTALL_KEY} = {tomlio.format_value(flat[schema.INSTALL_KEY])}  (in this file)")
-    say("")
 
     # --- Plan -----------------------------------------------------------------
-    write = existing is None or not _same_values(flat, existing)
+    write = bool(flat) if existing is None else bool(dropped) or not _same_values(flat, existing)
     roots = found.roots()
     plan = fileops.Plan(roots, follow_config_symlinks=args.follow_config_symlinks)
     text = _document(flat, scope)
+    # A file written by hand that lacks only an installed provider's mappings
+    # gets them at its end, its lines as they are (R4.3).
+    appended = None
+    if write and existing is not None and not _written_by_setup(roots, target):
+        if not (flags["tiers"] or flags["efforts"] or unset or dropped):
+            appended = _appended(target, existing, flat)
+    if appended is not None:
+        text = appended[0]
+    by_hand = write and existing is not None and appended is None and not dropped and not _written_by_setup(roots, target)
+    kept = by_hand and bool(getattr(args, "keep_by_hand", False))
+    # The values a kept file is not given are not shown as held by it.
+    say("settings:")
+    held = "not written" if kept else "in this file"
+    for key, _, _, _ in _SETTINGS:
+        if key in flat:
+            say(f"  {key} = {tomlio.format_value(flat[key])}  ({held})")
+        else:
+            say(f"  {key} = {tomlio.format_value(below[key].value)}  ({below[key].layer}; not written)")
+    if schema.INSTALL_KEY in flat:
+        say(f"  {schema.INSTALL_KEY} = {tomlio.format_value(flat[schema.INSTALL_KEY])}  ({held})")
+    say("")
+    if kept:
+        say(f"kept: {target}, written or edited by hand; not written:")
+        for line in _changes(existing or {}, flat, below):
+            say(line)
+        return Prepared(target, lines, False, None, kept=True)
     if write:
         plan.write_file(target, text, replace=fileops.ANY)
     described = plan.describe()
     if not described.changed:
-        say(f"nothing to write: {target} already holds these settings")
+        if existing is None:
+            say(f"nothing to write: no value is given for {target}, and it is not created")
+        else:
+            say(f"nothing to write: {target} already holds these settings")
         return Prepared(target, lines, False, None)
 
     replaces = write and existing is not None
@@ -704,8 +765,12 @@ def prepare(where: locations.Locations, found: homes.Homes, args: argparse.Names
         say(f"changes to {target}:")
         for line in _changes(existing or {}, flat, below):
             say(line)
+        for key, replacement in dropped:
+            say(f"  {key}: old key, taken out; use {replacement}")
         was = _read_text(target)
-        if was is not None and was != _document(existing or {}, scope):
+        if appended is not None:
+            say(f"  its lines are kept as they are; the mapping of {', '.join(appended[1])} is added at its end")
+        elif was is not None and was != _document(existing or {}, scope):
             say("  the file was edited outside setup: its keys are kept, its comments and layout are not")
     elif write:
         say(f"{target}, as it {'would be' if dry_run else 'will be'} written:")
@@ -717,9 +782,8 @@ def prepare(where: locations.Locations, found: homes.Homes, args: argparse.Names
         say(f"note: {note}")
     # A file setup did not write in its present form: ``--yes`` alone does
     # not confirm that its comments and layout go.
-    by_hand = replaces and not _written_by_setup(roots, target)
     if dry_run:
-        if by_hand:
+        if by_hand and not args.rewrite_settings:
             say(f"note: {target} was written or edited by hand; a run that writes it needs --yes {REWRITE_OPTION}")
     elif by_hand and not args.rewrite_settings:
         raise SetupError(
@@ -732,7 +796,43 @@ def prepare(where: locations.Locations, found: homes.Homes, args: argparse.Names
         )
     return Prepared(
         target, lines, True, tomllib.loads(text), plan, roots, replaces, scope == PROJECT,
+        by_hand=by_hand and not args.rewrite_settings,
     )
+
+
+def _appended(target: Path, existing: dict[str, Any], flat: dict[str, Any]) -> tuple[str, list[str]] | None:
+    """The text of the file at ``target`` with the tier and effort tables it
+    lacks added at its end, and the providers they are of; None unless every
+    difference between ``flat`` and ``existing`` is a key added under
+    ``providers.<name>.tiers`` or ``.efforts`` and the file holds no key of
+    such a table, and the text reads back as ``flat``."""
+    if any(key not in flat or not _same(flat[key], existing[key]) for key in existing):
+        return None
+    added = {key: value for key, value in flat.items() if key not in existing}
+    tables: set[str] = set()
+    for key in added:
+        parts = key.split(".")
+        if not (len(parts) == 4 and parts[0] == "providers" and parts[2] in ("tiers", "efforts")):
+            return None
+        tables.add(".".join(parts[:3]))
+    if not tables or any(key.rsplit(".", 1)[0] in tables for key in existing):
+        return None
+    try:
+        raw = target.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if raw.startswith("\ufeff") or not raw.strip():
+        return None   # a file with nothing in it has no lines to keep
+    nested = _nest(added)
+    nested.pop(schema.VERSION_KEY)
+    text = raw + ("" if raw.endswith("\n") else "\n") + "\n" + tomlio.dumps(nested)
+    try:
+        read = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return None
+    if not _same_values(flat_keys(read), flat):
+        return None
+    return text, sorted({table.split(".")[1] for table in tables})
 
 
 def _same(one: Any, other: Any) -> bool:
@@ -753,9 +853,26 @@ def _written_by_setup(roots: Any, target: Path) -> bool:
         entry = fileops.read_record(roots).get(key) if key is not None else None
         if entry is None or entry.get("kind") != "file" or fsio.look(target).kind != fsio.FILE:
             return False
-        return entry.get("sha256") == fsio.sha256(fsio.read_bytes(target))
-    except SetupError:
+        content = fsio.read_bytes(target)
+        if entry.get("sha256") != fsio.sha256(content):
+            return False
+        return _reads_as_written(content.decode("utf-8"))
+    except (SetupError, UnicodeDecodeError, tomllib.TOMLDecodeError):
         return False
+
+
+def _reads_as_written(text: str) -> bool:
+    """Whether ``text`` is the form setup writes: a first line that begins
+    ``# Workflow settings: ``, and after the leading comment and empty lines
+    what ``tomlio.dumps`` writes of its values (the header changed between
+    versions, the rest did not)."""
+    lines = text.split("\n")
+    if not lines[0].startswith("# Workflow settings: "):
+        return False
+    start = 0
+    while start < len(lines) and (not lines[start].strip() or lines[start].startswith("#")):
+        start += 1
+    return "\n".join(lines[start:]) == tomlio.dumps(_nest(flat_keys(tomllib.loads(text))))
 
 
 def _read_text(file: Path) -> str | None:
