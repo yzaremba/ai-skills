@@ -53,6 +53,6 @@ Agent names use underscores where role ids use hyphens (`product_manager`, `code
 
 - **Several agents at once.** Spawn each, then wait for all. With no limit set, 0.160.0 allowed four open agents, main session too; a finished one holds no slot. A spawn refused for that limit is not worked around: start that agent when another has finished, and tell the user that `agents.max_concurrent_threads_per_session` set to 8 or more lifts the limit.
 - **The sandbox** refuses every command below by default, and each needs the approval Commands describes. As probed, under a permission profile that makes the repository's `.git` and the worktree root writable they run with no approval.
-- **Add a worktree outside the workspace.** `git -C <workspace> worktree add <root>/<name> -b <branch> <commit>`, with absolute paths.
+- **Add a worktree.** The root is outside the repository or a git-ignored directory inside it. `git -C <workspace> worktree add <root>/<name> -b <branch> <commit>`, with absolute paths.
 - **Merge.** `git -C <workspace> merge <branch>`, never with `--squash` and never a rebase. `git -C <workspace> merge --abort` ends a merge that conflicts.
 - **Remove what is merged.** `git -C <workspace> worktree remove <path>`, then `git -C <workspace> branch -d <branch>`. Never `--force` and never `-D`.

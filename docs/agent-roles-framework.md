@@ -220,7 +220,7 @@ Before decision U, a role that needed the user ran loaded on Codex, and the firs
 ### Worktree lifecycle for a parallel group
 
 1. **Clean base.** The sprint's workspace must hold nothing uncommitted beyond STATE: the Implementation Manager first commits work still waiting for a later cadence commit, as a commit of its own, then records the HEAD commit SHA. A "don't commit" cadence cannot be combined with parallel groups.
-2. **Create.** For each Coder it runs `git worktree add` from that SHA, under the project's existing worktree root (the same root the sprint rule resolves), never inside the workspace. The directory name marks it as a Coder worktree, e.g. `<repo>-s88-p2.3`. The branch uses its own prefix, e.g. `group/s88-p2.3`; git does not allow a branch nested under the sprint branch's name.
+2. **Create.** For each Coder it runs `git worktree add` from that SHA, under the project's existing worktree root (the same root the sprint rule resolves). The directory name marks it as a Coder worktree, e.g. `<repo>-s88-p2.3` under a root outside the repository or `.worktrees/S88-P2.3` under a git-ignored root inside it. The branch uses its own prefix, e.g. `group/s88-p2.3`; git does not allow a branch nested under the sprint branch's name.
 3. **Work.** Each Coder works only in its worktree, runs only its targeted tests, makes one commit and reports.
 4. **Join.** Before the first merge, the Implementation Manager verifies the sprint HEAD still equals the recorded SHA; if not, it stops and reports. It merges each Coder branch with a real merge, not a squash, then runs the full suite.
 5. **Clean up.** It removes each merged worktree and branch without being asked.
@@ -409,7 +409,7 @@ What the framework needs from a provider. Each cell gives the verdict and the ki
 | **Reuse.** A finished agent takes a follow-up task with its context intact, also after the session is resumed. | Supported (documentation; a follow-up shown in the relay on 2.1.299) | Supported (probe) |
 | **Provenance.** A subagent's report is distinguishable from user input. | Supported (probe) | Supported (probe) |
 | **Instruction loading.** Subagents load the user-level and project instruction files; a definition can opt out of them or substitute its own. | Supported (probe and documentation) | Supported with a difference (probe): both files load, and a definition can add instructions but cannot opt out or substitute |
-| **Git worktrees.** Worktree add outside the workspace root, commit inside it, merge, then the non-forcing remove and branch delete. | Supported (probe), subject to the session's permission rules | Supported with a difference (probe) |
+| **Git worktrees.** Worktree add outside the workspace root (an in-repository root was not probed), commit inside it, merge, then the non-forcing remove and branch delete. | Supported (probe), subject to the session's permission rules | Supported with a difference (probe) |
 | **Models and effort.** The names and levels a definition can use. | Supported (documentation, 2.1.296): listed under [What each provider offers](#what-each-provider-offers) | Unverified (probe) for the full set. The catalog's eight models and their effort values are listed under [What each provider offers](#what-each-provider-offers); one model was pinned in a definition and ran as pinned, five are offered by the spawn tool, and pinning the other three in a definition was not tested |
 
 ### How each provider does it

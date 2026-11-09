@@ -74,6 +74,10 @@ WFSETUP_TEST_FULL=1 python -B -m unittest discover -s tools/setup/tests -p "test
   under `core.autocrlf=true` keeps CRLF in the files a pull does not touch. One
   deliberate exception: `json-tools/examples/users.csv` is CRLF, the tool's real
   output, pinned `-text`. A binary file type gets an explicit `binary` line there.
+- **Worktrees.** The worktree root is `.worktrees/` in the main working tree's root
+  (git-ignored): sprint and group worktrees go there, named as
+  `prd-implementation/references/conventions.md` says for a root inside the
+  repository.
 - **Paths.** No file holds an absolute path of one machine: no home directory, no
   user name, no drive letter. Use `~`, a path relative to the unit, or a placeholder.
 - **Sources.** `python tools/setup/validate.py` checks every skill, role,

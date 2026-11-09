@@ -49,7 +49,7 @@ Role ids are used as written, such as `product-manager` and `coder-hard`.
 Every command here is subject to the session's permission rules, like any other.
 
 - **Several agents at once.** Put the `Agent` calls in one message. They run side by side, and each reports on its own.
-- **Add a worktree outside the workspace.** `git worktree add <root>/<name> -b <branch> <commit>`, run in the sprint's workspace.
+- **Add a worktree.** The root is outside the repository or a git-ignored directory inside it. `git worktree add <root>/<name> -b <branch> <commit>`, run in the sprint's workspace.
 - **Merge.** `git merge <branch>` in the sprint's workspace, never with `--squash` and never a rebase. `git merge --abort` ends a merge that conflicts.
 - **Remove what is merged.** `git worktree remove <path>`, then `git branch -d <branch>`, both run in the sprint's workspace. Never `--force` and never `-D`.
 

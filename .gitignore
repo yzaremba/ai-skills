@@ -3,3 +3,4 @@
 .cursor/
 /.agents/workflow.local.toml
 /docs/memory/local
+/.worktrees/
