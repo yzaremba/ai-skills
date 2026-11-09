@@ -124,5 +124,6 @@ Lessons of this project, one line each. Before work a line applies to, read its 
 - [Outcome over apparatus](docs/memory/outcome-over-apparatus.md): before adding a check, tool, document, proof or review; only when the user asks
 - [Edit every byte-identical copy](docs/memory/edit-every-identical-copy.md): a step changing a file kept identical in several units; edit every copy
 - [Ask how the user does it today](docs/memory/ask-how-it-runs-today.md): before investigating the user's own environment; ask and look first
+- [Windows suite in every phase](docs/memory/windows-suite-every-phase.md): a phase changes cross-platform code; run the Windows suite then, not last
 - Local lessons, private or of this machine: read `docs/memory/local/INDEX.md` if it exists.
 <!-- project-memory:index:end -->
