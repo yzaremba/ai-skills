@@ -288,8 +288,9 @@ python tools/setup/setup.py --check
   installed (see "Which skills and rules are installed" below); `--reset KEY` takes a key
   out of the file, so that the layer below gives it again. A file written or edited by hand
   is rewritten from its values, after a backup, only when you answer yes on the screen or
-  give `--yes --rewrite-settings`; otherwise the values stay unwritten and the exit code is
-  3. One exception: where the file lacks only an installed provider's tier or effort
+  give `--yes --rewrite-settings`. Answer no on the screen and the file is kept, the values
+  stay unwritten, the rest of the install goes on and the exit code is 3; `--yes` without
+  `--rewrite-settings` stops with exit code 2 and writes nothing. One exception: where the file lacks only an installed provider's tier or effort
   mapping, setup adds the mapping at the file's end, its lines as they are, after a backup,
   without `--rewrite-settings`.
 - A generated file, key or block that was edited by hand since setup wrote it is asked about

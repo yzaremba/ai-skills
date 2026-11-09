@@ -64,13 +64,13 @@ class Locations:
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add ``--project`` and ``--home``, which mean the same in every command."""
+    """Add ``--project`` and ``--home``; only validate.py (validate_program.py) uses them now."""
     parser.add_argument(
         "--project",
         metavar="DIR",
         help="accepted, and it changes nothing: validate.py checks only the clone's sources and "
         "reads no project file. The project is never taken from the working directory. "
-        "An empty DIR is refused",
+        "A DIR that is empty or not a directory is refused",
     )
     parser.add_argument(
         "--home",
