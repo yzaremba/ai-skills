@@ -68,12 +68,9 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--project",
         metavar="DIR",
-        help="the project whose settings files are read: DIR/.agents/workflow.toml and "
-        "DIR/.agents/workflow.local.toml. The project is only ever this directory; it is "
-        "not taken from the working directory. Without --project no project file is read. "
-        "An empty DIR is refused. A command that writes (setup.py, also with --uninstall) also refuses "
-        "the home directory itself, a directory that holds the home or the clone, and the clone setup "
-        "runs from or a directory inside it",
+        help="accepted, and it changes nothing: validate.py checks only the clone's sources and "
+        "reads no project file. The project is never taken from the working directory. "
+        "An empty DIR is refused",
     )
     parser.add_argument(
         "--home",

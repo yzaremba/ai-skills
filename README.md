@@ -19,7 +19,7 @@ the tag `v1.0`.
 | `roles/` | The sources of the nine roles: `<role>/ROLE.md` and `<role>/role.toml`, the sections roles share in `_shared/`, `bindings.toml`, which says which role follows which stage of the process, and `dependencies.toml`, which says which skills a skill needs. Format: [`roles/README.md`](roles/README.md). A project's own specialist: [`roles/SPECIALISTS.md`](roles/SPECIALISTS.md). |
 | `rules/` | `avoid-bash-injection-heuristics/`, a rule for Claude Code: how to shape a Bash command so that the permission checks that ignore the allowlist do not fire. Codex has no place for a rule. |
 | `providers/` | What differs between providers, in `claude-code/` and `codex/`: `dictionary.toml` (what the tiers and effort names mean there, and the version it was checked on) and `actions.md` (how a role's actions are done there). |
-| `tools/` | `setup/`: `setup.py`, the program that installs, checks (`--check`) and takes back (`--uninstall`), and `validate.py`, the check of the clone's sources; its package `wfsetup/`, its shipped defaults (`defaults.toml`), its tests, and `manifest-keys.json`, the keys setup may change in a settings file. `session-profile/`: prints the role, model and effort a provider recorded for each agent of a session. |
+| `tools/` | `setup/`: `setup.py`, the program that installs, checks (`--check`) and takes back (`--uninstall`), and `validate.py`, the check of the clone's sources; its package `wfsetup/`, its shipped defaults (`defaults.toml`), its tests, and `manifest-keys.json`, the keys setup may change in a project's `.claude/settings.json` (`agent`, `effortLevel`). `session-profile/`: prints the role, model and effort a provider recorded for each agent of a session. |
 | `docs/` | [`agent-roles-framework.md`](docs/agent-roles-framework.md): the design of the roles and what was checked on each provider. [`v1-to-v2.md`](docs/v1-to-v2.md). Two one-page slides, each with a `-preview.png` beside it: [`prd-implementation-slide.html`](docs/prd-implementation-slide.html), the process, and [`roles-framework-slide.html`](docs/roles-framework-slide.html), the roles; see [The slides](#the-slides). `memory/`: this repository's own lessons, indexed in `AGENTS.md`. |
 | [`AGENTS.md`](AGENTS.md) | The repository's conventions. Both providers read it; there is no `CLAUDE.md`. |
 
@@ -289,7 +289,9 @@ python tools/setup/setup.py --check
   out of the file, so that the layer below gives it again. A file written or edited by hand
   is rewritten from its values, after a backup, only when you answer yes on the screen or
   give `--yes --rewrite-settings`; otherwise the values stay unwritten and the exit code is
-  3.
+  3. One exception: where the file lacks only an installed provider's tier or effort
+  mapping, setup adds the mapping at the file's end, its lines as they are, after a backup,
+  without `--rewrite-settings`.
 - A generated file, key or block that was edited by hand since setup wrote it is asked about
   on the screen ("replace, after a backup? [y/N]"). Without a terminal it is kept and
   reported, with exit code 3, unless `--overwrite-edited` is given.
@@ -613,8 +615,8 @@ and each skill's `SKILL.md`.
   session on the desktop does not load a linked user-level rule: there Claude Code skips
   "a symlinked ~/.claude/rules/ directory or rule file that points outside the working
   directory" (code.claude.com/docs/en/memory, read 2026-10-05). The page names the rules
-  directory and a rule file; a linked directory inside rules/, which is what this
-  command makes, is taken to be skipped the same way. Every other Claude Code session
+  directory and a rule file; a linked directory inside rules/, which is what setup
+  makes, is taken to be skipped the same way. Every other Claude Code session
   loads the rule through the link.
 - **A loaded role in a long Claude Code session.** After a compaction Claude Code keeps
   the first 5,000 tokens of an invoked skill, a figure its dictionary states
