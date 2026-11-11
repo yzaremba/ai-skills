@@ -18,6 +18,7 @@ import unittest
 from unittest import mock
 
 import test_program
+from wfsetup import screen
 
 CLAUDE = {
     "tiers": {"fast": "haiku", "standard": "sonnet", "deep": "opus", "frontier": "fable"},
@@ -146,6 +147,49 @@ class ScreenTests(ScreenCase):
         self.assertEqual(code, 2)
         self.assertIn("--yes", err)
         self.assertFalse(self.user_file.exists())
+
+
+class HelpTests(ScreenCase):
+    def number(self, out: str, label: str) -> str:
+        return next(line.split()[0] for line in out.splitlines() if label in line)
+
+    def test_every_row_that_opens_shows_one_help_line(self) -> None:
+        for argv in (("--provider", "claude-code", str(self.project)), ("--provider", "codex")):
+            listing = self.typed("", "n", argv=argv)[1]
+            labels = [(l.split()[0], l) for l in listing.splitlines()[:30] if l[:3].strip().isdigit()]
+            for number, line in labels:
+                if " where " in line:
+                    continue
+                out = self.typed(number, "", "", "", "n", argv=argv)[1]
+                opened = out.split("Enter: the plan")[1]
+                helped = [text for text in screen.HELP.values() if text in opened]
+                self.assertEqual(len(helped), 1, (line, opened))
+
+    def test_no_help_line_is_wider_than_78(self) -> None:
+        self.assertTrue(all(len(text) <= 78 for text in screen.HELP.values()))
+
+    def test_each_kind_shows_its_text(self) -> None:
+        out = self.typed(self.number(self.typed("", "n")[1], "items to install"), "", "", "n")[1]
+        self.assertIn(screen.HELP["install"], out)
+        out = self.typed(self.number(self.typed("", "n")[1], "process.docs_dir"), "", "", "n")[1]
+        self.assertIn(screen.HELP["process.docs_dir"], out)
+        out = self.typed(self.number(self.typed("", "n")[1], "claude-code tiers"), "", "", "n")[1]
+        self.assertIn(screen.HELP["tiers"], out)
+        out = self.typed(self.number(self.typed("", "n")[1], "claude-code efforts"), "", "", "n")[1]
+        self.assertIn(screen.HELP["efforts"], out)
+
+    def test_codex_item_and_worktree_root_show_help(self) -> None:
+        argv = ("--provider", "codex")
+        number = self.number(self.typed("", "n", argv=argv)[1], "Codex config item")
+        out = self.typed(number, "on", "", "", "n", argv=argv)[1]
+        self.assertIn(screen.HELP["codex"], out)
+        self.assertIn(screen.HELP["worktree root"], out)
+
+    def test_the_project_screen_shows_help_for_start_as_the_manager(self) -> None:
+        argv = ("--provider", "claude-code", str(self.project))
+        number = self.number(self.typed("", "n", argv=argv)[1], "start as the Manager")
+        out = self.typed(number, "", "", "n", argv=argv)[1]
+        self.assertIn(screen.HELP["roles.manager_default"], out)
 
 
 class ItemsTests(ScreenCase):

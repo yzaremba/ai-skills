@@ -61,6 +61,28 @@ def _ask(prompt: str) -> str:
         raise SetupError("standard input ended before the screen was answered; nothing was written") from None
 
 
+# One line of help for each option that can be opened, shown under its heading
+# or before its prompt. Facts are from the shipped defaults, the README and --help.
+HELP = {
+    schema.INSTALL_KEY: "What is installed: skills, rules and roles; each brings what it needs.",
+    "roles.manager_default": "On: sessions here start as the Manager. Off: load a role, /<role> or $<role>.",
+    "process.docs_dir": "Where the sprint and epic docs live (relative to the project unless absolute).",
+    "process.questions": "How open questions are put to you: one-at-a-time or all-together.",
+    "process.recommend": "Whether each question has a recommendation; \"accept\" also takes clear choices.",
+    "memory.dir": "Where the project's lessons are kept: a path inside the project.",
+    "roles.high_stakes": "Marks the work high-stakes: a role with a high-stakes tier uses it.",
+    "roles.max_parallel_coders": "How many Coders may work at the same time (1 or more).",
+    "tiers": "The model each tier (fast to frontier) names; a role's tier picks its model.",
+    "efforts": "What each effort name (low to max) means for this provider's models.",
+    "codex": "on: what roles need; profile: also select the workflow profile; off: remove.",
+    "worktree root": "The profile also makes this directory writable: absolute, or under ~/.",
+}
+
+
+def _help(text: str) -> None:
+    print(f"  {text}")
+
+
 @dataclass
 class Row:
     number: int
@@ -403,10 +425,14 @@ class Screen:
                     needers.setdefault(unit, []).append(definitions.ROLES_NEED)
             return ticked, needers
 
+        helped = False
         while True:
             ticked, needers = view()
             width = len(str(len(names)))
             print(f"{row.label}:")
+            if not helped:
+                _help(HELP[schema.INSTALL_KEY])
+                helped = True
             for number, name in enumerate(names, 1):
                 if name in home:
                     mark, note = "x", "  (from this machine)"
@@ -452,6 +478,7 @@ class Screen:
         if shown is None:
             shown = entries[row.key].value
         hint = f"{row.flag} or --no-{row.flag[2:]}" if row.value_kind == "boolean" else row.flag
+        _help(HELP[row.key])
         while True:
             answer = _ask(f"{row.key} [{tomlio.format_value(shown)}] ({hint}): ")
             if not answer:
@@ -469,6 +496,7 @@ class Screen:
 
     def _open_codex(self, row: Row) -> None:
         shown = getattr(self.state, "codex_settings", None) or "as it stands"
+        _help(HELP["codex"])
         while True:
             answer = _ask(
                 f"{row.label} [{shown}]: off, on, or profile (on with the profile selected), or nothing to leave it "
@@ -487,6 +515,7 @@ class Screen:
         if mode is None and not self._codex_on():
             return
         held = getattr(self.state, "worktree_root", None)
+        _help(HELP["worktree root"])
         while True:
             answer = _ask(
                 f"worktree root [{held or 'none'}]: the directory your git worktrees are made under, or nothing to "
@@ -534,6 +563,7 @@ class Screen:
             for name in names
         )
         print(f"{row.label}: {shown}")
+        _help(HELP[row.table])
         while True:
             answer = _ask(f"  change, as {word}={meta} ..., or nothing to accept ({flag} {row.provider}:...): ")
             if not answer:
