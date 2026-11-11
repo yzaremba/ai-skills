@@ -57,7 +57,10 @@ The project (``DIR``)
     Both keys are set, changed and taken out only by a run that changed the
     project's choices (``execute``'s ``project_changed``: ``setup.py DIR``
     wrote the project's ``.agents/workflow.toml`` or was given
-    ``--manager-default`` or ``--no-manager-default``). Any other run leaves them as they are, set or not,
+    ``--manager-default`` or ``--no-manager-default``), or by a run in which
+    no role is made for the project at all (``roles`` in neither the home's
+    nor the project's ``install``): the key then names a role whose files that
+    run removes. Any other run leaves them as they are, set or not,
     and what the record holds of them, even where the home's mapping now
     gives the role another effort (R6.1): the file is tracked, and one
     user's mapping is not the project's. A note says so.
@@ -1620,11 +1623,12 @@ def fill_entry(run: Run) -> None:
         run.fail(*exc.lines)
         return
     try:
+        own = definitions.project_roles(where)
         if on:
             wanted_key, wanted_effort, wanted_block = _fill_entry(
                 run, home, where, providers, names,
             )
-        elif definitions.project_roles(where):
+        elif own:
             _fill_project_loaded(run, where, providers, names)
             default = entry.manager_default(where)
             run.project_facts.update({"manager_default": default, "starting_role": None})
@@ -1635,13 +1639,17 @@ def fill_entry(run: Run) -> None:
         run.fail(*exc.lines)
         return
     if project is not None and not run.errors:
-        if not run.project_changed:
+        # No role is made for the project by this run (roles off in the home,
+        # none of the project's own): the keys name a role that is gone, and
+        # go with it, as with a run that changed the project's choices.
+        gone = not (on or own)
+        if not run.project_changed and not gone:
             _keys_left(run, project)
         # The effort first: it was set after the role, and the last member
         # taken out first gives back the bytes that were there.
-        if not wanted_effort and run.project_changed:
+        if not wanted_effort and (run.project_changed or gone):
             run.drop_json_key(project / entry.CLAUDE_SETTINGS, entry.EFFORT_KEY)
-        if not wanted_key and run.project_changed:
+        if not wanted_key and (run.project_changed or gone):
             run.drop_json_key(project / entry.CLAUDE_SETTINGS, entry.AGENT_KEY)
         if not wanted_block:
             _old_codex_block(run, project / entry.CODEX_CONFIG)
@@ -1889,7 +1897,8 @@ def _keys_left(run: Run, project: Path) -> None:
     """A run that did not change the project's choices leaves the keys
     ``agent`` and ``effortLevel`` of ``.claude/settings.json`` as they are,
     set or not, with their record entries (R6.1): the file is tracked, and
-    the home's mapping of one user is not the project's. One note, where the
+    the home's mapping of one user is not the project's. Not called where no
+    role is made for the project: the keys then go. One note, where the
     project's default would set them or the record holds one."""
     if not any(provider.name == definitions.CLAUDE_CODE for provider in _entry_providers(run)):
         return
@@ -2046,7 +2055,8 @@ def execute(found: homes.Homes, sources: Sources, options: Any = None, *, dry_ru
     ``clone_warning`` is the line that check gave, or None (``homes.clone_warning``).
     ``project_changed`` says whether this run changed the project's choices
     (wrote its ``.agents/workflow.toml``); while it is false the project's
-    ``agent`` and ``effortLevel`` keys are left as they are (R6.1)."""
+    ``agent`` and ``effortLevel`` keys are left as they are (R6.1), unless no
+    role is made for the project (``fill_entry``)."""
     recovered: fileops.Result | None = None
     before = _bytes_of(found.project / entry.CLAUDE_SETTINGS) if found.project is not None else None
     if not dry_run:

@@ -407,6 +407,64 @@ class ProjectKeysTests(ProgramCase):
         self.assertEqual((self.settings.read_bytes(), self.record_entry()), (data, entry))
         self.assertTrue(self.left_note(out), out)
 
+    ROLES_ON = 'install = ["alpha", "roles"]\n[roles]\nmanager_default = true\n'
+
+    def with_keys(self) -> None:
+        """Roles on in the project, the keys set by a run that changed its choices."""
+        self.write(self.user_file, 'install = ["alpha"]\n')
+        self.write(self.project_file, self.ROLES_ON)
+        code, out, err = self.setup("--yes", "--manager-default", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(self.keys(), {"agent": "lead", "effortLevel": "medium"})
+        self.assertTrue((self.project / ".claude" / "agents" / "lead.md").is_file())
+
+    def test_roles_taken_out_by_hand_remove_the_keys_setup_set_on_a_refresh(self) -> None:
+        self.with_keys()
+        self.write(self.project_file, 'install = ["alpha"]\n[roles]\nmanager_default = true\n')
+        code, out, err = self.setup("--yes", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertFalse((self.project / ".claude" / "agents" / "lead.md").exists())
+        self.assertNothingAt(self.settings)
+        self.assertIsNone(self.record_entry())
+        self.assertFalse(self.left_note(out), out)
+
+    def test_the_rest_of_the_settings_file_stays_when_the_keys_go(self) -> None:
+        self.with_keys()
+        data = self.keys()
+        data["permissions"] = {"allow": ["Bash(ls)"]}
+        self.settings.write_text(json.dumps(data), encoding="utf-8")
+        self.write(self.project_file, 'install = ["alpha"]\n')
+        code, out, err = self.setup("--yes", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(self.keys(), {"permissions": {"allow": ["Bash(ls)"]}})
+
+    def test_a_refresh_with_roles_still_on_leaves_the_keys(self) -> None:
+        self.with_keys()
+        data = self.settings.read_bytes()
+        code, out, err = self.setup("--yes", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(self.settings.read_bytes(), data)
+        self.assertTrue(self.left_note(out), out)
+
+    def test_a_users_own_agent_key_stays_when_roles_are_not_installed(self) -> None:
+        self.write(self.user_file, 'install = ["alpha"]\n')
+        self.write(self.project_file, 'install = ["alpha"]\n')
+        self.write(self.settings, '{"agent": "mine"}\n')
+        code, out, err = self.setup("--yes", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(self.keys(), {"agent": "mine"})
+
+    def test_roles_on_from_the_home_only_then_taken_out_remove_the_keys(self) -> None:
+        self.write(self.user_file, 'install = ["alpha", "roles"]\n')
+        self.write(self.project_file, 'install = ["alpha"]\n[roles]\nmanager_default = true\n')
+        code, out, err = self.setup("--yes", "--manager-default", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertEqual(self.keys(), {"agent": "lead", "effortLevel": "medium"})
+        self.write(self.user_file, 'install = ["alpha"]\n')
+        code, out, err = self.setup("--yes", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertNothingAt(self.settings)
+
 
 class GitLinesTests(ProgramCase):
     """After applying: the git lines for the project's files this run wrote
@@ -454,6 +512,21 @@ class GitLinesTests(ProgramCase):
         self.assertEqual((code, err), (0, ""), out)
         self.assertIn("  git add -- .agents/workflow.toml\n", out + "\n")
         self.assertNotIn("settings.json", out.split("git add")[1])
+
+    @unittest.skipUnless(shutil.which("git"), "needs git")
+    def test_dropped_keys_of_a_tracked_settings_file_print_the_git_lines(self) -> None:
+        self.write(self.user_file, 'install = ["alpha"]\n')
+        self.write(self.project_file, 'install = ["alpha", "roles"]\n[roles]\nmanager_default = true\n')
+        code, out, err = self.setup("--yes", "--manager-default", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        shutil.rmtree(self.project / ".git")
+        self.git("init", "-q")
+        self.git("add", "-f", "--", ".claude/settings.json")
+        self.write(self.project_file, 'install = ["alpha"]\n')
+        code, out, err = self.setup("--yes", str(self.project))
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertIn("  git add -- .claude/settings.json", out)
+        self.assertIn("git commit -m", out)
 
     @unittest.skipUnless(shutil.which("git"), "needs git")
     def test_a_file_git_does_not_track_gets_the_codex_default(self) -> None:

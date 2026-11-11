@@ -253,7 +253,9 @@ workflow.toml and workflow.local.toml over the user's):
       own settings; --effort and /effort win over it. The two keys are
       set, changed and taken out only by a run that writes DIR/.agents/
       workflow.toml, as a flag that changes a value of it does, or one given
-      --manager-default or --no-manager-default. Any other
+      --manager-default or --no-manager-default, or by a run that makes no
+      role for the project (`roles` in neither the home's nor the project's
+      install), which takes out what setup set. Any other
       run, a refresh, leaves them as they are, set or not, with what the
       install record holds of them, even where the home's mapping now gives
       the role another effort, and a note says so: .claude/settings.json is
@@ -320,8 +322,9 @@ every later run, with exit code 0; exit code 3 is for a file setup still
 makes that was edited by hand, which an option would overwrite. The two keys
 of .claude/settings.json go only with a run that writes
 DIR/.agents/workflow.toml, or one given --manager-default or
---no-manager-default (even where the file already holds that value); any
-other run leaves them.
+--no-manager-default (even where the file already holds that value), or
+one that makes no role for the project (`roles` in neither the home's nor the
+project's install), which takes out what setup set; any other run leaves them.
 
 The roles are an item of `install`. They are on when the home's effective
 `install` (~/.agents/workflow.toml over the shipped one) holds `roles`. When
