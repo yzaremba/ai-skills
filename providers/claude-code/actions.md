@@ -1,35 +1,36 @@
 ## How actions are done on Claude Code
 
-Role ids are used as written, such as `product-manager` and `coder-hard`.
+Role ids are used as written, e.g. `product-manager`.
 
 ### Start
 
-- **Start a session as a role.** The user's to do, never yours: `claude --agent manager --effort <level>`, with the level setup prints for the role, or `"agent": "manager"` in the project's `.claude/settings.json`, where setup writes the effort beside it. The startup header then shows `@manager`.
-- **These notes were checked** against Claude Code 2.1.289: docs and the skeleton run of 2026-10-05.
+- **Start a session as a role.** The user's to do, never yours: `claude --agent manager --effort <level>`, with the level setup prints for the role, or `"agent": "manager"` in the project's `.claude/settings.json`, where setup writes the effort beside it.
+- **Checked** against Claude Code 2.1.289 (docs, skeleton run 2026-10-05).
 
 ### Session
 
 - **Load a role.** The user types `/<role-id>`; you never load a role yourself.
-- **Switch the loaded role back.** There is no command: the user says it in a message, such as "back to the Manager", and it holds from that message on.
+- **Compact.** At a phase boundary the Manager asks the user for the `/context` figure and, past about 60% of the model's context window, to run `/compact`.
+- **Switch the loaded role back.** The user says it in a message, such as "back to the Manager"; it holds from then on.
 
 ### Dispatch
 
-- **Dispatch a role.** The `Agent` tool with `subagent_type` set to the role id, the brief as `prompt`, and a `name` of the role id plus a short suffix, so the agent can be addressed later. Pass no `model` and no `effort`: the definition pins both, and one on the call would override the pin.
-- **Wait for a dispatched agent.** It usually runs in the background, and its output arrives later as a completion notification marked as that agent's: agent output, never the user. Until it arrives the agent is still running; do not guess its result.
-- **Follow up with a finished agent.** `SendMessage` with `to` set to the agent's name or the agent id its result gave you. It resumes with its whole history; a new dispatch would know nothing. After a restart this works only once the same session has been resumed. A five-minute-cache role (the Investigator, a Coder, the Code Reviewer): only within 5 minutes of its report; else a fresh one.
+- **Dispatch a role.** The `Agent` tool with `subagent_type` set to the role id, the brief as `prompt`, and a `name` of the role id plus a short suffix, so the agent can be addressed later. Pass no `model` and no `effort`: the definition pins both.
+- **Wait for a dispatched agent.** Its output arrives later as a completion notification marked as that agent's: agent output, never the user. Until then it is running; do not guess its result.
+- **Follow up with a finished agent.** `SendMessage` with `to` set to the agent's name or the agent id its result gave you. It resumes with its whole history; after a restart only once the same session is resumed. A five-minute-cache role (the Investigator, a Coder, the Code Reviewer): only within 5 minutes of its report; else a fresh one.
 
 ### Dialogue
 
-- **The user can also type to a dispatched agent**, an option you may name; you relay its questions either way. How: select its row in the agent panel under the prompt while it runs, or in `/tasks` for 30 seconds after it finishes, and press Enter to open its transcript; type there. An open transcript stays open when the turn ends; otherwise, after those 30 seconds, only your follow-up resumes it.
-- **Its hand-backs reach you by themselves.** Each turn the user drives there sends you a completion notification with the hand-back: observed on 2.1.289, not documented.
+- **The user can also type to a dispatched agent**, an option you may name; you relay its questions either way. How: select its row in the agent panel under the prompt while it runs, or in `/tasks` for 30 seconds after it finishes, and press Enter to open its transcript; type there. An open transcript stays open when the turn ends; after those 30 seconds only your follow-up resumes a closed one.
+- **Its hand-backs reach you by themselves**: each turn the user drives there sends you the hand-back as a completion notification (observed on 2.1.289, undocumented).
 
 ### In dialogue
 
-- **If you are the dispatched agent,** you have no question dialog. Write the question as plain text in your thread first, then hand back; the hand-back ends the turn. If a tool is given to you for the final report, the hand-back is that call, and the question is still written before it. The user answers in your thread or through the Manager's follow-up; either resumes you.
+- **If you are the dispatched agent,** you have no question dialog. Write the question as plain text in your thread first, then hand back. If a tool is given for the final report, the hand-back is that call; write the question before it. The user answers in your thread or through the Manager's follow-up; either resumes you.
 
 ### Read
 
-- **Read, with no command.** `Read` opens a file, `Grep` searches text and `Glob` lists files. You have no shell and need none.
+- **Read, with no command.** `Read` opens a file, `Grep` searches text and `Glob` lists files.
 
 ### Commands
 

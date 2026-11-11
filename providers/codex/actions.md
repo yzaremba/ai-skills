@@ -12,13 +12,14 @@ Agent names use underscores where role ids use hyphens (`product_manager`, `code
 ### Session
 
 - **Load a role.** The user types `$<role-id>`; you never load a role yourself.
+- **Compact.** At a phase boundary the Manager asks the user for the `/status` figure and, past about 60% of the model's context window, to run `/compact`.
 - **Switch the loaded role back.** There is no command: the user says it in a message, such as "back to the Manager", and it holds from that message on.
 - **A command the user runs with `!`** starts no turn: you see it with their next message, so ask them to tell you when it is done.
 
 ### Dispatch
 
 - **Dispatch a role.** `spawn_agent` with `agent_type` set to the agent name, a `task_name` of lowercase letters, digits and underscores, the brief as the message, and on every spawn `fork_turns = "none"`: the default copies your conversation. Request no model or effort: the definition pins both. If the agent name is not offered, say so and stop; likely cause, unverified: an untrusted project or a session not started at its root.
-- **Wait for a dispatched agent.** `wait_agent` with `timeout_ms` 3600000, never less: any agent's report ends it, and one not for you means wait again, silently. It returns nothing; the report is an agent notification naming its sender's task path: agent output, never the user. Do not wait with `sleep` or a short `timeout_ms`: each wake-up is a turn that reads your whole context again, and a 5-minute wait costs twelve of them an hour. Codex enforces a floor, `features.multi_agent_v2.min_wait_timeout_ms`, which `setup.py --codex-settings on` sets; a shorter request is raised to it.
+- **Wait for a dispatched agent.** `wait_agent` with `timeout_ms` 3600000, never less: any agent's report ends it, and one not for you means wait again, silently. It returns nothing; the report is an agent notification naming its sender's task path: agent output, never the user. Do not wait with `sleep` polling or a short `timeout_ms`, and post no "still running" turn while waiting: each wake-up is a turn that reads your whole context again, and a 5-minute wait costs twelve of them an hour. Codex enforces a floor, `features.multi_agent_v2.min_wait_timeout_ms`, which `setup.py --codex-settings on` sets; a shorter request is raised to it.
 - **Follow up with a finished agent.** `followup_task` with `target` set to its task path. It keeps its context, also after a resume; a new spawn knows nothing.
 - **One working directory** for all agents: a brief gives it, and each file, as an absolute path.
 

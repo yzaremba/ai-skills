@@ -196,7 +196,7 @@ role = "manager"
 skill = "prd-implementation"
 stage = "deferred.md"
 part = "writes"
-note = "Check: `python scripts/check.py --project <project root>`. Write items on the user's word, a code-complete close's proposals too; later outcomes; Audit on an archived PLAN."
+note = "Offer the check at a session's start, run it only when the user asks: `python scripts/check.py --project <project root>`. Write items, outcomes, Audit."
 
 [[binding]]
 role = "manager"
@@ -220,9 +220,9 @@ part = "close-commands"
 note = "As at a close."
 
 # Lessons for the project memory: who proposes one and who writes an approved
-# one. The Manager proposes none of its own: it puts each proposal to the user
-# and sends the answer back, and writes one the user approved or asked it to
-# record.
+# one. The Manager proposes none of its own: it re-checks each proposal against
+# the four tests, puts the survivors to the user and sends the answer back, and
+# writes one the user approved or asked it to record.
 
 [[binding]]
 role = "implementation-manager"
@@ -250,4 +250,4 @@ role = "manager"
 skill = "project-memory"
 stage = "lifecycle.md"
 part = "lessons"
-note = "Write a close's approved lessons in the archive change, and one the user asks you to record. Propose none."
+note = "Write a close's approved lessons in the archive change, and one the user asks you to record. Propose none: re-check each proposal, put survivors to the user with \"N dropped\", send answers back."

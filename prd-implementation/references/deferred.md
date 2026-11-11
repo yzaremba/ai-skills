@@ -95,12 +95,12 @@ Check: python tools/checks/legacy_export_calls.py --days 30
 
 ## Checking the items
 
-Items are checked **on demand, with the check command**. It can be run at any time; it changes nothing.
+Items are checked **on demand, with the check command**. It can be run at any time; it changes nothing. The Manager does not run it at a session's start: it offers the check in one line and runs it only when the user asks.
 
 For each open item it lists: run the named check, or judge the trigger. Then:
 
 - **The trigger has not fired and the date has not passed**: the item stays as it is.
-- **The trigger has fired, or the date has passed**: the item is **resolved, re-dated with a reason, or dropped at that check**. It never just stays. Put it to the user at that check, as "Questions to the user" in [conventions.md](conventions.md) says. Do not leave it for a later check, and do not decide it for them.
+- **The trigger has fired, or the date has passed**: the item is **resolved, re-dated with a reason, or dropped at that check**. It never just stays, and is never only noted: it is put to the user as a question. Put it to the user at that check, as "Questions to the user" in [conventions.md](conventions.md) says. Do not leave it for a later check, and do not decide it for them.
 
 An item's date has passed when today is later than its `Review by:` date. On the date itself it has not.
 

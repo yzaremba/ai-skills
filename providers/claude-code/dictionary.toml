@@ -103,8 +103,10 @@ compaction_tokens = 5000
 #
 # The effort levels are those of the model each alias resolves to on the
 # Anthropic API at the checked version: Haiku 5.5, Sonnet 5.5, Opus 5.5,
-# Fable 5.1. On another provider (Bedrock, Foundry, a gateway) an alias may
-# resolve to an older model with fewer levels, or to one with none.
+# Fable 5.1 (the `fable` alias resolved to `claude-fable-5-1` on 2.1.296; on
+# 2.1.322 session records show `claude-fable-5-2`). On another provider
+# (Bedrock, Foundry, a gateway) an alias may resolve to an older model with
+# fewer levels, or to one with none.
 
 # "v2.1.293: `haiku` resolves to Haiku 5.5 on the Anthropic API" (the model
 # configuration page, Version history), and the page lists Haiku 5.5 with

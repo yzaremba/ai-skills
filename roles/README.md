@@ -110,17 +110,17 @@ note = "<optional: what the part covers>"
   | `seam` | Of the roadmap stage: the seam, when a sprint the roadmap plans is started. |
   | `plan-change` | Of a sprint's STATE: the fields a change of the PLAN or TASKS outside the build moves. |
   | `moves` | Of the backlog conversion: the moves and deletions of the earlier-place move, steps 1 and 2, on the user's word. Writes no text. |
-  | `writes` | Of the backlog: a line in the user's words, nothing developed. Of the deferred items: runs the check command when a session starts, which also reports each sprint branch, where it is checked out and its docs there; makes the full check with its named checks when the user asks, and puts what needs a decision to the user; writes a new item, or the outcome the user decided for one, on the user's word. |
+  | `writes` | Of the backlog: a line in the user's words, nothing developed. Of the deferred items: offers the check command at a session's start and runs it only when the user asks (it also reports each sprint branch, where it is checked out and its docs there); makes the full check with its named checks when the user asks, and puts what needs a decision to the user; writes a new item, or the outcome the user decided for one, on the user's word. |
   | `close-commands` | Of completion, and of abandoning a sprint: puts the decisions of the close to the user, runs its commands, and writes the archive change with its commit. |
   | `close-writer` | Of completion, and of abandoning a sprint: what the close writes and commits, but for the archive change, which is the Manager's. |
-  | `lessons` | Of the project memory's lifecycle: proposes lessons, and writes each one the user approved, but for the Implementation Manager, which writes none. The Manager proposes none of its own: it puts a proposal to the user and tells the role that made it; it writes a close's approved lessons in the archive change, and any the user asked it to record. |
+  | `lessons` | Of the project memory's lifecycle: proposes lessons, and writes each one the user approved, but for the Implementation Manager, which writes none. The Manager proposes none of its own: it re-checks each proposal against the lesson tests, puts the survivors to the user and tells the role that made it; it writes a close's approved lessons in the archive change, and any the user asked it to record. |
 
 - **A row is unique** by `role`, `skill` and `stage`. A stage file may have several rows, one for each role with a part in it.
 - **Every stage file has a row**, and `validate.py` fails one that has none (`stage-unbound`). A process skill is a skill that holds a file `references/stage-*.md`. Its stage files are the `.md` files directly in its `references/` directory, whatever their names, with three exceptions: `conventions.md`, which holds in every stage and is read through each stage file, and the two provider files, `claude-code.md` and `codex.md`, which say how an action is done and not who does it. A file in a directory below `references/` is not a stage file.
 - **Not every role has a row.** The Investigator and the Code Reviewer follow no stage file: the brief and the role's own text are all they work from, and their definitions say so.
 - **Every name is checked.** The role is a directory here, the skill is a directory at the repository root, and the stage file exists in it.
 - **A role's rows reach the role in its generated definition.** Role text therefore says "the stage file your binding names" and never names the file. The generated section tells the role to read the file before it acts on it. Setup writes a skill's rows under the path of that skill's stage files in the provider's skills directory, from `~`, so that no role searches the disk for a skill.
-- **A note may give a command of the skill** where the role runs it without reading the stage file first, as the Manager runs the check command when a session starts.
+- **A note may give a command of the skill** where the role runs it without reading the stage file first, as the Manager runs the check command when the user takes up its offer at a session's start.
 
 ## Action notes
 

@@ -28,7 +28,12 @@ from pathlib import Path
 # Families are flat (date-suffixed ids ...-20251001 collapse to the family), but
 # note Opus has TWO tiers: 4.5/4.6/4.7/4.8 are $5/$25; 4.0/4.1 stayed $15/$75.
 # Cache rates follow the standard ratios: read 0.1x input, write-5m 1.25x, write-1h 2x.
+# Fable cache reads ($0.20 on $8, $1.00 on $10) are listed prices, not 0.1x input.
+# claude-fable-5-1, claude-fable-5-2: the two cache-write prices are derived from the
+# standard 1.25x and 2x multipliers, not listed. Lookup is an exact key match after the 8-digit date strip.
 PRICING = {
+    "claude-fable-5-2":  dict(inp=8.00,  out=40.00, cache_read=0.20, cache_write_5m=10.00, cache_write_1h=16.00),
+    "claude-fable-5-1":  dict(inp=10.00, out=50.00, cache_read=1.00, cache_write_5m=12.50, cache_write_1h=20.00),
     "claude-fable-5":    dict(inp=10.00, out=50.00, cache_read=1.00, cache_write_5m=12.50, cache_write_1h=20.00),
     "claude-opus-4-8":   dict(inp=5.00,  out=25.00, cache_read=0.50, cache_write_5m=6.25,  cache_write_1h=10.00),
     "claude-opus-4-7":   dict(inp=5.00,  out=25.00, cache_read=0.50, cache_write_5m=6.25,  cache_write_1h=10.00),

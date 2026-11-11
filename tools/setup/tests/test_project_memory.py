@@ -153,7 +153,7 @@ class WhoWritesALesson(support.ScratchCase):
             self.assertIn("in a `ready for the gate` or `stopped` hand-back or, loaded, to the user", bound[role][0].note)
 
     def test_the_manager_writes_an_approved_lesson_and_the_coder_has_none(self) -> None:
-        self.assertIn("Propose none.", self.bound()["manager"][0].note)
+        self.assertIn("Propose none: re-check each proposal", self.bound()["manager"][0].note)
         self.assertNotIn("coder", self.bound())
 
     def test_the_row_reaches_each_role_with_the_skills_place(self) -> None:
