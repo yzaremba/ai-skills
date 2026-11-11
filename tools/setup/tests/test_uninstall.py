@@ -1102,6 +1102,40 @@ class ProjectInstallCase(UninstallCase):
         self.assertIn("A link you made by hand that setup", out)
 
 
+class ProjectRolesCase(UninstallCase):
+    """A project with roles of its own where the home has none (R5.8):
+    ``--uninstall DIR`` takes the whole set back and touches no home."""
+
+    def test_the_whole_set_goes_back_and_no_home_is_touched(self) -> None:
+        self.claude_home(earlier=False)
+        self.codex_home()
+        self.a_project()
+        # The home lacks the roles and the process skill the roles are bound to.
+        self.data(self.user_file, 'install = ["beta", "sample"]\n')
+        self.data(self.project / ".agents" / "workflow.toml", 'install = ["roles"]\n' + PROJECT_SETTINGS)
+        before = self.pictures()
+        self.done("install", *self.at_home)
+        self.done("install", *self.at_home, *self.in_project)
+        project = self.project
+        for name in (".claude/agents/lead.md", ".codex/agents/worker.toml", ".claude/skills/lead/SKILL.md",
+                     ".agents/skills/quick/agents/openai.yaml"):
+            self.assertTrue((project / name).is_file(), name)
+        for name in (".claude/skills/alpha", ".agents/skills/alpha"):
+            self.assertEqual(fsio.look(project / name).kind, fsio.LINK, name)
+        self.assertIn(b'"agent": "lead"', (project / ".claude" / "settings.json").read_bytes())
+        self.assertNotEqual((project / ".codex" / "config.toml").read_bytes(), USER_TOML)
+        listed = (project / ".git" / "info" / "exclude").read_text(encoding="utf-8").splitlines()
+        self.assertTrue({".claude/agents/lead.md", ".agents/skills/lead/SKILL.md", ".agents/skills/alpha"} <= set(listed))
+        home = picture(self.home)
+        report = self.uninstall(project=True)
+        self.assertEqual((report["scope"], report["kept"]), ("project", []))
+        self.assertEqual(picture(self.project), before["project"])
+        self.assertNothingAt(self.project_state)
+        self.assertEqual(picture(self.home), home)
+        self.take_back(project=False)
+        self.assertAsAtTheStart(before)
+
+
 class ProjectKeptCase(UninstallCase):
     def setUp(self) -> None:
         super().setUp()

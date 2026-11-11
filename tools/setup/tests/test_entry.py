@@ -1007,6 +1007,120 @@ class ProjectRolesCase(EntryCase):
         self.assertNotIn(render.TRUST_NOTE, report["notes"])
 
 
+PROJECT_LINKS = {".claude/skills/alpha", ".agents/skills/alpha"}
+
+
+class ProjectRolesOutCase(EntryCase):
+    """A project's own set taken out again (R5.7, R5.8): ``roles`` leaving
+    the project's list, the home getting ``roles``, a file edited by hand,
+    and the exclude block on the way in and out."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write(self.user_file, 'install = ["sample"]\n')
+        self.write(self.project_file, 'install = ["roles"]\n' + DEFAULT_ON + OVERRIDE)
+        code, self.first, err = self.report(*self.project_arg)
+        self.assertEqual((code, err), (0, ""))
+
+    def project_set(self) -> set[str]:
+        """Every file of setup's kind in the project: the definitions, the
+        loaded skills, the keys' and the block's files; a link not entered."""
+        return set(self.files(self.project, ".claude", ".codex", ".agents/skills"))
+
+    def ignored(self) -> list[str]:
+        return blocks.content_of(self.exclude_file.read_bytes(), blocks.GITIGNORE)
+
+    def test_the_exclude_block_lists_each_new_file_and_link(self) -> None:
+        self.assertEqual(self.project_set(), ALL_FILES | SKILLS | {SETTINGS, CONFIG})
+        for link in PROJECT_LINKS:
+            self.assertLinked(self.project / link, self.clone / "alpha")
+        # The key is setup's part of a file the project owns: not listed.
+        self.assertEqual(self.ignored(), sorted({*ALWAYS, CONFIG, *ALL_FILES, *SKILLS, *PROJECT_LINKS}))
+
+    def test_roles_leaving_the_projects_list_take_the_whole_set_out(self) -> None:
+        self.write(self.project_file, DEFAULT_ON + OVERRIDE)
+        code, report, err = self.report(*self.project_arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual({item["status"] for item in report["stale"]}, {render.REMOVE})
+        self.assertEqual(self.project_set(), set())
+        for name in (".claude/agents", ".codex/agents", ".claude/skills", ".agents/skills", ".codex"):
+            self.assertNothingAt(self.project / name)
+        self.assertEqual(self.home_files(), {})
+        self.assertEqual(self.ignored(), ALWAYS)
+        self.assertNotIn(render.TRUST_NOTE, report["notes"])
+        # The record holds nothing of the set any more, and a second run has nothing to do.
+        self.assertEqual([key for key in self.project_entries()
+                          if key.startswith(("project:.claude", "project:.codex", "project:.agents/skills"))], [])
+        before = tree(self.root)
+        code, report, _ = self.report(*self.project_arg)
+        self.assertEqual((code, report["plan"], report["stale"]), (0, [], []))
+        self.assertEqual(tree(self.root), before)
+
+    def test_the_home_getting_roles_leaves_the_projects_own_definitions_only(self) -> None:
+        self.write(self.user_file, 'install = ["sample", "roles"]\n')
+        code, report, err = self.report(*self.project_arg)
+        self.assertEqual((code, err), (0, ""))
+        # The project keeps the definitions of the role its settings change
+        # (S04, R5.6), now made on the home's, and the keys, naming the
+        # home's starting role; its loaded skills and links went.
+        self.assertEqual(self.project_set(),
+                         {".claude/agents/worker.md", ".codex/agents/worker.toml", SETTINGS, CONFIG})
+        self.assertEqual(json.loads(self.text(SETTINGS, self.project)), BOTH_KEYS)
+        for name in (".claude/skills", ".agents/skills"):
+            self.assertNothingAt(self.project / name)
+        self.assertEqual(set(self.home_files()), HOME_FILES)
+        self.assertLinked(self.claude_skills / "alpha", self.clone / "alpha")
+        self.assertLinked(self.codex_skills / "alpha", self.clone / "alpha")
+        built = {(found.provider, found.name): found.text for found in definitions.build(self.where(project=True))}
+        self.assertEqual(self.text(".claude/agents/worker.md", self.project), built[(CLAUDE, "worker.md")])
+        self.assertEqual(self.text(".codex/agents/worker.toml", self.project), built[(CODEX, "worker.toml")])
+        self.assertIn("In `~/.claude/skills/alpha/references/`:", self.text(".claude/agents/worker.md", self.project))
+        _, block = entry.project_block(self.locations(), None)
+        self.assertIn(block, self.text(CONFIG, self.project))
+        self.assertEqual(self.ignored(), sorted({*ALWAYS, CONFIG, ".claude/agents/worker.md", ".codex/agents/worker.toml"}))
+        stale = {item["key"] for item in report["stale"]}
+        self.assertEqual({item["status"] for item in report["stale"]}, {render.REMOVE})
+        self.assertEqual(stale, {f"project:{name}" for name in
+                                 (ALL_FILES | SKILLS | PROJECT_LINKS) - {".claude/agents/worker.md", ".codex/agents/worker.toml"}})
+        # And it holds, run after run.
+        code, report, _ = self.report(*self.project_arg)
+        self.assertEqual((code, report["plan"], report["stale"]), (0, [], []))
+
+    def edit(self, name: str) -> bytes:
+        file = self.project / name
+        file.write_bytes(file.read_bytes() + b"\nMy own line.\n")
+        return file.read_bytes()
+
+    def test_a_file_of_the_set_edited_by_hand_is_kept_and_reported(self) -> None:
+        edited = {name: self.edit(name) for name in (".claude/agents/reviewer.md", ".agents/skills/lead/SKILL.md")}
+        self.write(self.project_file, DEFAULT_ON + OVERRIDE)
+        code, report, err = self.report(*self.project_arg)
+        # No option removes a file that is no longer generated: kept, it is
+        # the user's, and the code is 0, as for a home's (``NoRolesCase``).
+        self.assertEqual((code, err), (0, ""))
+        for name, data in edited.items():
+            self.assertEqual((self.project / name).read_bytes(), data)
+        kept = sorted(item["key"] for item in report["stale"] if item["status"] == render.KEPT)
+        self.assertEqual(kept, sorted(f"project:{name}" for name in edited))
+        self.assertIn("2 kept", report["summary"])
+        self.assertEqual(self.project_set(), set(edited))
+        self.assertNothingAt(self.project / ".agents/skills/lead/agents")
+        for link in PROJECT_LINKS:
+            self.assertNothingAt(self.project / link)
+
+    def test_a_definition_still_generated_but_edited_by_hand_is_kept_with_exit_code_3(self) -> None:
+        data = self.edit(".claude/agents/worker.md")
+        self.write(self.user_file, 'install = ["sample", "roles"]\n')
+        code, report, err = self.report(*self.project_arg)
+        self.assertEqual((code, err), (render.EXIT_NEEDS_FLAG, ""))
+        self.assertEqual((self.project / ".claude/agents/worker.md").read_bytes(), data)
+        self.assertNothingAt(self.project / ".claude/skills")
+        code, report, err = self.report(*self.project_arg, "--overwrite-edited")
+        self.assertEqual((code, err), (0, ""))
+        built = {(found.provider, found.name): found.text for found in definitions.build(self.where(project=True))}
+        self.assertEqual(self.text(".claude/agents/worker.md", self.project), built[(CLAUDE, "worker.md")])
+
+
 class LinkedSkillDirectoryCase(EntryCase):
     """The owner replaced setup's skill directory of a loaded role by a link
     to a directory of theirs, with an empty ``agents`` in it: nothing of

@@ -25,6 +25,8 @@ from pathlib import Path
 
 import interop_support  # noqa: E402
 import support  # noqa: E402
+from test_definitions import ALL_FILES  # noqa: E402
+from test_entry import CONFIG, DEFAULT_ON, OVERRIDE, SETTINGS, SKILLS, EntryCase  # noqa: E402
 from test_validate import TreeCase  # noqa: E402
 from wfsetup import fsio, homes  # noqa: E402
 from wfsetup.locations import Locations  # noqa: E402
@@ -383,6 +385,66 @@ class ProjectLinksOfBothSidesCase(TreeCase):
         self.assertEqual([fsio.look(link).target for link in self.links], texts)
         done = self.far.shell("fsutil", "reparsepoint", "query", self.far.there(self.links[0]))
         self.assertIn("Mount Point", done.stdout.decode("utf-8", "replace"))   # still Windows's junction
+
+
+class ProjectRolesOfBothSidesCase(EntryCase):
+    """A project with roles of its own, on a Windows drive, set up from one
+    side: the other side finds the set up to date, the same text and the
+    same digests (R5.3)."""
+
+    def setUp(self) -> None:
+        self.far = interop_support.need(self, python=True)
+        with self.far.as_temp():
+            super().setUp()
+        self.script = self.install_tool()
+        # What a run that writes a settings file reads beside the tool.
+        shutil.copyfile(support.SETUP / "manifest-keys.json", self.script.with_name("manifest-keys.json"))
+        self.write(self.user_file, 'install = ["sample"]\n')
+        self.write(self.project_file, 'install = ["roles"]\n' + DEFAULT_ON + OVERRIDE)
+        # The home on the Windows drive is the Windows side's (as in ``ProjectLinksOfBothSidesCase``).
+        code, out, err = self.install_there()
+        self.assertEqual((code, err), (0, ""), out)
+
+    install_there = WslLinkSeenFromWindowsCase.install_there
+    run_there = WslLinkSeenFromWindowsCase.run_there
+    setup_script = WslLinkSeenFromWindowsCase.setup_script
+
+    def render_here(self, project_changed: bool = True) -> tuple[int, dict, str]:
+        code, out, err = support.install("--json", "--home", str(self.home), str(self.project),
+                                         project_changed=project_changed)
+        return code, json.loads(out), err
+
+    def render_there(self, *argv: str) -> tuple[int, dict, str]:
+        code, out, err = self.install_there("--json", *argv, self.far.there(self.project))
+        return code, json.loads(out)["install"], err
+
+    def the_set(self) -> dict[str, bytes]:
+        return self.files(self.project, ".claude", ".codex", ".agents/skills")
+
+    def assert_up_to_date(self, render_first, render_then) -> None:
+        code, report, err = render_first()
+        self.assertEqual((code, err), (0, ""), report["errors"])
+        made = self.the_set()
+        self.assertTrue(set(made) >= ALL_FILES | SKILLS | {SETTINGS, CONFIG}, sorted(made))
+        record = {key: entry_.get("inputs") for key, entry_ in self.project_entries().items()}
+        code, report, err = render_then()
+        self.assertEqual((code, err), (0, ""), report["errors"])
+        self.assertFalse(report["changed"], report["plan"])
+        self.assertEqual(report["stale"], [])
+        statuses = {item["status"] for item in report["project"]["items"]}
+        self.assertEqual(statuses, {"up-to-date"}, report["project"]["items"])
+        self.assertEqual(self.the_set(), made)
+        self.assertEqual({key: entry_.get("inputs") for key, entry_ in self.project_entries().items()}, record)
+
+    def test_set_up_from_wsl_it_is_up_to_date_from_windows(self) -> None:
+        self.assert_up_to_date(self.render_here, self.render_there)
+
+    def test_set_up_from_windows_it_is_up_to_date_from_wsl(self) -> None:
+        # The project's settings file stands for one written by hand: the
+        # option sets the keys, as a run that wrote the file does (R6.1);
+        # the other side's run is a plain one, which writes no settings file.
+        self.assert_up_to_date(lambda: self.render_there("--manager-default", "--rewrite-settings"),
+                               lambda: self.render_here(project_changed=False))
 
 
 if __name__ == "__main__":
