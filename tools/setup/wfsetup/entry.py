@@ -49,14 +49,16 @@ The entry points (provider facts read on 2026-10-05)
     by a level name to set it directly"), ``/model`` on Codex (the action
     notes of the repository).
 
-    A project cannot override a loaded role: the skill is user-level, and
-    a provider's personal skill wins over a project skill of the same name
-    (the Phase 5 review's finding S13; Codex does not merge two skills of
-    one name). So the skill carries
-    the user-level profile, its profile paragraph says that a project may
-    set another and which command prints it (``PROJECT_PROFILE``), and
-    ``setup.py DIR`` reports each loaded role whose profile the
-    project changes.
+    Where the home has roles, a project cannot override a loaded role: the
+    skill is user-level, Claude Code takes a user-level skill over a project
+    skill of the same name (the Phase 5 review's finding S13), and Codex
+    lists both (codex-cli 0.167.0, 2026-11-10; it does not merge them). So
+    the skill carries the user-level profile, its profile paragraph says
+    that a project may set another and which command prints it
+    (``PROJECT_PROFILE``), and ``setup.py DIR`` reports each loaded role
+    whose profile the project changes. A project with roles of its own
+    (``definitions.project_roles``) has its own loaded-role skills, which
+    carry the project's profile and leave that paragraph out.
 
     The text begins with what makes it a loaded role (the one-active-role
     rule, where the role's own text does not state it, and the profile),
@@ -198,10 +200,10 @@ PROJECT_AGENTS = {CLAUDE_CODE: ".claude/agents", CODEX: ".codex/agents"}
 # English prose runs near four bytes a token; three errs toward "too long".
 BYTES_PER_TOKEN = 3
 
-# A loaded role is a user-level skill, and a provider's own skill wins over
-# a project's of the same name: a project's settings cannot change this
-# text. The paragraph says that a project may have another profile, and
-# where it is printed.
+# Where the home has roles, a loaded role is a user-level skill: Claude
+# Code takes it over a project's of the same name and Codex lists both, so
+# a project's settings cannot change this text. The paragraph says that a
+# project may have another profile, and where it is printed.
 PROJECT_PROFILE = (
     "A project may set another profile: "
     "`python tools/setup/setup.py <the project> --dry-run`, run in the skills repository, "
