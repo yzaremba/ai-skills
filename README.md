@@ -131,6 +131,50 @@ give up what they add: a model and effort pinned to each kind of work, a reviewe
 the author for the PRD and the PLAN, and a Manager that routes each request. Tick `roles`
 again (or add it to `--install`) to get them back; [Using it](#using-it) lists them.
 
+#### A project with a private planning repository
+
+For a project whose sprint docs and private lessons live in a sibling private repository,
+checked out next to it (`<planning repo>`, holding `docs/` and `memory/`). This is for local
+use on both providers; the cloud is below.
+
+1. In the project's `.agents/workflow.local.toml` (setup has no flag for this file):
+
+   ```toml
+   [process]
+   docs_dir = "../<planning repo>/docs"
+   ```
+
+2. Link the private lessons, and commit a `.gitignore` line for the link. Write it without
+   a trailing slash: git does not take a symlink for a directory, so `docs/memory/local/`
+   would not ignore it. If `docs/memory/local/` is already a folder, move its files into
+   `<planning repo>/memory` and remove it first; otherwise `ln -s` makes the link inside it.
+
+   ```bash
+   mkdir -p docs/memory
+   ln -s ../../../<planning repo>/memory docs/memory/local
+   echo /docs/memory/local >> .gitignore
+   ```
+
+3. Let the agent read the sibling.
+   - Claude Code: in the project's `.claude/settings.local.json`:
+
+     ```json
+     {"permissions": {"additionalDirectories": ["/path/to/<planning repo>"]}}
+     ```
+
+     Setup does not ignore this file. Claude Code adds it to your global git ignore only
+     when Claude Code itself creates the file; step 4 checks.
+   - Codex: start it with the sibling added, for example `codex --add-dir ../<planning repo>`.
+     Codex is documented here for local use only.
+
+4. Check that git ignores both local files, and add any it does not to `.gitignore` or
+   `.git/info/exclude` (setup lists `.agents/workflow.local.toml` in the exclude file only
+   when its run on the project writes something):
+
+   ```bash
+   git check-ignore .agents/workflow.local.toml .claude/settings.local.json
+   ```
+
 #### Claude Code in the cloud
 
 In a Claude Code cloud environment, the setup script clones this repository and runs setup
@@ -139,16 +183,35 @@ for the Claude Code home, then for the project:
 ```bash
 #!/bin/bash
 set -e
-git clone https://github.com/yzaremba/ai-skills.git ~/ai-skills
-python3 ~/ai-skills/tools/setup/setup.py --yes --provider claude-code
-python3 ~/ai-skills/tools/setup/setup.py --yes /home/user/<repo name>
+[ -d ~/.local/share/ai-skills ] || git clone https://github.com/yzaremba/ai-skills.git ~/.local/share/ai-skills
+python3 ~/.local/share/ai-skills/tools/setup/setup.py --yes --provider claude-code
+python3 ~/.local/share/ai-skills/tools/setup/setup.py --yes /home/user/<repo name>
 ```
 
-The second run is the project's: the cloud session keeps the repository at
-`/home/user/<repo name>`, and without that line an item the project's `install` adds to the
-home's is missing. A project committed with `"agent"` in `.claude/settings.json` starts a
-fresh session as the Manager. A project whose sprint docs live in another repository does
-not run its sprints in the cloud, since a cloud session holds the one repository.
+The clone is not at `~/ai-skills` because a cloud session keeps its repository at
+`/home/user/<repo name>`: in a session of ai-skills itself, `~/ai-skills` is that checkout,
+and the clone would fail. The second run is the project's, and without that line an item the
+project's `install` adds to the home's is missing. A project committed with `"agent"` in
+`.claude/settings.json` starts a fresh session as the Manager.
+
+A project whose sprint docs live in a private sibling repository (see above) runs its
+sprints in the cloud too, when the session's own credentials can also read the sibling.
+The script does not authenticate. Add this to the script, after the lines above:
+
+```bash
+[ -d /home/user/<planning repo> ] || git clone https://github.com/<owner>/<planning repo>.git /home/user/<planning repo>
+cd /home/user/<repo name>
+mkdir -p .agents .claude docs/memory .git/info
+printf '[process]\ndocs_dir = "../<planning repo>/docs"\n' > .agents/workflow.local.toml
+printf '{"permissions": {"additionalDirectories": ["/home/user/<planning repo>"]}}\n' > .claude/settings.local.json
+ln -sfn ../../../<planning repo>/memory docs/memory/local
+for p in /.agents/workflow.local.toml /.claude/settings.local.json /docs/memory/local; do
+  grep -qxF "$p" .git/info/exclude 2>/dev/null || echo "$p" >> .git/info/exclude
+done
+```
+
+The last lines keep the three out of `git status`; a cloud session may not ignore
+them.
 
 ### `multiagent-collab` for Codex and Claude
 

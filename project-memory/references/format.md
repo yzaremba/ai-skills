@@ -70,7 +70,7 @@ One file per lesson, `<memory dir>/<slug>.md`. The slug is short kebab-case and 
 
 `<memory dir>/local/` holds the lessons that are private or hold only on one machine: a path, an account, a tool installed in an unusual place.
 
-- **It is git-ignored.** Before the first local lesson is written, the project's `.gitignore` gets the line `<memory dir>/local/`. That line is a change to a committed file: say so when the lesson is proposed.
+- **It is git-ignored.** Before the first local lesson is written, the project's `.gitignore` gets the line `/<memory dir>/local`, with a leading slash and no trailing one, which ignores a folder and a link alike; `<memory dir>` is the setting's path without a leading `./` or a trailing `/`. That line is a change to a committed file: say so when the lesson is proposed.
 - **Its lessons have the same file format**, in `<memory dir>/local/<slug>.md`.
 - **It has its own index file**, `<memory dir>/local/INDEX.md`: a heading, then one line per local lesson in the form of an index line, with the path relative to the project root. It holds no markers and nothing else. Keep it within the same limits; no command checks it.
 - **Nothing in it is committed, and none of its lessons has a line in `AGENTS.md`.** The one fixed line of the index is what leads a session to it.
