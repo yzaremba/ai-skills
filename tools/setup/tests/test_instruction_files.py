@@ -25,7 +25,7 @@ from unittest import mock
 import support
 from fileops_support import SYMLINKS
 from test_doctor import SECRET, DoctorCase, snapshot
-from wfsetup import doctor, homes, instructions
+from wfsetup import doctor, instructions
 
 CHECK = instructions.NAME
 INDEX = "# Project\n\n## Project memory\n\n- [A lesson](docs/memory/a-lesson.md): always; do it\n"

@@ -15,7 +15,7 @@ Role ids are used as written, e.g. `product-manager`.
 ### Dispatch
 
 - **Dispatch a role.** The `Agent` tool with `subagent_type` set to the role id, the brief as `prompt`, and a `name` of the role id plus a short suffix, so the agent can be addressed later. Pass no `model` and no `effort`: the definition pins both.
-- **Wait for a dispatched agent.** Its output arrives later as a completion notification marked as that agent's: agent output, never the user. Until then it is running; do not guess its result.
+- **Wait for a dispatched agent.** Its output arrives later as a completion notification marked as that agent's: agent output, never the user. Until then it is running; do not guess its result. Do not end your turn while one is running: a report that arrives after the turn ends is lost.
 - **Follow up with a finished agent.** `SendMessage` with `to` set to the agent's name or the agent id its result gave you. It resumes with its whole history; after a restart only once the same session is resumed. A five-minute-cache role (the Investigator, a Coder, the Code Reviewer): only within 5 minutes of its report; else a fresh one.
 
 ### Dialogue
