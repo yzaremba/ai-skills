@@ -10,8 +10,6 @@ How it is used
     entry.manager_default(where)                    # the setting roles.manager_default, for where
     entry.project_block(where)                      # codex: the project default, as a block's text
     entry.project_definitions(where, providers)     # the definitions a project's settings change
-    entry.digests(where, providers)                 # {(provider, kind, name): inputs}; what ``--check`` compares
-    entry.project_digests(where, providers)         # the same for a project's definitions
 
 Nothing here writes, and nothing here knows a home or a directory: the
 caller (the install) decides where a text goes. Every text is made from
@@ -588,20 +586,3 @@ def project_definitions(where: Locations, providers: Iterable[str] = PROVIDERS,
             for found in definitions.build(definitions.user_level(where), names, homes_found, dirs)}
     return [found for found in definitions.build(where, names, homes_found, dirs)
             if user.get((found.provider, found.definition)) != found.text]
-
-
-def digests(where: Locations, providers: Iterable[str] = PROVIDERS,
-            homes_found: Any = None) -> dict[tuple[str, str, str], str]:
-    """The inputs digest of every file ``skills`` and ``profiles`` give, by
-    provider, kind and name, from the sources and settings as they are now.
-    Nothing is written. For a home, give ``definitions.user_level(where)``."""
-    made = [*skills(where, providers, homes_found), *profiles(where, providers, homes_found)]
-    return {(one.provider, one.kind, one.name): one.inputs for one in made}
-
-
-def project_digests(where: Locations, providers: Iterable[str] = PROVIDERS,
-                    homes_found: Any = None) -> dict[tuple[str, str], str]:
-    """The inputs digest of each definition a project holds, by provider
-    and the file's name in the project's agents directory."""
-    return {(found.provider, found.name): found.inputs
-            for found in project_definitions(where, providers, homes_found)}

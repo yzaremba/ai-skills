@@ -56,6 +56,20 @@ USER_JSON = b'{\r\n\t"permissions": {"allow": ["Bash(ls *)"]},\r\n\t"model": "op
 USER_TOML = b'# Mine.\r\napproval_policy = "on-request"\r\n\r\n[features]\r\nfast = true\r\n'
 
 
+def recomputed(where: Locations) -> dict[tuple[str, str, str], str]:
+    """The inputs digest of every file ``entry.skills`` and ``entry.profiles``
+    give, by provider, kind and name, from the sources and settings as they
+    are now. Nothing is written."""
+    return {(one.provider, one.kind, one.name): one.inputs
+            for one in [*entry.skills(where), *entry.profiles(where)]}
+
+
+def recomputed_project(where: Locations) -> dict[tuple[str, str], str]:
+    """The inputs digest of each definition a project holds, by provider and
+    the file's name in the project's agents directory."""
+    return {(found.provider, found.name): found.inputs for found in entry.project_definitions(where)}
+
+
 def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -568,11 +582,11 @@ class StableCase(EntryCase):
 
     def test_a_crlf_checkout_gives_the_same_bytes(self) -> None:
         self.ok()
-        before, digests = self.home_files(), entry.digests(self.where())
+        before, digests = self.home_files(), recomputed(self.where())
         for file in (self.clone / "roles/lead/ROLE.md", self.clone / "roles/_shared/gates.md",
                      self.clone / "providers/codex/actions.md", self.clone / "roles/lead/role.toml"):
             file.write_bytes(b"\xef\xbb\xbf" + file.read_bytes().replace(b"\n", b"\r\n"))
-        self.assertEqual(entry.digests(self.where()), digests)
+        self.assertEqual(recomputed(self.where()), digests)
         code, report, _ = self.report()
         self.assertEqual((code, report["plan"]), (0, []))
         self.assertEqual(self.home_files(), before)
@@ -611,8 +625,8 @@ class DigestCase(EntryCase):
         home, project = self.entries(), self.project_entries()
         before = tree(self.root)
         where = self.where(project=True)
-        found = entry.digests(definitions.user_level(where))
-        changed = entry.project_digests(where)
+        found = recomputed(definitions.user_level(where))
+        changed = recomputed_project(where)
         self.assertEqual(tree(self.root), before)
         places = {(CLAUDE, entry.LOADED): ".claude/skills", (CODEX, entry.LOADED): ".agents/skills",
                   (CODEX, entry.PROFILE): ".codex"}
@@ -642,15 +656,15 @@ class DigestCase(EntryCase):
 
     def test_a_changed_source_shows_as_drift_in_its_dependents_only(self) -> None:
         self.ok()
-        recorded = entry.digests(self.where())
+        recorded = recomputed(self.where())
         (self.clone / "roles/lead/ROLE.md").write_bytes(b"# Lead\n\nYou are the lead. Do other work.\n")
-        now = entry.digests(self.where())
+        now = recomputed(self.where())
         self.assertEqual({key for key in now if now[key] != recorded[key]}, {
             (CLAUDE, entry.LOADED, "lead/SKILL.md"), (CODEX, entry.LOADED, "lead/SKILL.md"),
             (CODEX, entry.PROFILE, "lead.config.toml"),
         })
         self.write(self.user_file, '[roles.quick]\neffort = "high"\n')
-        later = entry.digests(self.where())
+        later = recomputed(self.where())
         # The Claude Code model of that tier takes no effort: its skill is the same.
         self.assertEqual({key for key in later if later[key] != now[key]}, {(CODEX, entry.LOADED, "quick/SKILL.md")})
 
@@ -2086,7 +2100,7 @@ class RepositoryCase(RenderCase):
         home = json.loads(self.manifest_file.read_text(encoding="utf-8"))["entries"]
         places = {(CLAUDE, entry.LOADED): ".claude/skills", (CODEX, entry.LOADED): ".agents/skills",
                   (CODEX, entry.PROFILE): ".codex"}
-        for (provider, kind, name), inputs in entry.digests(definitions.user_level(where)).items():
+        for (provider, kind, name), inputs in recomputed(definitions.user_level(where)).items():
             self.assertEqual(home[f"home:{places[(provider, kind)]}/{name}"]["inputs"], inputs)
 
 
