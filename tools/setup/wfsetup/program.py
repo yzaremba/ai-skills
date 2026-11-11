@@ -206,11 +206,42 @@ the homes are installed and refreshed exactly as without it, from the
 user-level settings, and DIR gets, from its own settings (DIR/.agents/
 workflow.toml and workflow.local.toml over the user's):
 
+    - The project's own roles, where the home's `install` has no `roles` and
+      the project's has (DIR/.agents/workflow.toml, or workflow.local.toml
+      over it). For each provider this side has: every role definition in
+      DIR/.claude/agents and DIR/.codex/agents, built as a home's are from
+      the shipped definitions and the settings down to the project's, its
+      [roles.<id>] overrides and roles.high_stakes included; a loaded-role
+      skill for each role that can be loaded, in DIR/.claude/skills and
+      DIR/.agents/skills; and the process skills the roles are bound to,
+      linked as any project item is, except one the home has. No profile
+      file: Codex reads --profile only from its home. A role's binding rows
+      name where a session in the project finds each skill: the home's
+      directory for a skill the home has; for a skill the project has, a
+      path from the project root, which a role is told is the project's
+      main working tree, so it holds for a role working in a worktree of
+      the project. A session started inside a worktree finds none of the
+      project's roles, because the generated files are kept out of git.
+      Starting as the Manager is roles.manager_default, below. Claude Code:
+      with it on, the output gives "claude --agent <role> --effort <level>"
+      for the project; with it off no start command is given, and a session
+      loads a role with /<role>. Codex: with the block written, a plain
+      `codex` in the project starts as the Manager, and the output says so;
+      without it, a session loads a role with $<role>. Setup prints one
+      line, once a run, where a Codex file lands under DIR/.codex: Codex
+      reads the role definitions and the Manager start only in a project you
+      trust. Setup does not work out whether the project is trusted and
+      never marks one trusted. The loaded-role skills load in an untrusted
+      project too; the roles they dispatch do not.
+      Where the home has roles, `roles` in a project's list adds nothing,
+      and what follows holds: the project's own definitions for the roles its
+      settings change stay as they are.
     - A role definition in DIR/.claude/agents and DIR/.codex/agents for each
       definition the project's settings change, a [roles.<id>] override or a
-      model for one. A project's definition replaces the user-level one of
-      the same name on both providers. A project that changes none gets
-      none, and a change for one role writes that role's files alone.
+      model for one, where the home has roles. A project's definition
+      replaces the user-level one of the same name on both providers. A
+      project that changes none gets none, and a change for one role writes
+      that role's files alone.
     - With roles.manager_default = true, the role with "start = true" as the
       default of every session in the project. Claude Code: "agent":
       "<role>" in DIR/.claude/settings.json, and "effortLevel": "<level>"
@@ -240,11 +271,15 @@ workflow.toml and workflow.local.toml over the user's):
       three keys outside the block, nothing is written and the run stops: a
       key cannot be set twice, and the user's value stays in effect. No
       role, or more than one, with "start = true" stops the run as well.
-    - Nothing for a loaded role. Its skill is installed at the user level,
-      and a provider's own skill wins over a project's of the same name, so
-      a project cannot override it: the loaded skill keeps the user-level
-      model and effort. Where the project's settings give a loaded role
-      another profile the output says so, with both.
+    - Where the home has roles, nothing for a loaded role. Its skill is
+      installed at the user level. Claude Code takes a user-level skill over
+      a project's of the same name, so a project cannot override it there:
+      the loaded skill keeps the user-level model and effort. Codex lists
+      both a skill in the home and one of the same name in the project (seen
+      with codex-cli 0.167.0 on 2026-11-10), so which one a session loads is
+      the user's to see. Where the project's settings give a loaded role
+      another profile the output says so, with both. A project with roles
+      of its own has its loaded-role skills, as above.
     - The generated files are listed in setup's block of the repository's
       exclude file, info/exclude in its git directory (DIR/.git/info/exclude,
       or the common one of a linked worktree, which all its worktrees
@@ -259,7 +294,10 @@ workflow.toml and workflow.local.toml over the user's):
       it is kept and reported, with exit code 3, and --overwrite-edited
       writes it. The key and the block are not listed: they are setup's
       part of files the project owns and may commit. A .codex/config.toml
-      that setup created is listed; one that was there before never is.
+      that setup created is listed; one that was there before never is. The
+      project's own roles are listed like the rest, and --uninstall DIR
+      takes them back. --check DIR covers them: their drift, a file edited
+      by hand, and the size of a loaded-role skill of the project.
 
 With roles.manager_default = true, the Codex block in DIR/.codex/config.toml
 is written only where git does not track that file (git -C DIR ls-files
@@ -279,9 +317,14 @@ sides read, not on a --home run and not after a refused run. It runs no
 check.
 
 Turning roles.manager_default off, removing an override, or taking `roles`
-out of the home's `install` makes what an earlier run wrote for it stale: the
-next run with DIR removes it, and a directory setup created that this leaves
-empty. The two keys of .claude/settings.json go only with a run that writes
+out of the project's `install` or putting it into the home's makes what an
+earlier run wrote for it stale: the next run with DIR removes it, and a
+directory setup created that this leaves empty. When `roles` leaves the
+project's list, or the home gets it, the project's own roles go but for what
+the home's roles keep (the definitions the project's settings change). A
+file setup no longer makes that was edited by hand is kept and reported on
+every later run, with exit code 0; exit code 3 is for a file setup still
+makes that was edited by hand, which an option would overwrite. The two keys of .claude/settings.json go only with a run that writes
 DIR/.agents/workflow.toml, or one given --manager-default or
 --no-manager-default (even where the file already holds that value); any
 other run leaves them.
@@ -289,17 +332,19 @@ other run leaves them.
 The roles are an item of `install`. They are on when the home's effective
 `install` (~/.agents/workflow.toml over the shipped one) holds `roles`. When
 it does not, the process alone is installed: no role definition and no entry
-point is generated, in a home or a project. What an earlier run generated is
-then removed, like any file or link that setup would no longer make, and one
-that was edited by hand is kept and reported. A project gets roles only where
-the home has them: what it gets is built on the home's definitions. `roles`
-in a project's own `install` where the home has none is a note, and nothing
-of the roles is installed for the project. The output says when the roles are
-off, and in which file. A run without DIR writes nothing in a project, so
-when the home's roles go off, a project set up with roles keeps what setup
-wrote there (the starting role of roles.manager_default, which names a
-definition the home no longer has, and its own definitions) until a run with
-that DIR takes them out; the starting role's keys in .claude/settings.json,
+point is generated in the home. What an earlier run generated is then
+removed, like any file or link that setup would no longer make, and one that
+was edited by hand is kept and reported. A project has roles in two ways.
+Where the home has them, the project's own settings change some definitions
+(above), and `roles` in the project's list adds nothing. Where the home has
+none, `roles` in the project's own `install` gives the project its own roles,
+as above, and without it the project gets none. The output says when the
+roles are off, and in which file. A run without DIR writes nothing in a
+project, so when the home gets roles, or its roles go off, a project keeps
+what setup wrote there until a run with that DIR takes out what setup would
+no longer make: the project's own roles, or the starting role of
+roles.manager_default and the definitions that name a role the home no
+longer has; the starting role's keys in .claude/settings.json,
 until a run with that DIR writes its .agents/workflow.toml or is given
 --manager-default or --no-manager-default.
 

@@ -104,6 +104,8 @@ session in it starts as the Manager. Setup writes in the project `.agents/workfl
 `.claude/settings.json` at most, as files to commit (it commits nothing, and prints the
 `git add` and `git commit` lines), and lists everything else it makes there in the
 repository's exclude file. Add `--manager-default` for the Manager as the default.
+Where your home does not install `roles` and the project's list does, the project gets its
+own roles: see "A project's own roles" under [Using it](#using-it).
 
 #### After a `git pull`
 
@@ -453,7 +455,8 @@ project choice changed leaves the two keys as they are. The setting takes `low`,
 not setup's and is kept, the project's sessions do not start as the Manager, and setup
 leaves `effortLevel` alone. A project's `effortLevel` applies to every Claude Code session
 in the project, whatever it starts as. A role definition is written for each role the
-project's settings change. Setup commits nothing: when it changed `DIR/.agents/workflow.toml`
+project's settings change, where the home has the roles; where it has none, see the next
+paragraph. Setup commits nothing: when it changed `DIR/.agents/workflow.toml`
 or `DIR/.claude/settings.json` it prints the `git add` and `git commit` lines for them.
 Everything else it makes in the project is listed in the repository's exclude file
 (`info/exclude` in its git directory, which a repository's worktrees share), never in
@@ -461,6 +464,45 @@ Everything else it makes in the project is listed in the repository's exclude fi
 `DIR/.agents/workflow-setup/`, where its backups, install record and lock for the project
 are. A project that is no git repository gets no list. An earlier version's block in the
 project's `.gitignore`, or in a tracked `.codex/config.toml`, is named for you to remove.
+
+**A project's own roles.**
+
+```bash
+python tools/setup/setup.py DIR --install roles --dry-run
+python tools/setup/setup.py DIR --install roles
+```
+
+Where your home's `install` has no `roles` and the project's has
+(`--install roles` gives the project's whole list as that one item), a run with DIR
+installs the roles in the project for each provider this side has: every
+role definition in `DIR/.claude/agents` and `DIR/.codex/agents`, built from the shipped
+definitions and the settings down to the project's; a loaded-role skill for each role that
+can be loaded, in `DIR/.claude/skills` and `DIR/.agents/skills`; and the process skills the
+roles are bound to, linked as any project item is, unless the home has them. No profile is
+written: Codex reads `--profile` only from its home. A role's binding rows name where a
+session finds each skill: the home's directory for a skill the home has, and for one the
+project has a path from the project root, which the role is told is the project's main
+working tree. A session started inside a worktree of the project finds none of the
+project's roles, because the generated files are kept out of git; a role dispatched from the
+main working tree works in a worktree as usual. Where the home has the roles, `roles` in a
+project's list adds nothing.
+
+To start as the Manager, set `roles.manager_default` as above. On Claude Code the output
+then gives `claude --agent manager --effort <level>` for the project; without the setting it
+gives no start command, and a session loads a role with `/manager`. On Codex, with the
+block written, a plain `codex` in the project starts as the Manager, and the output says so;
+without it, a session loads the role with `$manager`. Setup prints one line when a Codex file
+lands under `DIR/.codex`: Codex reads the role definitions and the Manager start only in a
+project you trust. It does not work out whether the project is trusted, and never marks one
+trusted; the loaded-role skills load in an untrusted project too, the roles they dispatch do
+not.
+
+The project's own roles are listed in the exclude file and taken out by `--uninstall DIR`.
+When `roles` leaves the project's list, or the home gets it, the next run with DIR takes the
+project's set out; a file edited by hand is kept and reported, with exit code 0, on every
+later run. `--check DIR` covers them with its usual checks (drift, a file edited by hand,
+and the size of a loaded-role skill; see the known limit "A loaded role in a long Claude
+Code session").
 
 **Skills in a project.** A project lists the skills (and the rule) it uses in `install`;
 every skill and the rule live in the clone. To see them and then link them:
@@ -482,7 +524,8 @@ the skills the roles are bound to), and the plan names each one added and what n
 project's screen shows the home's items as well, marked "from this machine": those cannot
 be unticked there, and an item this side's home has is not installed again in the project.
 A project whose files hold no `install` gets none of its own. `roles` in a project's list
-where the home has none is a note, and nothing of the roles is installed for the project.
+where the home has none gives the project its own roles (see above); where the home has
+them it adds nothing.
 
 A run with DIR links each skill of the list, for each provider that skill names and this
 side has, as `DIR/.claude/skills/<name>` (Claude Code) and `DIR/.agents/skills/<name>`
@@ -627,6 +670,7 @@ and each skill's `SKILL.md`.
   5,000 tokens there, measured with the shipped settings, and `validate.py --json` gives
   each size on each provider. `setup.py --check` (the check `loaded-skill-size`) measures with
   your settings, which can make a skill longer, as a long model name does, and warns;
+  `setup.py --check DIR` measures a project's own loaded skills the same way;
   Setup then marks the role LONG. What would be cut is the end, the role's binding
   rows and the provider's action notes. Codex documents no such cut: there the size is
   reported, by `validate.py --json`, setup and `--check`, and not limited. A clean
@@ -652,7 +696,8 @@ and each skill's `SKILL.md`.
   `default_wait_timeout_ms = 3600000`, where the file defines nothing at
   `features.multi_agent_v2`; Codex CLI 0.163.0 raises a shorter request to the floor.
 - **Codex reads a project's `.codex/config.toml` only in a trusted project.** In an
-  untrusted one the Manager default does nothing on Codex.
+  untrusted one the Manager default does nothing on Codex, and the project's role
+  definitions in `.codex/agents` are not read either; setup prints a line about it.
 - **Codex writes into the profile file.** Started with
   `codex --profile manager --no-daemon`, Codex adds to `~/.codex/manager.config.toml`
   what you do in it: the answer to "trust this project?" as a `[projects."<path>"]`
@@ -663,8 +708,9 @@ and each skill's `SKILL.md`.
   writes itself (`projects`, `notice`) pass without a word; any other key there is
   named, and `--check` warns of one that changes what the role may do, such as
   `sandbox_mode` or `approval_policy`.
-- **A skill seen twice on Codex is not checked.** When the same skill is found in the home
-  and in a project, whether Codex takes one or both has not been checked.
+- **A skill seen twice on Codex is listed twice.** When the same skill is found in the home
+  and in a project, Codex lists both, as seen with codex-cli 0.167.0 on 2026-11-10. Claude
+  Code takes the user-level one over a project's.
 - **WSL following a junction to another drive is untested.** Whether WSL's clients follow a
   junction to another drive is not yet tested. It matters only where the clone is on
   another Windows drive than the project: run setup from Windows ([WSL makes no link there](#using-it)).

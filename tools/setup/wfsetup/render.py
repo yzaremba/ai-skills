@@ -29,7 +29,16 @@ The project (``DIR``)
     A run without a project writes nothing in any project. With one, the
     home is refreshed as always, from the user-level settings, and the
     ``entry`` part adds, in the project: the definitions its settings
-    change (``Run.file`` into ``.claude/agents`` and ``.codex/agents``), and
+    change (``Run.file`` into ``.claude/agents`` and ``.codex/agents``); and,
+    where the home has no ``roles`` and the project's ``install`` has
+    (``definitions.project_roles``, R5.1), the project's own roles:
+    ``fill_roles`` makes every definition into the same two directories and
+    ``fill_entry`` the loaded-role skills into ``.claude/skills`` and
+    ``.agents/skills``, no profile; the process skills the roles need are
+    linked as any project item is. The binding rows name each skill's
+    directory (``project_dirs``): the home's for a skill the home has, a
+    path from the project root for one the project has (R5.3). Where the
+    home has ``roles`` a project's ``roles`` adds nothing (R5.6). And
     with ``roles.manager_default`` the starting role as the project's
     default (``Run.json_key``: ``agent`` in ``.claude/settings.json``, and
     ``effortLevel`` beside it, the role's effort, which a Claude Code
@@ -84,11 +93,19 @@ The project (``DIR``)
     kept, reported, and replaced only with ``--overwrite-edited``, after a
     backup of the file.
 
-    A loaded role is a user-level skill, and a provider's personal skill
-    wins over a project's skill of the same name, so a project's settings
-    cannot reach it and nothing is generated for it in a project. Where
-    they give a loaded role another profile the report says so, with both
-    profiles (``project.loaded_roles``).
+    Where the home has roles, a loaded role is a user-level skill. Claude
+    Code takes a user-level skill over a project's of the same name, and
+    Codex lists both (codex-cli 0.167.0, 2026-11-10), so a project's
+    settings cannot reach it and nothing is generated for it in that
+    project. Where they give a loaded role another profile the report says
+    so, with both profiles (``project.loaded_roles``). A project with roles
+    of its own gets its loaded-role skills from its own settings
+    (``_fill_project_loaded``) and has no such report.
+
+    Where Codex is among the providers and a Codex file lands under the
+    project's ``.codex`` (a definition, by either path, or the block), one
+    note, ``TRUST_NOTE``, says Codex reads them only in a trusted project
+    (R5.5). It is added once a run (``_trust_note``).
 
 Directories
     A directory setup created is removed again when a removal of this run
@@ -137,13 +154,20 @@ Stale files
     still holds what setup wrote, forgotten when it is gone, and kept and
     reported when it was edited. A home whose ``install`` lacks ``roles``
     asks for no role definition, so the definitions of an earlier run are
-    stale and go the same way: the homes then hold the process alone.
+    stale and go the same way: the homes then hold the process alone. The
+    same holds for a project's own roles when ``roles`` leaves its list or
+    the home gets it (R5.7). A file that is stale and was edited by hand is
+    kept and reported on every later run with exit code 0, as for a home;
+    exit code 3 is for a file still generated, edited by hand, that an
+    option would overwrite.
 
 Whether the roles are generated (``roles_on``)
     The home's roles are on when its effective ``install`` (the user's over
-    the shipped one) holds ``roles``. A project gets roles only where the
-    home has them: its definitions replace some of the home's, and its
-    starting role is a definition of the home's, so it follows the home.
+    the shipped one) holds ``roles``. Where they are on, a project's
+    definitions replace some of the home's, and its starting role is a
+    definition of the home's. Where they are off, a project whose own
+    ``install`` holds ``roles`` has roles of its own (R5.1, see
+    ``definitions.project_roles``), which are no part of this answer.
 
 What ``Run.link`` decides for one link, in this order
     skipped      the name is a skill with a setup of its own (R1.2), whatever
@@ -2317,8 +2341,8 @@ def report_lines(report: dict[str, Any]) -> list[str]:
                 f"  loaded role {one['role']} on {one['provider']}: the project's settings give it "
                 f"{_profile(one)}, and the loaded skill keeps "
                 f"{_profile({'model': one['loaded_model'], 'effort': one['loaded_effort']})}: it is installed at the "
-                "user level, where a provider's own skill wins over a project's of the same name, so nothing is "
-                "generated for it here"
+                "user level, where Claude Code takes it over a project's skill of the same name and Codex lists "
+                "both, so nothing is generated for it here"
             )
     if report["stale"]:
         lines.append("no longer installed:")
