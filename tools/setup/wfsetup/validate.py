@@ -1647,10 +1647,6 @@ def _check_defaults(run: _Run) -> None:
         for group in schema.GROUPS:
             if group in data:
                 schema.validate(group, data[group], file, lines)
-        for old, replacement in schema.OLD_KEYS.items():
-            group, _, name = old.partition(".")
-            if isinstance(data.get(group), dict) and name in data[group]:
-                lines.append(f"{file}: {old}: an old key, not read; use {replacement}. Remove it")
     run.loader(file, "defaults", lines)
     if not lines:
         run.defaults = data

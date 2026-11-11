@@ -18,7 +18,7 @@ What a run writes
 
     A value already in the file stays as it is unless a flag changes it.
     `--reset KEY` takes KEY out of the file, so that it follows the layer
-    below again. The file written holds no old key.
+    below again.
 
 A project's file that is not there is made only when it would hold a key: a
 first run with no value given makes none. A file that is there is written as
@@ -33,8 +33,8 @@ it, after a backup? [y/N]", and the plan is made again. Yes is
 --rewrite-settings. No is the screen's option ``keep_by_hand`` (no flag): the
 file is kept as it is, nothing is written to it or backed up, the values not
 written are named, the run goes on with the rest, and it ends with exit code 3
-(``Prepared.kept``). A file that only gets a provider's mappings at its end,
-and one written without an old key, are not asked about. The file is rewritten from its values;
+(``Prepared.kept``). A file that only gets a provider's mappings at its end
+is not asked about. The file is rewritten from its values;
 the file as it was is copied to the backup directory first. One case needs
 no option: where the file lacks only the tier or effort tables of an
 installed provider (and holds no key of such a table), they are added at its
@@ -310,7 +310,7 @@ def flat_keys(data: dict[str, Any]) -> dict[str, Any]:
     flat = {
         key: value
         for group in schema.GROUPS if group in data
-        for key, value in schema.flatten(schema.strip_old_keys(group, data[group]), (group,))
+        for key, value in schema.flatten(data[group], (group,))
     }
     if schema.INSTALL_KEY in data:     # a key of the file itself, above every table: kept as it is
         flat[schema.INSTALL_KEY] = data[schema.INSTALL_KEY]
@@ -378,17 +378,13 @@ class Prepared:
 
 
 def prepare(
-    where: locations.Locations, found: homes.Homes, args: argparse.Namespace, *, dry_run: bool, drop_old: bool = False
+    where: locations.Locations, found: homes.Homes, args: argparse.Namespace, *, dry_run: bool
 ) -> Prepared:
     """Work out the settings file of this run, from the file as it is and the
     flags, and plan its write. Nothing is asked: a value no flag states is
     accepted as shown. The providers are those of ``found`` that are installed
     and have a dictionary. A fault in a flag, or in the model list, is a
-    ``SetupError`` and nothing is written.
-
-    With ``drop_old`` (the screen, whose plan the user confirms) a file that
-    holds an old key is written without it, also where it was edited by hand:
-    the plan says so, and ``--rewrite-settings`` is not asked."""
+    ``SetupError`` and nothing is written."""
     scope = PROJECT if where.project is not None else USER
     target: Path = where.project_file if scope == PROJECT else where.user_file  # type: ignore[assignment]
     below_layers = ("shipped",) if scope == USER else ("shipped", USER)
@@ -409,9 +405,6 @@ def prepare(
     current = [document for document in settings.documents(where) if document.layer == scope]
     existing = flat_keys(current[0].data) if current else None
     flat: dict[str, Any] = dict(existing or {})
-    dropped = [
-        (key, replacement) for file, key, replacement in settings.old_keys(where) if drop_old and file == target
-    ]
 
     def proposed(key: str) -> Any:
         return flat[key] if key in flat else below[key].value
@@ -621,7 +614,7 @@ def prepare(
     say("")
 
     # --- Plan -----------------------------------------------------------------
-    write = bool(flat) if existing is None else bool(dropped) or not _same_values(flat, existing)
+    write = bool(flat) if existing is None else not _same_values(flat, existing)
     roots = found.roots()
     plan = fileops.Plan(roots, follow_config_symlinks=args.follow_config_symlinks)
     text = _document(flat, scope)
@@ -629,11 +622,11 @@ def prepare(
     # gets them at its end, its lines as they are (R4.3).
     appended = None
     if write and existing is not None and not _written_by_setup(roots, target):
-        if not (flags["tiers"] or flags["efforts"] or unset or dropped):
+        if not (flags["tiers"] or flags["efforts"] or unset):
             appended = _appended(target, existing, flat)
     if appended is not None:
         text = appended[0]
-    by_hand = write and existing is not None and appended is None and not dropped and not _written_by_setup(roots, target)
+    by_hand = write and existing is not None and appended is None and not _written_by_setup(roots, target)
     kept = by_hand and bool(getattr(args, "keep_by_hand", False))
     # The values a kept file is not given are not shown as held by it.
     say("settings:")
@@ -673,8 +666,6 @@ def prepare(
         say(f"changes to {target}:")
         for line in _changes(existing or {}, flat, below):
             say(line)
-        for key, replacement in dropped:
-            say(f"  {key}: old key, taken out; use {replacement}")
         was = _read_text(target)
         if appended is not None:
             say(f"  its lines are kept as they are; the mapping of {', '.join(appended[1])} is added at its end")

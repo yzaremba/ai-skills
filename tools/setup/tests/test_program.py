@@ -117,26 +117,33 @@ class StopTests(ProgramCase):
         self.assertIn("--yes", err)
         self.assertEqual(self.settled(), before)
 
-    def test_an_old_key_stops_and_writes_nothing(self) -> None:
+    def test_an_old_key_is_an_unknown_key_and_stops_writing_nothing(self) -> None:
         self.claude.mkdir()
         self.write(self.user_file, '[setup]\nenabled = ["alpha"]\n')
         before = self.settled()
         code, out, err = self.setup("--yes")
         self.assertEqual(code, 2)
-        self.assertIn("setup.enabled", err)
-        self.assertIn("install in ~/.agents/workflow.toml", err)
-        self.assertIn(str(self.user_file), err)
+        self.assertIn(f"{self.user_file}: setup: unknown key", err)
         self.assertEqual(self.settled(), before)
 
-    def test_an_old_key_in_the_project_stops_too(self) -> None:
+    def test_an_unknown_key_in_the_project_stops_too(self) -> None:
         self.claude.mkdir()
         self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
         before = self.settled()
         code, out, err = self.setup("--yes", str(self.project))
         self.assertEqual(code, 2)
-        self.assertIn("project.enabled", err)
+        self.assertIn(f"{self.project_file}: project: unknown key", err)
         self.assertEqual(self.settled(), before)
         self.assertFalse((self.project / ".agents" / "workflow-setup").exists())
+
+    def test_no_terminal_names_a_settings_fault_before_yes(self) -> None:
+        self.claude.mkdir()
+        self.write(self.project_file, "x = [\n")
+        with mock.patch("wfsetup.screen.terminal", return_value=False):
+            code, out, err = self.setup(str(self.project))
+        self.assertEqual(code, 2)
+        self.assertIn(str(self.project_file), err)
+        self.assertNotIn("--yes", err)
 
     def test_a_source_problem_stops_the_run(self) -> None:
         self.claude.mkdir()
@@ -745,6 +752,8 @@ class PlacesTests(ProgramCase):
         code, out, err = self.run_setup(*argv)
         self.assertEqual((code, out), (2, ""), err)
         self.assertNotIn("Traceback", err)
+        # A fault of a settings file is followed by the line that says nothing was changed.
+        err = err.removesuffix("error: setup changes nothing while a settings file has a fault; correct the file first\n")
         self.assertEqual(err.count("\n"), 1, err)
         self.assertTrue(err.startswith("error: "), err)
         return err[len("error: "):-1]
@@ -998,7 +1007,8 @@ class EntryPointTests(ProgramCase):
         self.assertEqual((done.returncode, done.stdout), (2, b""))
         self.assertEqual(
             done.stderr.decode("utf-8"),
-            f"error: {self.user_file}: is not valid TOML: arrays or inline tables are nested too deeply\n",
+            f"error: {self.user_file}: is not valid TOML: arrays or inline tables are nested too deeply\n"
+            "error: setup changes nothing while a settings file has a fault; correct the file first\n",
         )
 
     def test_a_closed_stdout_is_an_error_and_not_an_empty_success(self) -> None:

@@ -101,16 +101,6 @@ class ScreenTests(ScreenCase):
         self.assertEqual(self.written()["providers"]["claude-code"]["tiers"]["fast"], "sonnet")
         self.assertEqual(self.written()["providers"]["claude-code"]["efforts"], CLAUDE["efforts"])
 
-    def test_an_old_key_is_named_and_gone_from_the_file_written(self) -> None:
-        self.claude.mkdir()
-        self.write(self.user_file, '[setup]\nenabled = ["alpha"]\n')
-        code, out, err = self.typed("", "")
-        self.assertEqual((code, err), (0, ""), out)
-        self.assertIn(f"old key setup.enabled in {self.user_file}: use install in ~/.agents/workflow.toml", out)
-        self.assertIn("The file written drops it", out)
-        self.assertNotIn("setup", self.written())
-        self.assertEqual(self.written()["providers"], {"claude-code": CLAUDE})
-
     def test_a_re_run_shows_the_values_as_they_stand_and_writes_nothing(self) -> None:
         self.assertEqual(self.typed("", "")[0], 0)
         before = self.settled()

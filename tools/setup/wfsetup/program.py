@@ -43,8 +43,7 @@ writes neither; then the settings are written first, after the clone check
 and under the same lock as the install; --dry-run shows both plans and
 writes neither. A file that was written or edited by hand is rewritten from its
 values (every key kept, comments and layout not) only with --yes together
-with --rewrite-settings, after a backup of it; a file that holds an old key
-stops the run, and the file written holds none. Where such a file lacks only
+with --rewrite-settings, after a backup of it. Where such a file lacks only
 an installed provider's tier or effort mapping, a run adds the mapping at its
 end, its lines as they are, after a backup, with no --rewrite-settings.
 
@@ -69,18 +68,13 @@ and asks "Apply? [Y/n]": n ends the run with exit code 1 and writes nothing.
 Numbers (3 5) open those options and show the screen again; r and numbers
 (r 3 5) take those keys out of the file the run writes, so that the layer
 below gives them again. A value changed there is written, a value accepted as
-shown is not. An old key is named on the screen with what replaces it, and
-the settings file the run writes does not hold it. The items line asks for
+shown is not. The items line asks for
 a checklist of the clone's skills, the rule and `roles` (a needed item ticked and marked, and held ticked while what needs it is; on a project's screen the home's items marked "from this machine" and held ticked) and the Codex item for off, on or on with the profile, then the worktree
 root. A generated file, key or block edited by hand since setup wrote it is
 asked about when the plan is made ("replace, after a backup? [y/N]"), and the
 plan is made again with the answers; one not replaced is kept and reported,
-with exit code 3. A run
-is applied with --yes, or shows its plan with --dry-run and writes nothing;
-without either and without a terminal it stops and names --yes. An
-unattended run (--yes, --dry-run or no terminal) that finds a key a settings
-file holds under an old name stops, with the key, its file and what replaces
-it, and nothing is written.
+with exit code 3. A run is applied with --yes, or shows its plan with --dry-run
+and writes nothing; without either and without a terminal it stops and names --yes.
 
 What is installed, for each provider that is installed (its program is on
 PATH, or its home exists, or --provider names it); a provider that is not
@@ -286,9 +280,8 @@ workflow.toml and workflow.local.toml over the user's):
       read), with .agents/workflow.local.toml and the project's state
       directory, DIR/.agents/workflow-setup/ (its install record, its
       backups and its lock). Nothing is listed in .gitignore, and setup
-      never edits it: setup's block there from an earlier version is named,
-      with its file and lines, for you to remove, and its record entry is
-      forgotten. A DIR that is
+      never edits it: its record entry for a block there from an earlier version
+      is forgotten. A DIR that is
       no git repository's top gets no list, and a note says why. A block
       that is already there and holds a line setup does not write is yours:
       it is kept and reported, with exit code 3, and --overwrite-edited
@@ -627,8 +620,7 @@ The checks, in the order they run:
                          and one that the install would no longer make:
                          warnings. Run setup.py. Also, as warnings and in
                          a project only, what you are to do by hand: setup's
-                         old block in the project's .gitignore, its old
-                         block in a .codex/config.toml that git tracks,
+                         old block in a .codex/config.toml that git tracks,
                          and that setup writes nothing into a tracked
                          .codex/config.toml, so that Codex sessions in the
                          project will not start as the Manager.
@@ -1150,15 +1142,6 @@ def _with_named_providers(found: homes.Homes, names: list[str]) -> homes.Homes:
     return dataclasses.replace(found, providers=providers)
 
 
-def _old_keys(where: locations.Locations) -> None:
-    held = settings.old_keys(where)
-    if held:
-        raise SetupError(*[
-            f"{file}: {key} is an old key; use {replacement}. Change the file, nothing was written"
-            for file, key, replacement in held
-        ])
-
-
 def _refused(args: argparse.Namespace, taken: set[str]) -> list[str]:
     """The options given that a mode does not take, as they were spelled:
     ``--no-x`` for an option with a negative form that was given false."""
@@ -1286,18 +1269,16 @@ def run(args: argparse.Namespace) -> int:
         where = dataclasses.replace(where, project=paths.absolute(where.project))
     sources = validate.require(where)
     if args.yes or args.dry_run:
-        # An old key stops an unattended run (R10.2).
-        _old_keys(where)
         return _apply(args, where, sources)
     if not screen.terminal():
-        _old_keys(where)
+        settings.resolve(where)  # a fault in a settings file is named first
         raise SetupError(
             "nothing is applied without --yes, and standard input is not a terminal, so the screen that asks "
             "is not shown: pass --yes to apply the plan, or --dry-run to see it"
         )
     found = _found(args, where)
     return screen.run(
-        args, where, found, lambda given, edited=None: _apply(given, where, sources, drop_old=True, edited=edited),
+        args, where, found, lambda given, edited=None: _apply(given, where, sources, edited=edited),
         sources.skills,
     )
 
@@ -1313,11 +1294,10 @@ def _found(args: argparse.Namespace, where: locations.Locations) -> homes.Homes:
 
 
 def _apply(
-    args: argparse.Namespace, where: locations.Locations, sources: Any, *, drop_old: bool = False,
+    args: argparse.Namespace, where: locations.Locations, sources: Any, *,
     edited: list[tuple[str, str]] | None = None,
 ) -> int:
-    """Plan and apply (or, with --dry-run, show) the run. ``drop_old``: the
-    screen's, which names an old key and writes the settings file without it.
+    """Plan and apply (or, with --dry-run, show) the run.
     ``edited``: the screen's list, which gets each item kept for an edit of
     the user's, as ``(id, text)``, and a settings file written by hand that the
     plan would rewrite (``settingsfile.HAND_ID``, R4.3); ``args.overwrite_edited`` may be the set of
@@ -1336,7 +1316,7 @@ def _apply(
         )
     )
     with held:
-        prepared = settingsfile.prepare(where, found, args, dry_run=args.dry_run, drop_old=drop_old)
+        prepared = settingsfile.prepare(where, found, args, dry_run=args.dry_run)
         content = {prepared.target: prepared.data} if prepared.data is not None else {}
         by_hand = [(settingsfile.HAND_ID + str(prepared.target), str(prepared.target))] if prepared.by_hand else []
         options = dict(

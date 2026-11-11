@@ -1235,11 +1235,7 @@ def check_profiles(context: Context) -> list[Finding]:
         found = context.resolution
     except SetupError as exc:
         return [error(line) for line in exc.lines]
-    findings = [
-        warning(f"{file}: {key} is an old key; use {replacement}", file)
-        for file, key, replacement in settings.old_keys(context.where)
-    ]
-    findings += [warning(note) for note in found.notes]
+    findings = [warning(note) for note in found.notes]
     return findings or [fine(f"{len(found.profiles)} profiles resolve, and every setting matches something")]
 
 

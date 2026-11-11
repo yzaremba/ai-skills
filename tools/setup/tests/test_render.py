@@ -862,15 +862,6 @@ class UnsharedCloneWarningCase(RenderCase):
         self.assertIsNone(report["clone_warning"])
         self.assertFalse([line for line in render.report_lines(report) if "warning" in line])
 
-    def test_the_old_setting_is_an_old_key_like_any_other(self) -> None:
-        self.write(self.user_file, "[setup]\nallow_unshared_clone = true\n")
-        self.write(self.project_file, "[setup]\nallow_unshared_clone = true\n")
-        code, out, err = self.render("--dry-run", str(self.project))
-        self.assertEqual(code, 2)
-        for file in (self.user_file, self.project_file):
-            self.assertIn(f"{file}: setup.allow_unshared_clone is an old key", err)
-        self.assertNotIn(homes.CLONE_WARNING, out)
-
     def test_the_help_of_each_command_names_the_settings(self) -> None:
         for command, words in (
             ("setup.py", ("The roles are an item of `install`", "When it does not, the process alone is installed")),
@@ -1559,36 +1550,20 @@ class ExcludeFileCase(ProjectCase):
         manifest.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         return gitignore
 
-    def test_a_recorded_old_block_in_gitignore_is_named_and_forgotten(self) -> None:
+    def test_a_recorded_old_block_in_gitignore_is_forgotten_and_the_file_not_edited(self) -> None:
         self.assertEqual(self.render(*self.arg)[0], 0)
         gitignore = self.old_block_recorded()
         self.assertIn("project:.gitignore", self.record(self.project)["entries"])
         code, out, err = self.render(*self.arg)
         self.assertEqual((code, err), (0, ""), out)
-        self.assertIn(f"{self.project / '.gitignore'}: lines 2-5 are setup's old ignore block", out)
-        self.assertIn("remove those lines", out)
+        self.assertNotIn("remove those lines", out)
         self.assertEqual((self.project / ".gitignore").read_bytes(), gitignore)
         self.assertNotIn("project:.gitignore", self.record(self.project)["entries"])
         self.assertEqual(self.listed(self.exclude_file), self.links)
-        # Named again while it is there; nothing left in the record to change.
+        # Nothing left in the record to change.
         code, out, err = self.render(*self.arg)
         self.assertEqual((code, err), (0, ""), out)
-        self.assertIn("lines 2-5 are setup's old ignore block", out)
         self.assertEqual((self.project / ".gitignore").read_bytes(), gitignore)
-
-    def test_a_checkout_without_a_record_gets_the_line_too(self) -> None:
-        gitignore = b"# workflow-setup:start\n.claude/skills/alpha\n# workflow-setup:end\n"
-        (self.project / ".gitignore").write_bytes(gitignore)
-        code, out, err = self.render(*self.arg)
-        self.assertEqual((code, err), (0, ""), out)
-        self.assertIn("lines 1-3 are setup's old ignore block", out)
-        self.assertEqual((self.project / ".gitignore").read_bytes(), gitignore)
-        self.assertNotIn("project:.gitignore", self.record(self.project)["entries"])
-        # A .gitignore without setup's markers is not named.
-        (self.project / ".gitignore").write_bytes(b"build/\n")
-        code, out, err = self.render(*self.arg)
-        self.assertEqual((code, err), (0, ""), out)
-        self.assertNotIn("old ignore block", out)
 
     def test_the_backup_of_an_edited_exclude_file_is_inside_the_project(self) -> None:
         self.assertEqual(self.render(*self.arg)[0], 0)

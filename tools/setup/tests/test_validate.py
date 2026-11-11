@@ -1785,7 +1785,7 @@ class SettingsTests(TreeCase):
         self.put("tools/setup/defaults.toml", support.FIXTURE_DEFAULTS + '\n[project]\nenabled = ["alpha"]\n')
         problems = self.check().problems
         self.assertEqual([(p.file, p.rule) for p in problems], [("tools/setup/defaults.toml", "defaults")])
-        self.assertIn("project", problems[0].message)
+        self.assertIn("unknown key", problems[0].message)
         self.put("tools/setup/defaults.toml", support.FIXTURE_DEFAULTS)
         self.assertEqual(self.found(), [])
 

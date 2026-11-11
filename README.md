@@ -462,8 +462,8 @@ Everything else it makes in the project is listed in the repository's exclude fi
 (`info/exclude` in its git directory, which a repository's worktrees share), never in
 `.gitignore`, together with `.agents/workflow.local.toml` and the state directory,
 `DIR/.agents/workflow-setup/`, where its backups, install record and lock for the project
-are. A project that is no git repository gets no list. An earlier version's block in the
-project's `.gitignore`, or in a tracked `.codex/config.toml`, is named for you to remove.
+are. A project that is no git repository gets no list. An earlier version's block in a
+tracked `.codex/config.toml` is named for you to remove.
 
 **A project's own roles.**
 
@@ -627,12 +627,6 @@ collaboration skill has a setup of its own and is not in the list. Each side of 
 and WSL machine reads its own `~/.agents/workflow.toml`, and the side that writes a place
 decides for it: where the WSL home's rules directory is a link to the Windows one, the
 rule is the Windows side's setting.
-
-**Old keys.** The keys of the first version 2 tools that listed skills and rules (in the
-user's file and in a project's), switched the roles on and off, and accepted a clone only
-one side reads are gone: `install` replaces them. The screen names each one it finds, with
-what replaces it, and the file it writes no longer holds them; an unattended run stops on
-one, names it, and writes nothing.
 
 On Claude Code the definitions of the Product Manager, the Architect, the
 Implementation Manager and the Idea and Plan Reviewers also name the one-hour prompt

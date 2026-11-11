@@ -1184,28 +1184,12 @@ class Run:
         return self._codex_tracked[path]
 
     def _old_ignore(self, project: Path) -> None:
-        """Setup's old block in the project's ``.gitignore`` (R10.3): named
-        for the user to remove, with its file and lines, and its record
-        entry, if there is one, forgotten. The file is never edited: setup
-        lists in the repository's exclude file now. A block whose markers
-        are setup's counts with or without a record (a fresh checkout has
-        none)."""
-        path = project / ".gitignore"
-        key = self.roots.key(path)
-        try:
-            data = fsio.read_bytes(path) if fsio.look(path).kind == fsio.FILE else None
-            if data is not None:
-                blocks.check_text(data)
-            span = None if data is None else blocks.scan(blocks.split_bom(data)[1], blocks.GITIGNORE).get("")
-        except (SetupError, blocks.Refusal):
-            return
+        """Forget the record entry of setup's old block in the project's
+        ``.gitignore``. The file is never edited: setup lists in the
+        repository's exclude file now."""
+        key = self.roots.key(project / ".gitignore")
         if key is not None and self._recorded(key, "text", "blocks", "") is not None:
-            self.plan.forget_block(path, name="")
-        if span is not None:
-            self.notice(
-                f"project: {path}: lines {span[0] + 1}-{span[1]} are setup's old ignore block; setup lists in "
-                f"{fileops.GIT_INFO_EXCLUDE} now and never edits it again: remove those lines"
-            )
+            self.plan.forget_block(project / ".gitignore", name="")
 
     def _writes_into(self, directory: Path) -> bool:
         """Whether this run writes into the place ``directory`` as it is."""

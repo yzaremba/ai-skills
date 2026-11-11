@@ -12,8 +12,7 @@ as the options of a run (``--docs-dir``, ``--tier``, ``--reset`` and the
 others), and the plan and the apply are the program's own run with those
 options: a dry run, then the run with ``--yes``. So a value changed here is
 written, a value accepted as shown is not (R4.3), and the file a project is
-given is made only when it holds a value (R6.1). An old key (R10.2) is named
-with what replaces it; the settings file the run writes is written without it.
+given is made only when it holds a value (R6.1).
 
 The items line opens a checklist (R3.2, R3.4). The Codex item opens as off,
 on or on with the profile, then the worktree root (R8.3).
@@ -100,7 +99,6 @@ class Screen:
         self.providers = [
             provider.name for provider in found.providers if provider.installed and provider.name in known
         ]
-        self.old = settings.old_keys(where)
 
     # --- The rows -------------------------------------------------------------
 
@@ -216,13 +214,6 @@ class Screen:
         below = settings.resolve(self.where, layers=self.below_layers)
         rows = self.rows()
         print()
-        for file, key, replacement in self.old:
-            if file == self.target:
-                print(f"old key {key} in {file}: use {replacement}. The file written drops it")
-            else:
-                print(f"old key {key} in {file}: use {replacement}. This run does not write that file: change it there")
-        if self.old:
-            print()
         width = max(len(row.label) for row in rows)
         for row in rows:
             print(f"{row.number:>3}  {row.label:<{width}}  {self.describe(row, entries, below)}")

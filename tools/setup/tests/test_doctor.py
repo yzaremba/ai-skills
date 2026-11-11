@@ -1109,25 +1109,13 @@ class ProfilesCase(DoctorCase):
 
 
 class NoticesCase(DoctorCase):
-    """What the user is to do by hand (R6.4, R10.2, R10.3), as warnings."""
+    """What the user is to do by hand (R6.4, R10.3), as warnings."""
 
-    OLD_BLOCK = "# workflow-setup:start\n.agents/workflow.local.toml\n.claude/skills/alpha\n# workflow-setup:end\n"
-
-    def test_an_old_key_is_a_warning_naming_its_replacement(self) -> None:
+    def test_an_unknown_key_stops_the_check_as_any_other(self) -> None:
         self.write(self.user_file, '[setup]\nenabled = ["alpha"]\n')
-        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
-        code, findings = self.only("profiles", *self.project_arg)
-        self.assertEqual(code, 0)
-        self.assertFinding(findings, doctor.WARNING, str(self.user_file), "setup.enabled is an old key", "install in ~/.agents/workflow.toml")
-        self.assertFinding(findings, doctor.WARNING, str(self.project_file), "project.enabled is an old key", "install")
-
-    def test_setups_old_gitignore_block_is_a_warning_with_no_record(self) -> None:
-        (self.project / ".gitignore").write_text("build/\n" + self.OLD_BLOCK, encoding="utf-8")
-        before = snapshot(self.project)
-        code, findings = self.only("drift", *self.project_arg)
-        self.assertEqual(code, 0)
-        self.assertFinding(findings, doctor.WARNING, f"{self.project / '.gitignore'}: lines 2-5 are setup's old ignore block", "remove those lines")
-        self.assertEqual(snapshot(self.project), before)
+        code, out, err = self.run_doctor("--only", "profiles")
+        self.assertEqual(code, 1)
+        self.assertIn(f"{self.user_file}: setup: unknown key", out + err)
 
     @unittest.skipUnless(shutil.which("git"), "needs git")
     def test_a_tracked_codex_config_gets_the_r64_line_and_a_named_old_block(self) -> None:

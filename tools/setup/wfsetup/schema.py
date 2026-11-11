@@ -137,21 +137,6 @@ GROUPS = tuple(SCHEMA)
 INSTALL_KEY = "install"
 INSTALL = Strings()
 ROLES_ITEM = "roles"
-# The keys ``install`` replaces, each with what replaces it. They are no part
-# of the schema: a file that holds one is not faulted for it and the key is
-# not read (``settings.resolve`` skips it), and ``settings.old_keys`` names
-# each one a file holds.
-OLD_KEYS: dict[str, str] = {
-    "setup.enabled": "install in ~/.agents/workflow.toml",
-    "setup.disabled": "install in ~/.agents/workflow.toml",
-    "project.enabled": "install in the project's .agents/workflow.toml",
-    "project.disabled": "install in the project's .agents/workflow.local.toml",
-    "roles.enabled": "roles in install",
-    "setup.allow_unshared_clone": "none: setup warns on such a clone",
-}
-# The tables an old key lived in that the schema no longer has: a file that
-# holds one with old keys alone is not faulted for it.
-OLD_TABLES = tuple(sorted({key.split(".")[0] for key in OLD_KEYS} - set(SCHEMA)))
 _ROOT = Table(dict(SCHEMA))
 
 
@@ -175,24 +160,12 @@ def check_document(data: dict[str, Any], file: Any, problems: list[str]) -> bool
     elif version < 1:
         problems.append(f"{file}: {VERSION_KEY}: {version} is not a schema version; the first is 1")
     for key in data:
-        if key not in (VERSION_KEY, INSTALL_KEY) and key not in SCHEMA and not _old_table(key, data[key]):
+        if key not in (VERSION_KEY, INSTALL_KEY) and key not in SCHEMA:
             problems.append(
                 f"{file}: {tomlio.format_key(key)}: unknown key; known here: "
                 f"{VERSION_KEY}, {INSTALL_KEY}, {', '.join(GROUPS)}"
             )
     return True
-
-
-def _old_table(key: str, value: Any) -> bool:
-    """A table of the old keys that the schema no longer has, holding old keys alone."""
-    return key in OLD_TABLES and isinstance(value, dict) and all(f"{key}.{name}" in OLD_KEYS for name in value)
-
-
-def strip_old_keys(group: str, content: Any) -> Any:
-    """``content`` of ``group`` without the keys of ``OLD_KEYS``."""
-    if not isinstance(content, dict):
-        return content
-    return {name: item for name, item in content.items() if f"{group}.{name}" not in OLD_KEYS}
 
 
 def check_install(data: dict[str, Any], file: Any, problems: list[str]) -> None:
@@ -221,9 +194,7 @@ def _misplaced(table: tuple[str, ...], file: Any) -> str:
 
 
 def validate(group: str, value: Any, file: Any, problems: list[str]) -> None:
-    """Check one group's content, adding a line to ``problems`` per fault.
-    The keys of ``OLD_KEYS`` are not looked at."""
-    value = strip_old_keys(group, value)
+    """Check one group's content, adding a line to ``problems`` per fault."""
     _validate(SCHEMA[group], value, (group,), file, problems)
 
 
