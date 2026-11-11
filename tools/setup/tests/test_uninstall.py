@@ -36,10 +36,8 @@ from unittest import mock
 import support
 from fileops_support import POSIX, SYMLINKS
 from test_entry import DEFAULT_ON, OVERRIDE, USER_JSON, USER_TOML, EntryCase
-from test_render import LINKS
 from test_validate import SKILL
-from wfsetup import fileops, fsio, homes, uninstall
-from wfsetup.locations import Locations
+from wfsetup import fileops, fsio, homes
 from wfsetup.manifest import Manifest
 
 CONFIG_PLAIN = (

@@ -22,7 +22,6 @@ import os
 import time
 import tomllib
 import unittest
-from pathlib import Path
 from unittest import mock
 
 import support

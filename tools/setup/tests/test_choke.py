@@ -21,7 +21,6 @@ from pathlib import Path
 
 import support
 from fileops_support import POSIX, SYMLINKS, OpsCase
-from fileops_support import snapshot as snapshot_of
 from wfsetup import fileops, fsio, gitrepo, lock
 from wfsetup.errors import SetupError
 from wfsetup.manifest import Roots

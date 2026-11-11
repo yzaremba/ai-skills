@@ -34,7 +34,6 @@ from test_doctor import DoctorCase
 from test_homes import HomesCase
 from test_render import LINKS, RenderCase, tree
 from test_uninstall import UninstallCase, picture
-from test_validate import SKILL
 from wfsetup import doctor, fileops, fsio, homes, locations, manifest, paths, render
 from wfsetup.errors import SetupError
 from wfsetup.locations import Locations

@@ -18,7 +18,6 @@ import unittest
 from unittest import mock
 
 import test_program
-from wfsetup import screen
 
 CLAUDE = {
     "tiers": {"fast": "haiku", "standard": "sonnet", "deep": "opus", "frontier": "fable"},
