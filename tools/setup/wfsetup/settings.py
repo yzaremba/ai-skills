@@ -12,9 +12,6 @@ A layer whose file does not exist is simply absent. A file that is there
 and cannot be read is an error, and so is a link in its place whose target
 is missing, and a ``.agents`` that is not a directory.
 
-A key of ``schema.OLD_KEYS`` is no part
-of the schema: ``resolve`` skips it, and ``old_keys`` names it.
-
 ``resolve`` is asked for groups and touches nothing else: of each file it
 checks the version and the top-level key names, then validates and merges
 only the groups asked for. A fault inside ``[providers.x]`` therefore cannot
@@ -23,8 +20,7 @@ file that does not parse at all.
 
 ``install``, the top-level list of what a place installs, is no group:
 ``install`` reads it, each layer's value apart, and a fault in it breaks no
-reader of a group. ``old_keys`` names each key it replaces that a user's or
-a project's file holds.
+reader of a group.
 """
 from __future__ import annotations
 
@@ -153,7 +149,6 @@ def resolve(
                 continue
             content = document.data[group]
             before = len(problems)
-            content = schema.strip_old_keys(group, content)
             schema.validate(group, content, document.file, problems)
             if len(problems) > before:
                 continue
@@ -182,21 +177,4 @@ def install(where: Locations) -> list[Entry]:
             found.append(Entry(document.data[schema.INSTALL_KEY], document.layer, document.file))
     if problems:
         raise SetupError(*problems)
-    return found
-
-
-def old_keys(where: Locations) -> list[tuple[Path, str, str]]:
-    """Each key of ``schema.OLD_KEYS`` that a user's or a project's file
-    holds, as (file, dotted key, what replaces it), in the order the layers
-    apply. The shipped defaults are not the user's to change and are not
-    named."""
-    found: list[tuple[Path, str, str]] = []
-    for document in documents(where, ()):
-        if document.layer == "shipped":
-            continue
-        for key, replacement in schema.OLD_KEYS.items():
-            group, name = key.split(".")
-            table = document.data.get(group)
-            if isinstance(table, dict) and name in table:
-                found.append((document.file, key, replacement))
     return found

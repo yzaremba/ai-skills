@@ -436,38 +436,22 @@ class GroupIsolationTests(support.ScratchCase):
 
 
 class OldKeyTests(support.ScratchCase):
-    """``setup.allow_unshared_clone`` is an old key: skipped, never a fault,
-    in any file, and listed with what replaces it."""
+    """The keys ``install`` replaced are unknown keys, as any other."""
 
     def test_the_shipped_defaults_hold_no_setup_group(self) -> None:
         self.assertNotIn("setup", tomllib.loads(support.DEFAULTS.read_text(encoding="utf-8")))
         self.assertFalse([key for key in settings.resolve(self.repository()) if key.startswith("setup.")])
 
-    def test_an_old_key_is_skipped_not_reported(self) -> None:
-        self.write(self.user_file, '[roles]\nenabled = false\n[setup]\nenabled = ["a"]\ndisabled = 3\nallow_unshared_clone = true\n')
-        self.write(self.project_file, '[project]\nenabled = ["a"]\n[setup]\nallow_unshared_clone = true\n')
-        self.write(self.local_file, '[project]\ndisabled = ["a"]\n')
-        entries = settings.resolve(self.locations())
-        self.assertEqual(entries["roles.manager_default"].layer, "shipped")
-        self.assertEqual([key for key in entries if key.split(".")[0] in ("setup", "project")], [])
-        self.assertNotIn("roles.enabled", entries)
-        self.assertIn(
-            ("setup.allow_unshared_clone", "none: setup warns on such a clone"),
-            [(key, replacement) for _, key, replacement in settings.old_keys(self.locations())],
-        )
-        # A table of old keys is no unknown key; one with another key in it is.
-        self.write(self.project_file, '[project]\nenabled = ["a"]\nother = 1\n')
-        with self.assertRaises(SetupError) as caught:
-            settings.resolve(self.locations())
-        self.assertEqual(
-            [line for line in caught.exception.lines if "project:" in line and "unknown key" in line],
-            [f"{self.project_file}: project: unknown key; known here: schema_version, install, process, roles, "
-             "memory, providers"],
-        )
-        self.write(self.user_file, "[setup]\nshared = true\n")
-        with self.assertRaises(SetupError) as caught:
-            settings.resolve(self.locations())
-        self.assertTrue(any("setup: unknown key" in line for line in caught.exception.lines))
+    def test_an_old_key_is_an_unknown_key(self) -> None:
+        for text, expected in (
+            ('[setup]\nenabled = ["a"]\n', "setup: unknown key"),
+            ('[project]\nenabled = ["a"]\n', "project: unknown key"),
+        ):
+            with self.subTest(text=text):
+                self.write(self.user_file, text)
+                with self.assertRaises(SetupError) as caught:
+                    settings.resolve(self.locations())
+                self.assertTrue(any(expected in line for line in caught.exception.lines), caught.exception.lines)
 
 
 class InstallTests(support.ScratchCase):
@@ -561,25 +545,6 @@ class InstallTests(support.ScratchCase):
     def test_a_newer_schema_version_is_refused(self) -> None:
         (line,) = self.problems(self.user_file, 'schema_version = 99\ninstall = ["roles"]\n')
         self.assertTrue(line.startswith(f"{self.user_file}: schema_version: 99 is newer"), line)
-
-    def test_each_old_key_is_listed_with_its_replacement(self) -> None:
-        self.assertEqual(settings.old_keys(self.repository()), [])   # the shipped lists are not the user's
-        self.write(self.user_file, '[setup]\nenabled = ["alpha"]\ndisabled = []\nallow_unshared_clone = true\n[roles]\nenabled = false\n')
-        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
-        self.write(self.local_file, '[project]\ndisabled = ["alpha"]\n[roles]\nmanager_default = true\n')
-        self.assertEqual(settings.old_keys(self.locations()), [
-            (self.user_file, "setup.enabled", "install in ~/.agents/workflow.toml"),
-            (self.user_file, "setup.disabled", "install in ~/.agents/workflow.toml"),
-            (self.user_file, "roles.enabled", "roles in install"),
-            (self.user_file, "setup.allow_unshared_clone", "none: setup warns on such a clone"),
-            (self.project_file, "project.enabled", "install in the project's .agents/workflow.toml"),
-            (self.local_file, "project.disabled", "install in the project's .agents/workflow.local.toml"),
-        ])
-        self.assertEqual(set(schema.OLD_KEYS), {key for _, key, _ in settings.old_keys(self.locations())})
-        # No longer read.
-        self.assertNotIn("roles.enabled", settings.resolve(self.locations(), ("roles",)))
-        self.assertEqual([key for _, key, _ in settings.old_keys(self.locations(project=False))],
-                         ["setup.enabled", "setup.disabled", "roles.enabled", "setup.allow_unshared_clone"])
 
 
 class DictionarySeamTests(support.CloneCase):

@@ -263,8 +263,7 @@ class FlagTests(SettingsCase):
 
 class RememberedChoiceTests(SettingsCase):
 
-    """``setup.allow_unshared_clone`` is gone: setup has no flag for it, and does not
-    fault a file that still holds it."""
+    """``setup.allow_unshared_clone`` is gone: setup has no flag for it."""
 
     def test_the_flag_and_the_key_are_gone(self) -> None:
         for flag in ("--allow-unshared-clone", "--no-allow-unshared-clone"):
@@ -274,11 +273,6 @@ class RememberedChoiceTests(SettingsCase):
                 self.assertIn(flag, err)
         self.assertIn("no such setting", self.refused("--yes", "--reset", "setup.allow_unshared_clone"))
         self.assertNotIn("setup.allow_unshared_clone", [key for key, _, _, _ in settingsfile._SETTINGS])
-
-    def test_a_file_that_holds_the_old_key_is_no_fault(self) -> None:
-        self.write(self.project_file, "[setup]\nallow_unshared_clone = true\n")
-        self.ok("--yes", project=True)
-        self.ok("--yes")
 
 
 class ModelListTests(SettingsCase):

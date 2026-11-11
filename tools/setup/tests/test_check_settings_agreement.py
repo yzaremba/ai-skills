@@ -22,7 +22,6 @@ import os
 import subprocess
 import sys
 import unittest
-from pathlib import Path
 
 import support
 
@@ -100,7 +99,7 @@ TABLE = [
     Case("an unknown top-level key and table", {LOCAL: 'docs_dir = "docs"\n[proces]\nx = 1\n'}, expect=SHIPPED),
     Case("schema_version of any kind", {USER: "schema_version = 2\n", PROJECT: 'schema_version = "1"\n', LOCAL: "schema_version = 0\n"},
          expect=SHIPPED),
-    Case("an old key and install", {USER: '[roles]\nenabled = ["coder"]\n[install]\nroles = 3\n'}, expect=SHIPPED),
+    Case("an unknown key and install", {USER: '[roles]\nenabled = ["coder"]\n[install]\nroles = 3\n'}, expect=SHIPPED),
     # --- not valid -------------------------------------------------------------
     Case("a bad enumeration value", {USER: '[process]\nquestions = "sometimes"\n'}, USER,
          ("process.questions", '"sometimes" is not allowed', "allowed values: one-at-a-time, all-together")),

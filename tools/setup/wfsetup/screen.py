@@ -12,8 +12,7 @@ as the options of a run (``--docs-dir``, ``--tier``, ``--reset`` and the
 others), and the plan and the apply are the program's own run with those
 options: a dry run, then the run with ``--yes``. So a value changed here is
 written, a value accepted as shown is not (R4.3), and the file a project is
-given is made only when it holds a value (R6.1). An old key (R10.2) is named
-with what replaces it; the settings file the run writes is written without it.
+given is made only when it holds a value (R6.1).
 
 The items line opens a checklist (R3.2, R3.4). The Codex item opens as off,
 on or on with the profile, then the worktree root (R8.3).
@@ -100,7 +99,6 @@ class Screen:
         self.providers = [
             provider.name for provider in found.providers if provider.installed and provider.name in known
         ]
-        self.old = settings.old_keys(where)
 
     # --- The rows -------------------------------------------------------------
 
@@ -216,13 +214,6 @@ class Screen:
         below = settings.resolve(self.where, layers=self.below_layers)
         rows = self.rows()
         print()
-        for file, key, replacement in self.old:
-            if file == self.target:
-                print(f"old key {key} in {file}: use {replacement}. The file written drops it")
-            else:
-                print(f"old key {key} in {file}: use {replacement}. This run does not write that file: change it there")
-        if self.old:
-            print()
         width = max(len(row.label) for row in rows)
         for row in rows:
             print(f"{row.number:>3}  {row.label:<{width}}  {self.describe(row, entries, below)}")
@@ -387,27 +378,27 @@ class Screen:
         """The checklist of the clone's skills, the rule and ``roles`` (R3.2, R3.4)."""
         every = definitions.units(self.where, self.skills)
         home: set[str] = set()
+        roles_bind = True
         if self.project:
             level = definitions.user_level(self.where)
             home = set(definitions.home_selection(level, self.skills).units)
             if definitions.roles_installed(level):
                 home.add(schema.ROLES_ITEM)
-        names = sorted(every)
-        if not self.project or schema.ROLES_ITEM in home:
-            names.insert(0, schema.ROLES_ITEM)
+            roles_bind = schema.ROLES_ITEM not in home    # where the home has roles, they add nothing here
+        names = [schema.ROLES_ITEM] + sorted(every)
         chosen = [name for name in self._chosen() if name in every or name == schema.ROLES_ITEM]
         first = list(chosen)
         needs = definitions.dependencies(self.where)
         bound = definitions.bound_skills(self.where) & every
         def view() -> tuple[set[str], dict[str, list[str]]]:
-            selection = definitions.select(self.where, chosen, every, roles_bind=not self.project)
+            selection = definitions.select(self.where, chosen, every, roles_bind=roles_bind)
             ticked = set(selection.units) | ({schema.ROLES_ITEM} & set(chosen))
             needers: dict[str, list[str]] = {}
             for unit in sorted(selection.units):
                 for need in needs.get(unit, ()):
                     if need in every:
                         needers.setdefault(need, []).append(unit)
-            if schema.ROLES_ITEM in chosen and not self.project:
+            if schema.ROLES_ITEM in chosen and roles_bind:
                 for unit in sorted(bound):
                     needers.setdefault(unit, []).append(definitions.ROLES_NEED)
             return ticked, needers
@@ -441,7 +432,7 @@ class Screen:
                 else:
                     chosen.remove(name)
                     if name == schema.ROLES_ITEM:    # the skills it brought stay
-                        chosen += [unit for unit in sorted(bound) if unit not in chosen]
+                        chosen += [unit for unit in sorted(bound - home) if unit not in chosen]
         if chosen != first:
             self.state.install = chosen
             self._unreset(row.key)

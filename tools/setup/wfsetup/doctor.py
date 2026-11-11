@@ -591,9 +591,10 @@ def check_missing(context: Context) -> list[Finding]:
     home_roles = render.roles_report(probe)
     line = render.process_alone_line(home_roles)
     if line is not None:
-        findings.append(info(
-            f"{line}; setup removes what an earlier run generated, unless it was edited by hand"
-        ))
+        # The home's clause ("setup removes what an earlier run generated")
+        # does not fit a project that has roles of its own.
+        own = bool((home_roles or {}).get("project"))
+        findings.append(info(line if own else f"{line}; setup removes what an earlier run generated, unless it was edited by hand"))
     home_rendered = bool(record.home.on_disk)
     project_rendered = record.project is not None and bool(record.project.on_disk)
     home_generated = any(
@@ -1234,11 +1235,7 @@ def check_profiles(context: Context) -> list[Finding]:
         found = context.resolution
     except SetupError as exc:
         return [error(line) for line in exc.lines]
-    findings = [
-        warning(f"{file}: {key} is an old key; use {replacement}", file)
-        for file, key, replacement in settings.old_keys(context.where)
-    ]
-    findings += [warning(note) for note in found.notes]
+    findings = [warning(note) for note in found.notes]
     return findings or [fine(f"{len(found.profiles)} profiles resolve, and every setting matches something")]
 
 
@@ -1321,9 +1318,52 @@ def loaded_skill_warning(one: entry.Made) -> str:
 def check_loaded_skill_size(context: Context) -> list[Finding]:
     """A loaded role whose skill, made with the user's settings, is over
     the limit ``validate`` holds the shipped roles to, on a provider whose
-    dictionary has one; on a provider with none, the sizes as info."""
+    dictionary has one; on a provider with none, the sizes as info. The
+    home's skills are measured as the home's; with a project that has
+    roles of its own (``definitions.project_roles``), the project's are
+    too, each finding naming the project (R5.8)."""
     if not context.sources.ok:
         return [info(NOT_PLANNED)]
+    findings = _home_skill_size(context)
+    if context.where.project is not None and definitions.project_roles(context.where):
+        findings += _project_skill_size(context)
+    return findings
+
+
+def _project_skill_size(context: Context) -> list[Finding]:
+    """The sizes of the loaded-role skills the project would hold, made as
+    the install makes them (the rows' directories, the project's profile
+    paragraph), each finding naming the project. Where the project was
+    installed, those not in it are left out, as the home's are."""
+    project = context.homes.project
+    where = context.where
+    names = [provider.name for provider in context.installed() if provider.name in definitions.PROVIDERS]
+    dirs = {name: definitions.skill_dirs(where, name, context.sources.skills, context.homes) for name in names}
+    made = [one for one in entry.skills(where, names, context.homes, dirs, project=True)
+            if one.name.endswith(entry.SKILL_FILE)]
+    label = f"the project {project}"
+    if context.record.project is not None and context.record.project.on_disk:
+        made = [one for one in made
+                if fsio.is_file(project.joinpath(*homes.PROJECT_SKILLS[one.provider], one.name))]
+    if not made:
+        return [info(f"{label}: no role is loaded as a skill there; nothing to measure")]
+    findings: list[Finding] = []
+    for provider in dict.fromkeys(one.provider for one in made):
+        mine = [one for one in made if one.provider == provider]
+        limit = mine[0].limit_tokens
+        if limit is None:
+            sizes = ", ".join(f"{one.role} about {one.tokens:,} tokens ({one.size:,} bytes)" for one in mine)
+            findings.append(info(f"{label}: {provider}: no limit on a loaded role's skill (its dictionary names "
+                                 f"no skills.compaction_tokens); {sizes}"))
+            continue
+        over = [warning(f"{label}: {loaded_skill_warning(one)}", one.role) for one in mine if one.over_limit]
+        findings.extend(over or [fine(f"{label}: {provider}: {len(mine)} loaded-role skills, none estimated "
+                                      f"over {limit:,} tokens")])
+    return findings
+
+
+def _home_skill_size(context: Context) -> list[Finding]:
+    """The home's part of ``check_loaded_skill_size``."""
     if not definitions.roles_installed(context.where):
         found = definitions.home_install(context.where)
         return [info(

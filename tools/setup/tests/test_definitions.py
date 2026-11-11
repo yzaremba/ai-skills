@@ -37,7 +37,7 @@ from unittest import mock
 import support
 from fileops_support import POSIX, SYMLINKS
 from test_render import LINKS, RenderCase, tree
-from wfsetup import definitions, dictionary, fileops, fsio, homes, locations, render, roles, validate
+from wfsetup import definitions, dictionary, entry, fileops, fsio, homes, locations, render, roles, validate
 from wfsetup.errors import SetupError
 from wfsetup.locations import Locations
 
@@ -168,6 +168,13 @@ def frontmatter(text: str) -> tuple[dict[str, str], str]:
         fields[matched.group(1)] = yaml_value(matched.group(2))
     fields.update(nested)
     return fields, body
+
+
+def inputs_digests(where, providers=definitions.PROVIDERS, homes_found=None, dirs=None):
+    """The inputs digest of each definition, by provider and definition id:
+    what ``build`` gives, from the sources and settings as they are now."""
+    return {(found.provider, found.definition): found.inputs
+            for found in definitions.build(where, providers, homes_found, dirs)}
 
 
 def digest(data: bytes) -> str:
@@ -522,8 +529,8 @@ class FilesCase(DefinitionsCase):
         moved = self.root / "moved" / "claude-home"
         moved.mkdir(parents=True)
         found, _ = self.moved_run(CLAUDE_CONFIG_DIR=moved)
-        there = definitions.digests(self.where(), homes_found=found)
-        here = definitions.digests(self.where())
+        there = inputs_digests(self.where(), homes_found=found)
+        here = inputs_digests(self.where())
         # worker and lead have a row, and with it the directory in their text.
         self.assertEqual({key for key in here if here[key] != there[key]},
                          {(CLAUDE, "worker"), (CLAUDE, "worker-hard"), (CLAUDE, "lead")})
@@ -647,11 +654,11 @@ class StableCase(DefinitionsCase):
 
     def test_a_crlf_checkout_gives_the_same_bytes_and_the_same_digest(self) -> None:
         self.assertEqual(self.render()[0], 0)
-        before, digests = self.generated(), definitions.digests(self.where())
+        before, digests = self.generated(), inputs_digests(self.where())
         for file in (self.clone / "roles/worker/ROLE.md", self.clone / "roles/_shared/brief.md",
                      self.clone / "providers/codex/actions.md", self.clone / "roles/worker/role.toml"):
             file.write_bytes(b"\xef\xbb\xbf" + file.read_bytes().replace(b"\n", b"\r\n"))
-        self.assertEqual(definitions.digests(self.where()), digests)
+        self.assertEqual(inputs_digests(self.where()), digests)
         code, report, _ = self.report()
         self.assertEqual((code, report["plan"]), (0, []))
         self.assertEqual(self.generated(), before)
@@ -787,7 +794,7 @@ class DigestCase(DefinitionsCase):
         self.assertEqual(self.render()[0], 0)
         entries = self.entries()
         before = tree(self.root)
-        found = definitions.digests(self.where())
+        found = inputs_digests(self.where())
         self.assertEqual(tree(self.root), before)
         self.assertEqual(len(found), 11)
         for (provider, definition), inputs in found.items():
@@ -809,10 +816,10 @@ class DigestCase(DefinitionsCase):
 
     def test_a_changed_source_shows_as_drift_in_the_digests_of_its_dependents(self) -> None:
         self.assertEqual(self.render()[0], 0)
-        recorded = definitions.digests(self.where())
+        recorded = inputs_digests(self.where())
         (self.clone / "roles/_shared/brief.md").write_bytes(b"## The brief\n\nWork from the brief alone.\n")
         before = tree(self.root)
-        now = definitions.digests(self.where())
+        now = inputs_digests(self.where())
         self.assertEqual(tree(self.root), before)
         self.assertEqual(
             {key for key in now if now[key] != recorded[key]},
@@ -820,7 +827,7 @@ class DigestCase(DefinitionsCase):
              (CODEX, "worker"), (CODEX, "worker-hard"), (CODEX, "reviewer")},
         )
         self.write(self.user_file, '[providers.claude-code.tiers]\nfast = "sonnet"\n')
-        later = definitions.digests(self.where())
+        later = inputs_digests(self.where())
         self.assertEqual({key for key in later if later[key] != now[key]}, {(CLAUDE, "quick")})
 
     def test_a_comment_in_role_toml_is_an_input_and_changes_no_byte(self) -> None:
@@ -976,12 +983,12 @@ class CacheCase(DefinitionsCase):
         plain = other.read_bytes()
         self.name("runner", commands="false", dispatches='["worker"]')
         self.assertEqual(self.render()[0], 0)
-        before, digests = self.generated(), definitions.digests(self.where())
+        before, digests = self.generated(), inputs_digests(self.where())
         other.write_bytes(plain + b'\n[cache]\nlong = "1h"\n')
         self.assertEqual({item.cache for item in definitions.materials(self.where(), [CODEX])
                           if item.definition == "runner"}, {"1h"})
         self.assertEqual({found.cache for found in definitions.build(self.where(), [CODEX])}, {None})
-        self.assertEqual(definitions.digests(self.where()), digests)
+        self.assertEqual(inputs_digests(self.where()), digests)
         code, report, err = self.report()
         self.assertEqual((code, err, report["plan"]), (0, "", []))
         self.assertEqual(self.generated(), before)
@@ -1033,15 +1040,15 @@ class CacheCase(DefinitionsCase):
         )
 
         self.map("")
-        without = definitions.digests(self.where())
+        without = inputs_digests(self.where())
         self.map(CACHE_TABLE)
         # A table nobody names changes no digest: no format number is raised for the key.
-        self.assertEqual(definitions.digests(self.where()), without)
+        self.assertEqual(inputs_digests(self.where()), without)
         self.name("runner", commands="false", dispatches='["worker"]')
-        named = definitions.digests(self.where())
+        named = inputs_digests(self.where())
         self.assertEqual({key for key in named if named[key] != without[key]}, {(CLAUDE, "runner"), (CODEX, "runner")})
         self.map('\n[cache]\nlong = "5m"\n')
-        short = definitions.digests(self.where())
+        short = inputs_digests(self.where())
         self.assertEqual({key for key in short if short[key] != named[key]}, {(CLAUDE, "runner")})
         self.assertEqual(self.render()[0], 0)
         self.assertEqual(self.claude_file("runner")[0]["experimental.cacheTtl"], "5m")
@@ -1434,9 +1441,24 @@ class SelectionCase(DefinitionsCase):
         self.assertEqual(found.units, {"beta", "solo"})
         self.assertEqual(found.needed, {"solo": ("beta",)})
 
-    def test_roles_in_a_projects_install_bring_nothing(self) -> None:
+    def test_roles_in_a_projects_install_bring_the_bound_skills_where_the_home_lacks_roles(self) -> None:
+        self.user("sample")
         self.write_project('install = ["roles", "solo"]\n')
+        self.assertTrue(definitions.project_roles(self.where(True)))
+        self.assertEqual(self.project_sel(), definitions.Selection(
+            frozenset({"solo", "alpha"}), {"alpha": ("the roles",)}))
+
+    def test_roles_in_a_projects_install_bring_nothing_where_the_home_has_roles(self) -> None:
+        self.user("sample", "roles")
+        self.write_project('install = ["roles", "solo"]\n')
+        self.assertFalse(definitions.project_roles(self.where(True)))
         self.assertEqual(self.project_sel(), definitions.Selection(frozenset({"solo"})))
+
+    def test_project_roles_needs_a_project_and_roles_in_the_last_project_layer(self) -> None:
+        self.user("sample")
+        self.assertFalse(definitions.project_roles(self.where()))
+        self.write_project('install = ["roles"]\n', 'install = ["solo"]\n')
+        self.assertFalse(definitions.project_roles(self.where(True)))
 
     def test_an_unknown_name_names_its_file(self) -> None:
         self.write_project('install = ["gamma"]\n')
@@ -1477,6 +1499,86 @@ class SelectionCase(DefinitionsCase):
         code, out, err = self.render()
         self.assertEqual((code, err), (0, ""), out)
         self.assertLinked(self.claude_skills / "solo", self.clone / "solo")
+
+
+class DirsCase(DefinitionsCase):
+    """The directory each skill's rows name (R5.3): the home's for a skill
+    the home has, else the project's, as a path from the project root. In
+    the fixture alpha is the one process skill; worker, worker-hard and lead
+    have rows."""
+
+    SKILLS = ["alpha", "beta", "solo", "multiagent-collab"]
+    WITH_ROWS = {(CLAUDE, "worker"), (CLAUDE, "worker-hard"), (CLAUDE, "lead"), (CODEX, "worker"), (CODEX, "worker-hard")}
+
+    def dirs(self, where: Locations) -> dict[str, dict[str, str]]:
+        return {provider: definitions.skill_dirs(where, provider, self.SKILLS) for provider in (CLAUDE, CODEX)}
+
+    def test_a_skill_the_home_has_is_under_the_homes_directory_and_another_under_the_projects(self) -> None:
+        home = {CLAUDE: {"alpha": "~/.claude/skills"}, CODEX: {"alpha": "~/.agents/skills"}}
+        self.assertEqual(self.dirs(self.where()), home)
+        self.assertEqual(self.dirs(self.where(True)), home)    # the shipped install has alpha
+        self.write(self.user_file, 'install = ["sample"]\n')
+        self.assertEqual(self.dirs(self.where()), home)        # no project: the home's, as today
+        self.assertEqual(self.dirs(self.where(True)),
+                         {CLAUDE: {"alpha": ".claude/skills"}, CODEX: {"alpha": ".agents/skills"}})
+
+    def test_a_mixed_mapping_puts_each_skills_rows_under_its_own_directory_and_says_so_once(self) -> None:
+        rows = [
+            definitions.Binding("r", "alpha", "s.md", "implementer"),
+            definitions.Binding("r", "beta", "u.md", "owns"),
+            definitions.Binding("r", "alpha", "t.md", "owns"),
+        ]
+        section = definitions.bindings_section(rows, {"alpha": ".claude/skills", "beta": "~/.claude/skills"})
+        self.assertIn("In `.claude/skills/alpha/references/`:\n\n- `s.md`, part `implementer`: ", section)
+        self.assertIn("In `~/.claude/skills/beta/references/`:\n\n- `u.md`, part `owns`.", section)
+        self.assertEqual(section.count(definitions.PROJECT_DIRS_SAID), 1)
+        opening = section.split("\n\n")[1]
+        self.assertTrue(opening.endswith(
+            "The part `owns` is everything the stage file asks of whoever runs the stage. "
+            + definitions.PROJECT_DIRS_SAID), opening)
+        # Every skill under the home's: the text of a single directory, without the sentence.
+        same = definitions.bindings_section(rows, {"alpha": "~/.claude/skills", "beta": "~/.claude/skills"})
+        self.assertEqual(same, definitions.bindings_section(rows, "~/.claude/skills"))
+        self.assertNotIn(definitions.PROJECT_DIRS_SAID, same)
+
+    def test_the_digest_changes_with_the_mapping_and_not_otherwise(self) -> None:
+        self.write(self.user_file, 'install = ["sample"]\n')
+        plain = definitions.build(self.where())
+        texts = {(found.provider, found.definition): found.text for found in plain}
+        before = {(found.provider, found.definition): found.inputs for found in plain}
+        # A mapping that names the home's directories is no change at all.
+        home = self.dirs(self.where())
+        self.assertEqual(inputs_digests(self.where(), dirs=home), before)
+        self.assertEqual({(found.provider, found.definition): found.text
+                          for found in definitions.build(self.where(), dirs=home)}, texts)
+        # The project's directories change the files with rows, and those only.
+        where = self.where(True)
+        dirs = self.dirs(where)
+        built = {(found.provider, found.definition): found for found in definitions.build(where, dirs=dirs)}
+        self.assertEqual({key for key in built if built[key].inputs != before[key]}, self.WITH_ROWS)
+        self.assertEqual({key for key in built if built[key].text != texts[key]}, self.WITH_ROWS)
+        self.assertEqual(inputs_digests(where, dirs=dirs), {key: one.inputs for key, one in built.items()})
+        for key in self.WITH_ROWS:
+            text = built[key].text
+            directory = ".claude/skills" if key[0] == CLAUDE else ".agents/skills"
+            self.assertIn(f"\n\nIn `{directory}/alpha/references/`:\n\n- `stage-1.md`, part `", text)
+            self.assertEqual(text.count(definitions.PROJECT_DIRS_SAID), 1)
+            # The text holds no path of the project, nor of this machine.
+            for path in (self.project, self.root):
+                self.assertNotIn(path.as_posix(), text)
+                self.assertNotIn(str(path), text)
+        for key in built.keys() - self.WITH_ROWS:
+            self.assertNotIn(definitions.PROJECT_DIRS_SAID, built[key].text)
+        # The material holds the string where every row is under the home's
+        # directory, and the role's skills mapped otherwise.
+        found = {(one.provider, one.definition): one.skills for one in definitions.materials(where, dirs=dirs)}
+        self.assertEqual(found[(CLAUDE, "worker")], {"alpha": ".claude/skills"})
+        self.assertEqual(found[(CLAUDE, "quick")], "~/.claude/skills")
+        # Another directory for the same skill is another digest.
+        other = {CLAUDE: {"alpha": "elsewhere/skills"}, CODEX: dirs[CODEX]}
+        moved = inputs_digests(where, dirs=other)
+        self.assertEqual({key for key in moved if moved[key] != built[key].inputs},
+                         {key for key in self.WITH_ROWS if key[0] == CLAUDE})
 
 
 class RepositoryCase(RenderCase):
@@ -1533,6 +1635,22 @@ class RepositoryCase(RenderCase):
         for data in (file.read_bytes() for directory in (self.claude / "agents", self.codex / "agents") for file in directory.iterdir()):
             self.assertNotIn(str(support.REPOSITORY).encode("utf-8"), data)
             self.assertNotIn(str(self.root).encode("utf-8"), data)
+
+    def test_a_projects_loaded_skills_are_within_claude_codes_limit_with_the_shipped_roles(self) -> None:
+        """The check of P2.2: a home without ``roles`` and a project that
+        lists it, the shipped roles and settings, the doctor's estimate."""
+        self.write(self.user_file, 'install = ["self-reflection"]\n')
+        self.write(self.project_file, 'install = ["roles"]\n')
+        where = Locations(home=self.home, project=self.project, clone=support.REPOSITORY)
+        found = homes.resolve(where, self.host)
+        names = [CLAUDE, CODEX]
+        dirs = {name: definitions.skill_dirs(where, name, validate.require(where).skills, found) for name in names}
+        made = [one for one in entry.skills(where, names, found, dirs, project=True)
+                if one.name.endswith(entry.SKILL_FILE) and one.provider == CLAUDE]
+        self.assertGreaterEqual({one.role for one in made}, {"manager", "product-manager", "architect"})
+        for one in made:
+            self.assertIsNotNone(one.limit_tokens)
+            self.assertFalse(one.over_limit, f"{one.role}: about {one.tokens:,} tokens ({one.size:,} bytes)")
 
     # The roles that wait between their turns, on the user or on Coders, and
     # the two reviewers, whose long thinking outlasts five minutes.

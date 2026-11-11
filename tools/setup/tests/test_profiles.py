@@ -11,13 +11,11 @@ import sys as _sys
 from pathlib import Path as _Path
 _sys.path[:0] = {str(_Path(__file__).resolve().parent)} - set(_sys.path)
 
-import json
 import os
 import unittest
-from unittest import mock
 
 import support
-from wfsetup import profiles, roles, tomlio
+from wfsetup import profiles, roles
 from wfsetup.errors import SetupError
 
 DEFINITIONS = ["coder", "coder-hard", "manager", "product-manager"]

@@ -19,6 +19,7 @@ _sys.path[:0] = {str(_Path(__file__).resolve().parent)} - set(_sys.path)
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import unittest
@@ -29,7 +30,7 @@ import provider_stub
 import support
 from fileops_support import POSIX
 from provider_stub import BUNDLED, LIVE, VERSION
-from test_entry import DEFAULT_ON, OVERRIDE, EntryCase
+from test_entry import DEFAULT_ON, OVERRIDE, ROLES_OFF, EntryCase
 from test_fileops import Crash
 from wfsetup import doctor, entry, fileops, fsio, homes, render, validate
 from wfsetup.locations import Locations
@@ -501,6 +502,18 @@ class MissingCase(DoctorCase):
         self.assertEqual(code, 0)
         self.assertQuiet(findings)
         self.assertFinding(findings, doctor.INFO, "no role definition or entry point is installed", "install lacks roles")
+
+    def test_the_roles_line_says_a_project_has_roles_of_its_own(self) -> None:
+        self.write(self.user_file, 'install = ["sample"]\n')
+        self.write(self.project_file, 'install = ["roles"]\n')
+        code, findings = self.only("missing", str(self.project))
+        self.assertEqual(code, 0)
+        self.assertFinding(
+            findings, doctor.INFO,
+            f"roles: not in `install` in {self.user_file}: the process alone; "
+            f"the project has roles of its own, listed in `install` in {self.project_file}",
+        )
+        self.assertNotIn("removes what an earlier run", json.dumps(findings))
 
     def test_a_fault_in_the_selection_does_not_lose_the_missing_check_after_roles_left_out(self) -> None:
         self.roles_off()
@@ -1096,25 +1109,13 @@ class ProfilesCase(DoctorCase):
 
 
 class NoticesCase(DoctorCase):
-    """What the user is to do by hand (R6.4, R10.2, R10.3), as warnings."""
+    """What the user is to do by hand (R6.4, R10.3), as warnings."""
 
-    OLD_BLOCK = "# workflow-setup:start\n.agents/workflow.local.toml\n.claude/skills/alpha\n# workflow-setup:end\n"
-
-    def test_an_old_key_is_a_warning_naming_its_replacement(self) -> None:
+    def test_an_unknown_key_stops_the_check_as_any_other(self) -> None:
         self.write(self.user_file, '[setup]\nenabled = ["alpha"]\n')
-        self.write(self.project_file, '[project]\nenabled = ["alpha"]\n')
-        code, findings = self.only("profiles", *self.project_arg)
-        self.assertEqual(code, 0)
-        self.assertFinding(findings, doctor.WARNING, str(self.user_file), "setup.enabled is an old key", "install in ~/.agents/workflow.toml")
-        self.assertFinding(findings, doctor.WARNING, str(self.project_file), "project.enabled is an old key", "install")
-
-    def test_setups_old_gitignore_block_is_a_warning_with_no_record(self) -> None:
-        (self.project / ".gitignore").write_text("build/\n" + self.OLD_BLOCK, encoding="utf-8")
-        before = snapshot(self.project)
-        code, findings = self.only("drift", *self.project_arg)
-        self.assertEqual(code, 0)
-        self.assertFinding(findings, doctor.WARNING, f"{self.project / '.gitignore'}: lines 2-5 are setup's old ignore block", "remove those lines")
-        self.assertEqual(snapshot(self.project), before)
+        code, out, err = self.run_doctor("--only", "profiles")
+        self.assertEqual(code, 1)
+        self.assertIn(f"{self.user_file}: setup: unknown key", out + err)
 
     @unittest.skipUnless(shutil.which("git"), "needs git")
     def test_a_tracked_codex_config_gets_the_r64_line_and_a_named_old_block(self) -> None:
@@ -1463,6 +1464,86 @@ class ProjectSetCase(DoctorCase):
         after = {name: snapshot(path) for name, path in (
             ("home", self.home), ("project", self.project), ("clone", self.clone))}
         self.assertEqual(after, before)
+
+
+class ProjectRolesCase(DoctorCase):
+    """``setup.py --check DIR`` on a project with roles of its own (R5.8):
+    the home lacks ``roles``, the project lists it."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write(self.user_file, ROLES_OFF)
+        self.write(self.project_file, 'install = ["roles"]\n')
+        self.skill = self.project / ".claude" / "skills" / "lead" / "SKILL.md"
+
+    def project_rendered(self) -> None:
+        self.with_project()
+        self.assertTrue(self.skill.is_file())
+
+    def test_the_size_of_the_projects_skills_is_measured_and_names_the_project(self) -> None:
+        self.project_rendered()
+        code, findings = self.only("loaded-skill-size", *self.project_arg)
+        self.assertEqual(code, 0)
+        self.assertFinding(findings, doctor.INFO, "roles: not in `install`", "nothing to measure")   # the home's line stays
+        self.assertFinding(findings, doctor.OK, f"the project {self.project}: claude-code: ",
+                           " loaded-role skills, none estimated over 5,000 tokens")
+        self.assertFinding(findings, doctor.INFO, f"the project {self.project}: codex: no limit")
+        limit_loaded_skills(self, "claude-code", 100)
+        code, findings = self.only("loaded-skill-size", *self.project_arg)
+        self.assertEqual(code, 0)
+        warned = self.details(findings, doctor.WARNING)
+        self.assertGreaterEqual(len(warned), 2)
+        self.assertTrue(all(one.startswith(f"the project {self.project}: claude-code: the loaded role ")
+                            for one in warned), warned)
+
+    def test_the_sizes_reported_are_those_of_the_installed_skill_files(self) -> None:
+        self.project_rendered()
+        # Codex: the info line gives each skill's bytes.
+        code, findings = self.only("loaded-skill-size", *self.project_arg)
+        (line,) = [one for one in self.details(findings, doctor.INFO) if ": codex: no limit" in one]
+        reported = {role: int(size.replace(",", ""))
+                    for role, size in re.findall(r"([\w-]+) about [\d,]+ tokens \(([\d,]+) bytes\)", line)}
+        self.assertGreaterEqual(len(reported), 2, line)
+        for role, size in reported.items():
+            self.assertEqual(size, len((self.project / ".agents" / "skills" / role / "SKILL.md").read_bytes()), role)
+        # Claude Code: the warnings of a lowered limit give them too.
+        limit_loaded_skills(self, "claude-code", 100)
+        code, findings = self.only("loaded-skill-size", *self.project_arg)
+        warned = {role: int(size.replace(",", ""))
+                  for one in self.details(findings, doctor.WARNING)
+                  for role, size in re.findall(r"the loaded role ([\w-]+) is about [\d,]+ tokens \(([\d,]+) bytes\)", one)}
+        self.assertGreaterEqual(len(warned), 2, warned)
+        for role, size in warned.items():
+            self.assertEqual(size, len((self.project / ".claude" / "skills" / role / "SKILL.md").read_bytes()), role)
+
+    def test_the_size_is_measured_before_the_project_is_installed_too(self) -> None:
+        limit_loaded_skills(self, "claude-code", 100)
+        code, findings = self.only("loaded-skill-size", *self.project_arg)
+        self.assertEqual(code, 0)
+        self.assertTrue(self.details(findings, doctor.WARNING))
+
+    def test_a_project_without_roles_adds_no_line(self) -> None:
+        self.write(self.project_file, 'install = ["sample"]\n')
+        code, findings = self.only("loaded-skill-size", *self.project_arg)
+        self.assertNotIn("the project", json.dumps(findings))
+
+    def test_a_changed_source_is_drift_in_the_projects_definitions_and_skills(self) -> None:
+        self.project_rendered()
+        code, findings = self.only("drift", *self.project_arg)
+        self.assertQuiet(findings)
+        (self.clone / "roles/lead/ROLE.md").write_bytes(b"# Lead\n\nYou are the lead. Do other work.\n")
+        code, findings = self.only("drift", *self.project_arg)
+        subjects = [found["subject"] for found in findings if found["severity"] == doctor.WARNING]
+        self.assertIn("project:.claude/skills/lead/SKILL.md", subjects)
+        self.assertIn("project:.agents/skills/lead/SKILL.md", subjects)
+        self.assertTrue(any(one.startswith("project:.claude/agents/") for one in subjects), subjects)
+        self.assertFalse(any(one.startswith("home:") for one in subjects), subjects)
+
+    def test_a_skill_of_the_project_edited_by_hand(self) -> None:
+        self.project_rendered()
+        self.skill.write_bytes(self.skill.read_bytes() + b"mine\n")
+        code, findings = self.only("hand-edits", *self.project_arg)
+        self.assertFinding(findings, doctor.WARNING, "project:.claude/skills/lead/SKILL.md", "edited by hand")
 
 
 class ReadOnlyCase(DoctorCase):
