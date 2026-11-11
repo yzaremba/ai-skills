@@ -37,7 +37,7 @@ from unittest import mock
 import support
 from fileops_support import POSIX, SYMLINKS
 from test_render import LINKS, RenderCase, tree
-from wfsetup import definitions, dictionary, fileops, fsio, homes, locations, render, roles, validate
+from wfsetup import definitions, dictionary, entry, fileops, fsio, homes, locations, render, roles, validate
 from wfsetup.errors import SetupError
 from wfsetup.locations import Locations
 
@@ -168,6 +168,13 @@ def frontmatter(text: str) -> tuple[dict[str, str], str]:
         fields[matched.group(1)] = yaml_value(matched.group(2))
     fields.update(nested)
     return fields, body
+
+
+def inputs_digests(where, providers=definitions.PROVIDERS, homes_found=None, dirs=None):
+    """The inputs digest of each definition, by provider and definition id:
+    what ``build`` gives, from the sources and settings as they are now."""
+    return {(found.provider, found.definition): found.inputs
+            for found in definitions.build(where, providers, homes_found, dirs)}
 
 
 def digest(data: bytes) -> str:
@@ -522,8 +529,8 @@ class FilesCase(DefinitionsCase):
         moved = self.root / "moved" / "claude-home"
         moved.mkdir(parents=True)
         found, _ = self.moved_run(CLAUDE_CONFIG_DIR=moved)
-        there = definitions.digests(self.where(), homes_found=found)
-        here = definitions.digests(self.where())
+        there = inputs_digests(self.where(), homes_found=found)
+        here = inputs_digests(self.where())
         # worker and lead have a row, and with it the directory in their text.
         self.assertEqual({key for key in here if here[key] != there[key]},
                          {(CLAUDE, "worker"), (CLAUDE, "worker-hard"), (CLAUDE, "lead")})
@@ -647,11 +654,11 @@ class StableCase(DefinitionsCase):
 
     def test_a_crlf_checkout_gives_the_same_bytes_and_the_same_digest(self) -> None:
         self.assertEqual(self.render()[0], 0)
-        before, digests = self.generated(), definitions.digests(self.where())
+        before, digests = self.generated(), inputs_digests(self.where())
         for file in (self.clone / "roles/worker/ROLE.md", self.clone / "roles/_shared/brief.md",
                      self.clone / "providers/codex/actions.md", self.clone / "roles/worker/role.toml"):
             file.write_bytes(b"\xef\xbb\xbf" + file.read_bytes().replace(b"\n", b"\r\n"))
-        self.assertEqual(definitions.digests(self.where()), digests)
+        self.assertEqual(inputs_digests(self.where()), digests)
         code, report, _ = self.report()
         self.assertEqual((code, report["plan"]), (0, []))
         self.assertEqual(self.generated(), before)
@@ -787,7 +794,7 @@ class DigestCase(DefinitionsCase):
         self.assertEqual(self.render()[0], 0)
         entries = self.entries()
         before = tree(self.root)
-        found = definitions.digests(self.where())
+        found = inputs_digests(self.where())
         self.assertEqual(tree(self.root), before)
         self.assertEqual(len(found), 11)
         for (provider, definition), inputs in found.items():
@@ -809,10 +816,10 @@ class DigestCase(DefinitionsCase):
 
     def test_a_changed_source_shows_as_drift_in_the_digests_of_its_dependents(self) -> None:
         self.assertEqual(self.render()[0], 0)
-        recorded = definitions.digests(self.where())
+        recorded = inputs_digests(self.where())
         (self.clone / "roles/_shared/brief.md").write_bytes(b"## The brief\n\nWork from the brief alone.\n")
         before = tree(self.root)
-        now = definitions.digests(self.where())
+        now = inputs_digests(self.where())
         self.assertEqual(tree(self.root), before)
         self.assertEqual(
             {key for key in now if now[key] != recorded[key]},
@@ -820,7 +827,7 @@ class DigestCase(DefinitionsCase):
              (CODEX, "worker"), (CODEX, "worker-hard"), (CODEX, "reviewer")},
         )
         self.write(self.user_file, '[providers.claude-code.tiers]\nfast = "sonnet"\n')
-        later = definitions.digests(self.where())
+        later = inputs_digests(self.where())
         self.assertEqual({key for key in later if later[key] != now[key]}, {(CLAUDE, "quick")})
 
     def test_a_comment_in_role_toml_is_an_input_and_changes_no_byte(self) -> None:
@@ -976,12 +983,12 @@ class CacheCase(DefinitionsCase):
         plain = other.read_bytes()
         self.name("runner", commands="false", dispatches='["worker"]')
         self.assertEqual(self.render()[0], 0)
-        before, digests = self.generated(), definitions.digests(self.where())
+        before, digests = self.generated(), inputs_digests(self.where())
         other.write_bytes(plain + b'\n[cache]\nlong = "1h"\n')
         self.assertEqual({item.cache for item in definitions.materials(self.where(), [CODEX])
                           if item.definition == "runner"}, {"1h"})
         self.assertEqual({found.cache for found in definitions.build(self.where(), [CODEX])}, {None})
-        self.assertEqual(definitions.digests(self.where()), digests)
+        self.assertEqual(inputs_digests(self.where()), digests)
         code, report, err = self.report()
         self.assertEqual((code, err, report["plan"]), (0, "", []))
         self.assertEqual(self.generated(), before)
@@ -1033,15 +1040,15 @@ class CacheCase(DefinitionsCase):
         )
 
         self.map("")
-        without = definitions.digests(self.where())
+        without = inputs_digests(self.where())
         self.map(CACHE_TABLE)
         # A table nobody names changes no digest: no format number is raised for the key.
-        self.assertEqual(definitions.digests(self.where()), without)
+        self.assertEqual(inputs_digests(self.where()), without)
         self.name("runner", commands="false", dispatches='["worker"]')
-        named = definitions.digests(self.where())
+        named = inputs_digests(self.where())
         self.assertEqual({key for key in named if named[key] != without[key]}, {(CLAUDE, "runner"), (CODEX, "runner")})
         self.map('\n[cache]\nlong = "5m"\n')
-        short = definitions.digests(self.where())
+        short = inputs_digests(self.where())
         self.assertEqual({key for key in short if short[key] != named[key]}, {(CLAUDE, "runner")})
         self.assertEqual(self.render()[0], 0)
         self.assertEqual(self.claude_file("runner")[0]["experimental.cacheTtl"], "5m")
@@ -1541,7 +1548,7 @@ class DirsCase(DefinitionsCase):
         before = {(found.provider, found.definition): found.inputs for found in plain}
         # A mapping that names the home's directories is no change at all.
         home = self.dirs(self.where())
-        self.assertEqual(definitions.digests(self.where(), dirs=home), before)
+        self.assertEqual(inputs_digests(self.where(), dirs=home), before)
         self.assertEqual({(found.provider, found.definition): found.text
                           for found in definitions.build(self.where(), dirs=home)}, texts)
         # The project's directories change the files with rows, and those only.
@@ -1550,7 +1557,7 @@ class DirsCase(DefinitionsCase):
         built = {(found.provider, found.definition): found for found in definitions.build(where, dirs=dirs)}
         self.assertEqual({key for key in built if built[key].inputs != before[key]}, self.WITH_ROWS)
         self.assertEqual({key for key in built if built[key].text != texts[key]}, self.WITH_ROWS)
-        self.assertEqual(definitions.digests(where, dirs=dirs), {key: one.inputs for key, one in built.items()})
+        self.assertEqual(inputs_digests(where, dirs=dirs), {key: one.inputs for key, one in built.items()})
         for key in self.WITH_ROWS:
             text = built[key].text
             directory = ".claude/skills" if key[0] == CLAUDE else ".agents/skills"
@@ -1569,7 +1576,7 @@ class DirsCase(DefinitionsCase):
         self.assertEqual(found[(CLAUDE, "quick")], "~/.claude/skills")
         # Another directory for the same skill is another digest.
         other = {CLAUDE: {"alpha": "elsewhere/skills"}, CODEX: dirs[CODEX]}
-        moved = definitions.digests(where, dirs=other)
+        moved = inputs_digests(where, dirs=other)
         self.assertEqual({key for key in moved if moved[key] != built[key].inputs},
                          {key for key in self.WITH_ROWS if key[0] == CLAUDE})
 
@@ -1628,6 +1635,22 @@ class RepositoryCase(RenderCase):
         for data in (file.read_bytes() for directory in (self.claude / "agents", self.codex / "agents") for file in directory.iterdir()):
             self.assertNotIn(str(support.REPOSITORY).encode("utf-8"), data)
             self.assertNotIn(str(self.root).encode("utf-8"), data)
+
+    def test_a_projects_loaded_skills_are_within_claude_codes_limit_with_the_shipped_roles(self) -> None:
+        """The check of P2.2: a home without ``roles`` and a project that
+        lists it, the shipped roles and settings, the doctor's estimate."""
+        self.write(self.user_file, 'install = ["self-reflection"]\n')
+        self.write(self.project_file, 'install = ["roles"]\n')
+        where = Locations(home=self.home, project=self.project, clone=support.REPOSITORY)
+        found = homes.resolve(where, self.host)
+        names = [CLAUDE, CODEX]
+        dirs = {name: definitions.skill_dirs(where, name, validate.require(where).skills, found) for name in names}
+        made = [one for one in entry.skills(where, names, found, dirs, project=True)
+                if one.name.endswith(entry.SKILL_FILE) and one.provider == CLAUDE]
+        self.assertGreaterEqual({one.role for one in made}, {"manager", "product-manager", "architect"})
+        for one in made:
+            self.assertIsNotNone(one.limit_tokens)
+            self.assertFalse(one.over_limit, f"{one.role}: about {one.tokens:,} tokens ({one.size:,} bytes)")
 
     # The roles that wait between their turns, on the user or on Coders, and
     # the two reviewers, whose long thinking outlasts five minutes.

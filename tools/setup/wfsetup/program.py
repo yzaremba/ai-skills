@@ -316,15 +316,16 @@ python3 and WSL paths from Windows), only where the clone is on a drive both
 sides read, not on a --home run and not after a refused run. It runs no
 check.
 
-Turning roles.manager_default off, removing an override, or taking `roles`
-out of the project's `install` or putting it into the home's makes what an
-earlier run wrote for it stale: the next run with DIR removes it, and a
+Turning roles.manager_default off, removing an override, taking `roles` out
+of the home's or the project's `install`, or putting it into the home's makes
+what an earlier run wrote for it stale: the next run with DIR removes it, and a
 directory setup created that this leaves empty. When `roles` leaves the
 project's list, or the home gets it, the project's own roles go but for what
 the home's roles keep (the definitions the project's settings change). A
 file setup no longer makes that was edited by hand is kept and reported on
 every later run, with exit code 0; exit code 3 is for a file setup still
-makes that was edited by hand, which an option would overwrite. The two keys of .claude/settings.json go only with a run that writes
+makes that was edited by hand, which an option would overwrite. The two keys
+of .claude/settings.json go only with a run that writes
 DIR/.agents/workflow.toml, or one given --manager-default or
 --no-manager-default (even where the file already holds that value); any
 other run leaves them.

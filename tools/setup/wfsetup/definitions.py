@@ -9,7 +9,6 @@ How it is used
         found.inputs                                     # the digest the record keeps
         found.model, found.effort
 
-    definitions.digests(where, providers)    # {(provider, definition): inputs}; what ``--check`` compares
     definitions.user_level(where)            # the same locations without the project
     definitions.materials(where, providers, select)   # what a definition is made from, before a format
     definitions.skill_dirs(where, provider, skills)   # {skill: directory} its rows are written under
@@ -568,8 +567,8 @@ def skill_dirs(where: Locations, provider: str, skills: Iterable[str],
 
 # Said in "Your bindings" where a row's directory is the project's.
 PROJECT_DIRS_SAID = (
-    "A directory that starts with `.` is a path from the project root: the project's main working tree, the "
-    "first entry of `git worktree list`, also when you work in another of its worktrees."
+    "A path starting with `.` is from the project root, the main worktree (first in `git worktree list`), "
+    "even if you are in another."
 )
 
 
@@ -947,15 +946,3 @@ def build(where: Locations, providers: Iterable[str] = PROVIDERS,
     if problems:
         raise SetupError(*problems)
     return built
-
-
-def digests(where: Locations, providers: Iterable[str] = PROVIDERS,
-            homes_found: homes.Homes | None = None,
-            dirs: dict[str, dict[str, str]] | None = None) -> dict[tuple[str, str], str]:
-    """The inputs digest of each definition, by provider and definition id,
-    from the sources and settings as they are now, the rows under ``dirs``
-    (``materials``). Nothing is written. A
-    recorded ``inputs`` that differs from it is drift: the file was made
-    from other sources or settings than today's."""
-    return {(found.provider, found.definition): found.inputs
-            for found in build(where, providers, homes_found, dirs)}

@@ -19,6 +19,7 @@ _sys.path[:0] = {str(_Path(__file__).resolve().parent)} - set(_sys.path)
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import unittest
@@ -1506,6 +1507,26 @@ class ProjectRolesCase(DoctorCase):
         self.assertGreaterEqual(len(warned), 2)
         self.assertTrue(all(one.startswith(f"the project {self.project}: claude-code: the loaded role ")
                             for one in warned), warned)
+
+    def test_the_sizes_reported_are_those_of_the_installed_skill_files(self) -> None:
+        self.project_rendered()
+        # Codex: the info line gives each skill's bytes.
+        code, findings = self.only("loaded-skill-size", *self.project_arg)
+        (line,) = [one for one in self.details(findings, doctor.INFO) if ": codex: no limit" in one]
+        reported = {role: int(size.replace(",", ""))
+                    for role, size in re.findall(r"([\w-]+) about [\d,]+ tokens \(([\d,]+) bytes\)", line)}
+        self.assertGreaterEqual(len(reported), 2, line)
+        for role, size in reported.items():
+            self.assertEqual(size, len((self.project / ".agents" / "skills" / role / "SKILL.md").read_bytes()), role)
+        # Claude Code: the warnings of a lowered limit give them too.
+        limit_loaded_skills(self, "claude-code", 100)
+        code, findings = self.only("loaded-skill-size", *self.project_arg)
+        warned = {role: int(size.replace(",", ""))
+                  for one in self.details(findings, doctor.WARNING)
+                  for role, size in re.findall(r"the loaded role ([\w-]+) is about [\d,]+ tokens \(([\d,]+) bytes\)", one)}
+        self.assertGreaterEqual(len(warned), 2, warned)
+        for role, size in warned.items():
+            self.assertEqual(size, len((self.project / ".claude" / "skills" / role / "SKILL.md").read_bytes()), role)
 
     def test_the_size_is_measured_before_the_project_is_installed_too(self) -> None:
         limit_loaded_skills(self, "claude-code", 100)
