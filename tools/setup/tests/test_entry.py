@@ -21,6 +21,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import tomllib
 import unittest
 from pathlib import Path
@@ -837,18 +838,36 @@ class RolesInstallCase(EntryCase):
         err = self.refused()
         self.assertIn(f"{self.user_file}: install:", err)
 
-    def test_roles_in_a_projects_install_where_the_home_has_none_are_a_note(self) -> None:
-        self.write(self.user_file, ROLES_OFF)
-        self.write(self.project_file, 'install = ["roles"]\n')
-        project_before = tree(self.project)
+    def assert_process_skills_in_project(self) -> None:
+        """The fixture's one process skill (alpha, the one the binding table
+        names) is linked into the project for both providers and named as
+        needed by the roles; no note says roles come later."""
         code, report, err = self.report(*self.project_arg)
         self.assertEqual((code, err), (0, ""))
-        notes = [note for note in report["notes"] if "roles in a project" in note]
-        self.assertEqual(notes, ["roles in a project come later; nothing of the roles is installed for this project"])
+        self.assertLinked(self.project / ".claude" / "skills" / "alpha", self.clone / "alpha")
+        self.assertLinked(self.project / ".agents" / "skills" / "alpha", self.clone / "alpha")
+        self.assertIn("alpha: installed as a dependency of the roles", "\n".join(report["notes"]))
+        self.assertEqual([note for note in report["notes"] if "roles in a project" in note], [])
         self.assertEqual(self.home_files(), {})
-        self.assertEqual(self.project_files(), {})
-        self.assertNotIn(SETTINGS, tree(self.project))
-        self.assertTrue(set(tree(self.project)) >= set(project_before))
+
+    def test_roles_in_a_projects_install_where_the_home_has_none_bring_the_process_skills(self) -> None:
+        self.write(self.user_file, 'install = ["sample"]\n')
+        self.write(self.project_file, 'install = ["roles"]\n')
+        self.assert_process_skills_in_project()
+
+    def test_roles_listed_only_in_the_local_file_bring_them_too(self) -> None:
+        self.write(self.user_file, 'install = ["sample"]\n')
+        self.write(self.local_file, 'install = ["roles"]\n')
+        self.assert_process_skills_in_project()
+
+    def test_the_local_install_replacing_a_project_file_that_lists_roles_brings_nothing(self) -> None:
+        self.write(self.user_file, 'install = ["sample"]\n')
+        self.write(self.project_file, 'install = ["roles"]\n')
+        self.write(self.local_file, 'install = ["solo"]\n')
+        code, report, err = self.report(*self.project_arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertFalse((self.project / ".claude" / "skills" / "alpha").exists())
+        self.assertLinked(self.project / ".claude" / "skills" / "solo", self.clone / "solo")
 
     def test_roles_in_a_projects_install_where_the_home_has_them_are_no_note(self) -> None:
         self.write(self.project_file, 'install = ["roles"]\n' + DEFAULT_ON + OVERRIDE)
@@ -856,6 +875,136 @@ class RolesInstallCase(EntryCase):
         self.assertEqual((code, err), (0, ""))
         self.assertEqual([note for note in report["notes"] if "roles in a project" in note], [])
         self.assertEqual(json.loads(self.text(SETTINGS, self.project)), BOTH_KEYS)
+
+
+class ProjectRolesCase(EntryCase):
+    """A project whose own ``install`` lists ``roles`` where the home's does
+    not: its definitions and loaded-role skills (R5.1, R5.2), none of them
+    in the home."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write(self.user_file, 'install = ["sample"]\n')
+        self.write(self.project_file, 'install = ["roles"]\n' + OVERRIDE)
+
+    def project_text(self, name: str) -> str:
+        return self.text(name, self.project)
+
+    def test_every_definition_and_loaded_skill_is_in_the_project_and_nothing_in_the_home(self) -> None:
+        code, report, err = self.report(*self.project_arg)
+        self.assertEqual((code, err), (0, ""))
+        mine = self.files(self.project, ".claude", ".codex", ".agents/skills")
+        names = {name for name in mine if not name.endswith("/alpha") and "/alpha/" not in name}
+        self.assertEqual(names, ALL_FILES | SKILLS)
+        self.assertEqual(self.home_files(), {})
+        self.assertEqual([name for name in tree(self.project) if name.endswith(".config.toml")], [])
+        self.assertEqual(list(self.home.glob(".codex/*.config.toml")), [])
+        points = {(one["provider"], one["role"], one["how"]) for one in report["entry_points"] if one["kind"] == "load"}
+        self.assertEqual(points, {(CLAUDE, "lead", "/lead"), (CLAUDE, "quick", "/quick"),
+                                  (CODEX, "lead", "$lead"), (CODEX, "quick", "$quick")})
+        self.assertEqual([one for one in report["entry_points"] if one["kind"] == "start"], [])
+
+    def test_the_rows_name_the_projects_directory_where_the_project_has_the_skill(self) -> None:
+        self.ok(*self.project_arg)
+        claude = self.project_text(".claude/agents/worker.md")
+        self.assertIn("In `.claude/skills/alpha/references/`:", claude)
+        self.assertIn(definitions.PROJECT_DIRS_SAID, claude)
+        self.assertNotIn(str(self.project), claude)
+        self.assertIn("In `.agents/skills/alpha/references/`:", self.project_text(".codex/agents/worker.toml"))
+        self.assertIn("In `.agents/skills/alpha/references/`:", self.project_text(".agents/skills/lead/SKILL.md"))
+
+    def test_a_process_skill_the_home_has_is_named_under_the_homes_directory(self) -> None:
+        self.write(self.user_file, 'install = ["sample", "alpha"]\n')
+        self.ok(*self.project_arg)
+        text = self.project_text(".claude/agents/worker.md")
+        self.assertIn("In `~/.claude/skills/alpha/references/`:", text)
+        self.assertNotIn(definitions.PROJECT_DIRS_SAID, text)
+
+    def test_the_projects_role_override_reaches_that_roles_files(self) -> None:
+        self.ok(*self.project_arg)
+        self.write(self.project_file, 'install = ["roles"]\n')
+        before = self.project_text(".claude/agents/worker.md")
+        self.ok(*self.project_arg, "--rewrite-settings")
+        self.assertNotEqual(before, self.project_text(".claude/agents/worker.md"))
+
+    def test_the_projects_loaded_skill_has_no_profile_sentence_and_a_homes_keeps_it(self) -> None:
+        self.ok(*self.project_arg)
+        for name in (".claude/skills/lead/SKILL.md", ".agents/skills/lead/SKILL.md"):
+            text = self.project_text(name)
+            self.assertIn("**Profile.** This role is meant to run on", text)
+            self.assertNotIn(entry.PROJECT_PROFILE, text)
+        self.write(self.user_file, ROLES_ON)
+        self.ok()
+        self.assertIn(entry.PROJECT_PROFILE, self.text(".claude/skills/lead/SKILL.md"))
+
+    def test_the_roles_line_says_the_project_has_roles_of_its_own(self) -> None:
+        code, out, err = self.render(*self.project_arg, "--dry-run")
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn(
+            f"roles: not in `install` in {self.user_file}: the process alone; "
+            f"the project has roles of its own, listed in `install` in {self.project_file}", out)
+
+    def default_on(self) -> None:
+        self.write(self.project_file, 'install = ["roles"]\n' + DEFAULT_ON + OVERRIDE)
+
+    def test_the_manager_default_names_the_projects_starting_role_for_both_providers(self) -> None:
+        self.default_on()
+        code, report, err = self.report(*self.project_arg)
+        self.assertEqual((code, err), (0, ""))
+        keys = json.loads(self.project_text(SETTINGS))
+        self.assertEqual(keys["agent"], "lead")
+        self.assertEqual(keys["effortLevel"], BOTH_KEYS["effortLevel"])
+        self.assertTrue((self.project / ".claude/agents/lead.md").is_file())
+        block = self.project_text(CONFIG)
+        self.assertIn("lead", block)
+        self.assertEqual(self.home_files(), {})
+        start = {(one["provider"], one["how"]) for one in report["entry_points"] if one["kind"] == "start"}
+        self.assertIn((CLAUDE, f"claude --agent lead --effort {BOTH_KEYS['effortLevel']} in the project"), start)
+        self.assertIn((CODEX, "a plain `codex` in the project"), start)
+        self.assertFalse([how for _, how in start if "--profile" in how])
+        self.assertEqual(report["notes"].count(render.TRUST_NOTE), 1)
+
+    def test_the_block_names_the_projects_directories(self) -> None:
+        self.default_on()
+        self.ok(*self.project_arg)
+        role, block = entry.project_block(
+            self.locations(), None, {CODEX: {"alpha": ".agents/skills"}, CLAUDE: {"alpha": ".claude/skills"}})
+        self.assertEqual(role, "lead")
+        self.assertIn(block, self.project_text(CONFIG))
+        self.assertNotIn(str(self.project), self.project_text(CONFIG))
+
+    def test_without_the_setting_there_is_no_key_no_block_and_the_load_line(self) -> None:
+        code, report, err = self.report(*self.project_arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertNothingAt(self.project / SETTINGS)
+        self.assertNothingAt(self.project / CONFIG)
+        self.assertEqual([one for one in report["entry_points"] if one["kind"] == "start"], [])
+        self.assertIn((CODEX, "lead", "$lead"),
+                      {(one["provider"], one["role"], one["how"]) for one in report["entry_points"]})
+        self.assertEqual(report["notes"].count(render.TRUST_NOTE), 1)  # the definitions in .codex/agents
+
+    @unittest.skipUnless(shutil.which("git"), "needs git")
+    def test_a_tracked_codex_config_gets_the_notice_and_the_load_line(self) -> None:
+        self.default_on()
+        self.write(self.project / CONFIG, "model = 'x'\n")
+        shutil.rmtree(self.project / ".git", ignore_errors=True)
+        for argv in (("init", "-q"), ("add", "--", CONFIG)):
+            subprocess.run(["git", "-C", str(self.project), *argv], check=True, capture_output=True)
+        code, report, err = self.report(*self.project_arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(self.project_text(CONFIG), "model = 'x'\n")
+        self.assertIn("is tracked by git", "\n".join(report["notes"]))
+        how = {(one["provider"], one["how"]) for one in report["entry_points"]}
+        self.assertIn((CODEX, "$lead"), how)
+        self.assertFalse([one for one in how if one[0] == CODEX and "plain" in one[1]])
+
+    def test_the_trust_line_is_absent_without_codex(self) -> None:
+        self.default_on()
+        shutil.rmtree(self.clone / "providers" / "codex")
+        self.codex.rmdir()
+        code, report, err = self.report(*self.project_arg)
+        self.assertEqual((code, err), (0, ""))
+        self.assertNotIn(render.TRUST_NOTE, report["notes"])
 
 
 class LinkedSkillDirectoryCase(EntryCase):
@@ -1455,7 +1604,8 @@ class ProjectEffortCase(EntryCase):
             lines,
         )
         # The note on the model list is the run's own: Codex is not on PATH here.
-        self.assertEqual([line for line in lines if line.startswith("note: ") and "no model list" not in line], [])
+        self.assertEqual([line for line in lines if line.startswith("note: ") and "no model list" not in line
+                          and line != f"note: {render.TRUST_NOTE}"], [])
 
     def test_the_setting_is_the_projects_effort_and_the_launch_the_users(self) -> None:
         self.write(self.project_file, DEFAULT_ON + '[roles.lead]\neffort = "high"\n')

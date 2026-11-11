@@ -387,27 +387,27 @@ class Screen:
         """The checklist of the clone's skills, the rule and ``roles`` (R3.2, R3.4)."""
         every = definitions.units(self.where, self.skills)
         home: set[str] = set()
+        roles_bind = True
         if self.project:
             level = definitions.user_level(self.where)
             home = set(definitions.home_selection(level, self.skills).units)
             if definitions.roles_installed(level):
                 home.add(schema.ROLES_ITEM)
-        names = sorted(every)
-        if not self.project or schema.ROLES_ITEM in home:
-            names.insert(0, schema.ROLES_ITEM)
+            roles_bind = schema.ROLES_ITEM not in home    # where the home has roles, they add nothing here
+        names = [schema.ROLES_ITEM] + sorted(every)
         chosen = [name for name in self._chosen() if name in every or name == schema.ROLES_ITEM]
         first = list(chosen)
         needs = definitions.dependencies(self.where)
         bound = definitions.bound_skills(self.where) & every
         def view() -> tuple[set[str], dict[str, list[str]]]:
-            selection = definitions.select(self.where, chosen, every, roles_bind=not self.project)
+            selection = definitions.select(self.where, chosen, every, roles_bind=roles_bind)
             ticked = set(selection.units) | ({schema.ROLES_ITEM} & set(chosen))
             needers: dict[str, list[str]] = {}
             for unit in sorted(selection.units):
                 for need in needs.get(unit, ()):
                     if need in every:
                         needers.setdefault(need, []).append(unit)
-            if schema.ROLES_ITEM in chosen and not self.project:
+            if schema.ROLES_ITEM in chosen and roles_bind:
                 for unit in sorted(bound):
                     needers.setdefault(unit, []).append(definitions.ROLES_NEED)
             return ticked, needers
@@ -441,7 +441,7 @@ class Screen:
                 else:
                     chosen.remove(name)
                     if name == schema.ROLES_ITEM:    # the skills it brought stay
-                        chosen += [unit for unit in sorted(bound) if unit not in chosen]
+                        chosen += [unit for unit in sorted(bound - home) if unit not in chosen]
         if chosen != first:
             self.state.install = chosen
             self._unreset(row.key)

@@ -378,9 +378,11 @@ def _profile_words(model: str, effort: str | None) -> str:
     return f"the model `{model}` with " + ("no effort setting" if effort is None else f"the effort `{effort}`")
 
 
-def _switch(provider: str, model: str, effort: str | None) -> str:
+def _switch(provider: str, model: str, effort: str | None, project: bool = False) -> str:
     """The profile paragraph of a loaded role: what the role is meant to
-    run on, that loading did not switch to it, and the provider's way."""
+    run on, that loading did not switch to it, and the provider's way. A
+    project's own skill leaves out ``PROJECT_PROFILE``: its profile is the
+    project's already."""
     profile = _profile_words(model, effort)
     if provider == CLAUDE_CODE:
         way = f"`/model {model}` switches" if effort is None else f"`/model {model}` and `/effort {effort}` switch"
@@ -389,12 +391,12 @@ def _switch(provider: str, model: str, effort: str | None) -> str:
     return (
         f"**Profile.** This role is meant to run on {profile}. Loading it did not switch the session. "
         f"In your first reply as this role, name that profile in one line and tell the user that {way} "
-        "the session to it. Say it once, and work on whatever the session runs on. "
-        f"{PROJECT_PROFILE}"
+        "the session to it. Say it once, and work on whatever the session runs on."
+        + ("" if project else f" {PROJECT_PROFILE}")
     )
 
 
-def _loaded_section(found: definitions.Material) -> str:
+def _loaded_section(found: definitions.Material, project: bool = False) -> str:
     role = found.role
     lines = [
         f"**Loaded role.** The user loaded the {role.title} role into this session, which acts as this role, by "
@@ -402,12 +404,13 @@ def _loaded_section(found: definitions.Material) -> str:
     ]
     if not _ONE_ROLE_SAID.search(found.body[0]):
         lines.append(ONE_ROLE)
-    lines.append(_switch(found.provider, found.model, found.effort))
+    lines.append(_switch(found.provider, found.model, found.effort, project))
     return "\n\n".join(lines)
 
 
-def skill_text(found: definitions.Material) -> str:
-    """``SKILL.md`` of a loaded role for the material's provider."""
+def skill_text(found: definitions.Material, project: bool = False) -> str:
+    """``SKILL.md`` of a loaded role for the material's provider; with
+    ``project`` the text of a project's own skill (see ``_switch``)."""
     role, provider = found.role, found.provider
     description = f"Load the {role.title} role into this session. {role.description}"
     head = [
@@ -419,7 +422,7 @@ def skill_text(found: definitions.Material) -> str:
         "---",
     ]
     comment = "\n".join(["<!--", skill_notice(provider, role.name), "-->"])
-    return "\n".join(head) + "\n\n" + roles.join_text([comment, _loaded_section(found), *found.body])
+    return "\n".join(head) + "\n\n" + roles.join_text([comment, _loaded_section(found, project), *found.body])
 
 
 def openai_text(role: roles.Role) -> str:
@@ -496,21 +499,25 @@ def _wanted(providers: Iterable[str]) -> list[str]:
     return [name for name in providers if name in PROVIDERS]
 
 
-def skills(where: Locations, providers: Iterable[str] = PROVIDERS, homes_found: Any = None) -> list[Made]:
+def skills(where: Locations, providers: Iterable[str] = PROVIDERS, homes_found: Any = None,
+           dirs: dict[str, dict[str, str]] | None = None, project: bool = False) -> list[Made]:
     """The skill of every loaded role, for each of ``providers``: by
     provider, by role, ``SKILL.md`` and then ``agents/openai.yaml``. The
     model and effort are those the settings of ``where`` resolve.
     ``homes_found`` is the homes of the run, where the caller has them
-    (``definitions.skills_place``); so it is in every function below."""
+    (``definitions.skills_place``), and ``dirs`` the directory of each
+    skill's rows (``definitions.materials``); so they are in every function
+    below. ``project`` makes the skills a project with roles of its own
+    gets: the same but for the profile paragraph (``_switch``)."""
     made: list[Made] = []
     found = definitions.materials(
         where, _wanted(providers), lambda role: PROVIDERS if loads(role) else (), hard=False,
-        homes_found=homes_found,
+        homes_found=homes_found, dirs=dirs,
     )
     for one in found:
         role = one.role.name
         made.append(Made(
-            one.provider, LOADED, role, f"{role}/{SKILL_FILE}", skill_text(one),
+            one.provider, LOADED, role, f"{role}/{SKILL_FILE}", skill_text(one, project),
             one.digest(LOADED_SCHEME, file=SKILL_FILE), one.model, one.effort, one.compaction_tokens,
             one.provider_title,
         ))
@@ -524,12 +531,14 @@ def skills(where: Locations, providers: Iterable[str] = PROVIDERS, homes_found: 
     return made
 
 
-def _start_materials(where: Locations, homes_found: Any = None) -> list[definitions.Material]:
+def _start_materials(where: Locations, homes_found: Any = None,
+                     dirs: dict[str, dict[str, str]] | None = None) -> list[definitions.Material]:
     return definitions.materials(where, [CODEX], lambda role: (CODEX,) if starts(role) else (), hard=False,
-                                 homes_found=homes_found)
+                                 homes_found=homes_found, dirs=dirs)
 
 
-def profiles(where: Locations, providers: Iterable[str] = PROVIDERS, homes_found: Any = None) -> list[Made]:
+def profiles(where: Locations, providers: Iterable[str] = PROVIDERS, homes_found: Any = None,
+             dirs: dict[str, dict[str, str]] | None = None) -> list[Made]:
     """The Codex profile of every starting role; nothing unless ``codex``
     is among ``providers``."""
     if CODEX not in providers:
@@ -537,43 +546,47 @@ def profiles(where: Locations, providers: Iterable[str] = PROVIDERS, homes_found
     return [
         Made(CODEX, PROFILE, one.role.name, one.role.name + PROFILE_SUFFIX, profile_text(one),
              one.digest(PROFILE_SCHEME, file=PROFILE_SUFFIX), one.model, one.effort)
-        for one in _start_materials(where, homes_found)
+        for one in _start_materials(where, homes_found, dirs)
     ]
 
 
-def session_efforts(where: Locations, homes_found: Any = None) -> dict[str, SessionEffort]:
+def session_efforts(where: Locations, homes_found: Any = None,
+                    dirs: dict[str, dict[str, str]] | None = None) -> dict[str, SessionEffort]:
     """For each starting role, the effort of a Claude Code session that
     starts as it, from the settings of ``where`` (the project's layers
     included when ``where`` has a project)."""
     found = definitions.materials(
         where, [CLAUDE_CODE], lambda role: (CLAUDE_CODE,) if starts(role) else (), hard=False,
-        homes_found=homes_found,
+        homes_found=homes_found, dirs=dirs,
     )
     return {one.role.name: SessionEffort(one.role.name, one.model, one.effort) for one in found}
 
 
-def project_block(where: Locations, homes_found: Any = None) -> tuple[str, str]:
+def project_block(where: Locations, homes_found: Any = None,
+                  dirs: dict[str, dict[str, str]] | None = None) -> tuple[str, str]:
     """The starting role of ``where`` and the text of its project default
     on Codex, made from the settings of ``where`` (the project's layers
     included)."""
     role = starting_role(where)
-    for one in _start_materials(where, homes_found):
+    for one in _start_materials(where, homes_found, dirs):
         if one.role.name == role:
             return role, block_text(one)
     raise SetupError(f"the role {role}: no project default can be made for Codex")
 
 
 def project_definitions(where: Locations, providers: Iterable[str] = PROVIDERS,
-                        homes_found: Any = None) -> list[definitions.Generated]:
+                        homes_found: Any = None,
+                        dirs: dict[str, dict[str, str]] | None = None) -> list[definitions.Generated]:
     """The definitions that the project's settings change: those whose text,
-    built with the project of ``where``, differs from the user-level one. A
-    project that changes no role's profile gives none."""
+    built with the project of ``where``, differs from the user-level one,
+    both with the rows under ``dirs``. A project that changes no role's
+    profile gives none."""
     if where.project is None:
         return []
     names = _wanted(providers)
     user = {(found.provider, found.definition): found.text
-            for found in definitions.build(definitions.user_level(where), names, homes_found)}
-    return [found for found in definitions.build(where, names, homes_found)
+            for found in definitions.build(definitions.user_level(where), names, homes_found, dirs)}
+    return [found for found in definitions.build(where, names, homes_found, dirs)
             if user.get((found.provider, found.definition)) != found.text]
 
 

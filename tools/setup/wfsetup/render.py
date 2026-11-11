@@ -370,6 +370,8 @@ class Run:
         self._emptied: list[Path] = []
         self._ignore_always = False
         self._roles: tuple[bool, Path | None] | None = None   # whether the roles are generated, and the file of the home's install; see ``roles_on``
+        self._dirs: dict[str, dict[str, str]] | None = None   # the binding rows' directories of a project's own roles; see ``project_dirs``
+        self._dirs_read = False
         self._selection: definitions.Selection | None = None   # the home's units; see ``home_selection``
         self._selection_read = False
         self._project_selection: definitions.Selection | None = None   # the project's units; see ``project_selection``
@@ -1297,7 +1299,13 @@ def project_selection(run: Run) -> definitions.Selection | None:
             else:
                 run._project_selection = found
                 if found is not None:
-                    run.notes.extend(f"project: {line}" for line in found.notes())
+                    held = home_selection(run)
+                    at_home = held.units if held is not None else frozenset()
+                    for name in sorted(found.needed):
+                        if name in at_home:   # the run skips it; no install to claim
+                            run.notes.append(f"project: {name}: needed by {', '.join(found.needed[name])}; the home has it")
+                        else:
+                            run.notes.append(f"project: {name}: installed as a dependency of {', '.join(found.needed[name])}")
     return run._project_selection
 
 
@@ -1434,38 +1442,45 @@ def rule_files(run: Run, rule: Path) -> list[tuple[str, str]]:
 
 def roles_on(run: Run) -> bool:
     """Whether the roles are generated in this run: the home's effective
-    ``install`` holds ``roles`` (see the module). Read once. A project
-    follows the home; ``roles`` in the project's own ``install`` where the
-    home has none is a note, and nothing else. A ``SetupError`` where an
-    ``install`` is at fault."""
+    ``install`` holds ``roles`` (see the module). Read once. A project's
+    own roles (``definitions.project_roles``) are no part of this answer.
+    A ``SetupError`` where an ``install`` is at fault."""
     if run._roles is None:
         home = definitions.home_install(_locations(run, None))
         on = home is not None and schema.ROLES_ITEM in home.value
         run._roles = (on, None if home is None else home.file)
-        project = run.homes.project
-        if project is not None and not on:
-            layers = [one for one in settings.install(_locations(run, project)) if one.layer in settings.PROJECT_LAYERS]
-            if layers and schema.ROLES_ITEM in layers[-1].value:
-                run.notes.append(
-                    "roles in a project come later; nothing of the roles is installed for this project")
     return run._roles[0]
 
 
 def roles_report(run: Run) -> dict[str, Any] | None:
     """The report's ``roles``: whether they are on, and where the home's
-    ``install`` is that says so; None where the run did not ask."""
+    ``install`` is that says so; None where the run did not ask. Where the
+    home's roles are off and the project has roles of its own, ``project``
+    is the file of the project whose ``install`` lists them."""
     if run._roles is None:
         return None
-    return {"on": run._roles[0], "file": None if run._roles[1] is None else str(run._roles[1])}
+    found: dict[str, Any] = {"on": run._roles[0], "file": None if run._roles[1] is None else str(run._roles[1])}
+    if not run._roles[0] and run.homes.project is not None:
+        try:
+            held = project_roles_file(run)
+        except SetupError:
+            held = None
+        if held is not None:
+            found["project"] = str(held)
+    return found
 
 
 def process_alone_line(found: dict[str, Any] | None) -> str | None:
     """The line that says the home's roles are off, and why; None where
-    they are on."""
+    they are on. Where the project has roles of its own it says so, with
+    the file that lists them."""
     if found is None or found["on"]:
         return None
     where = found.get("file") or "any settings file"
-    return f"roles: not in `install` in {where}: the process alone"
+    line = f"roles: not in `install` in {where}: the process alone"
+    if found.get("project"):
+        line += f"; the project has roles of its own, listed in `install` in {found['project']}"
+    return line
 
 
 def _locations(run: Run, project: Path | None) -> Locations:
@@ -1481,9 +1496,11 @@ def fill_roles(run: Run) -> None:
     place (R6.2). They are made from the user-level settings: a project's
     settings never reach a home's files. A home whose ``install`` lacks
     ``roles`` asks for none, and the stale sweep then removes those of an
-    earlier run."""
+    earlier run; a project with its own roles gets them through
+    ``_fill_project_roles``."""
     try:
         if not roles_on(run):
+            _fill_project_roles(run)
             return
     except SetupError as exc:
         run.fail(*exc.lines)
@@ -1505,6 +1522,54 @@ def fill_roles(run: Run) -> None:
                 run.file(provider, place, found.name, found.text, found.inputs, detail={
                     "definition": found.definition, "role": found.role, "model": found.model, "effort": found.effort,
                     **_cache(found),
+                })
+
+
+def project_roles_file(run: Run) -> Path | None:
+    """The file whose ``install`` gives the project its own roles
+    (``definitions.project_roles``); None where it has none. A ``SetupError``
+    where an ``install`` is at fault."""
+    where = _locations(run, run.homes.project)
+    if not definitions.project_roles(where):
+        return None
+    held = [one for one in settings.install(where) if one.layer in settings.PROJECT_LAYERS]
+    return held[-1].file
+
+
+def project_dirs(run: Run) -> dict[str, dict[str, str]] | None:
+    """The directory each skill's binding rows name, by provider
+    (``definitions.skill_dirs``), for a project with roles of its own; None
+    for any other run, whose rows name the home's. Read once."""
+    if not run._dirs_read:
+        where = _locations(run, run.homes.project)
+        run._dirs = None
+        if definitions.project_roles(where):
+            run._dirs = {
+                provider.name: definitions.skill_dirs(where, provider.name, run.sources.skills, run.homes)
+                for provider in _entry_providers(run)
+            }
+        run._dirs_read = True
+    return run._dirs
+
+
+def _fill_project_roles(run: Run) -> None:
+    """The definitions of a project with roles of its own (R5.2): every one
+    of each installed provider, made from the shipped definitions and every
+    settings layer, into the project's agents directory. A ``SetupError``
+    where they cannot be made."""
+    project = run.homes.project
+    where = _locations(run, project)
+    if project is None or not definitions.project_roles(where):
+        return
+    providers = _entry_providers(run)
+    built = definitions.build(where, [provider.name for provider in providers], run.homes, project_dirs(run))
+    for provider in providers:
+        place = homes.Place(PROJECT, project / entry.PROJECT_AGENTS[provider.name], True)
+        for found in built:
+            if found.provider == provider.name:
+                run.file(provider, place, found.name, found.text, found.inputs, detail={
+                    "definition": found.definition, "role": found.role, "model": found.model,
+                    "effort": found.effort, "level": PROJECT, **_cache(found),
                 })
 
 
@@ -1531,7 +1596,8 @@ def fill_entry(run: Run) -> None:
     provider, and what the project gets; see ``entry`` and the module.
     A home whose ``install`` lacks ``roles`` asks for none of it, and what an
     earlier run made is then stale: the files go with the sweep, the key and
-    the block here."""
+    the block here; a project with its own roles runs the project path
+    instead."""
     project = run.homes.project
     home = _locations(run, None)
     where = _locations(run, project)
@@ -1545,14 +1611,21 @@ def fill_entry(run: Run) -> None:
     except SetupError as exc:
         run.fail(*exc.lines)
         return
-    if on:
-        try:
+    try:
+        if on:
             wanted_key, wanted_effort, wanted_block = _fill_entry(
                 run, home, where, providers, names,
             )
-        except SetupError as exc:
-            run.fail(*exc.lines)
-            return
+        elif definitions.project_roles(where):
+            _fill_project_loaded(run, where, providers, names)
+            default = entry.manager_default(where)
+            run.project_facts.update({"manager_default": default, "starting_role": None})
+            if default:
+                run.project_facts["starting_role"] = entry.starting_role(where)
+            wanted_key, wanted_effort, wanted_block = _project_default(run, where, providers, default)
+    except SetupError as exc:
+        run.fail(*exc.lines)
+        return
     if project is not None and not run.errors:
         if not run.project_changed:
             _keys_left(run, project)
@@ -1564,6 +1637,21 @@ def fill_entry(run: Run) -> None:
             run.drop_json_key(project / entry.CLAUDE_SETTINGS, entry.AGENT_KEY)
         if not wanted_block:
             _old_codex_block(run, project / entry.CODEX_CONFIG)
+        _trust_note(run, project)
+
+
+def _trust_note(run: Run, project: Path) -> None:
+    """R5.5: where Codex is among the providers and the run asks for a file
+    of Codex's in the project (a definition in ``.codex/agents``, by either
+    path, or the block), one line says Codex reads them only in a trusted
+    project. Whether the project is trusted is not asked."""
+    root = project / ".codex"
+    if any(one.provider == definitions.CODEX and one.status != REMOVE and one.path.is_relative_to(root)
+           for one in run.items):
+        run.notes.append(TRUST_NOTE)
+
+
+TRUST_NOTE = "Codex reads the role definitions and the Manager start only in a project you trust."
 
 
 def _old_codex_block(run: Run, path: Path) -> None:
@@ -1605,16 +1693,10 @@ def _old_codex_block(run: Run, path: Path) -> None:
         )
 
 
-def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[homes.Provider],
-                names: list[str]) -> tuple[bool, bool, bool]:
-    """Returns whether the project's ``agent`` key, its ``effortLevel`` key
-    and its Codex block are wanted; the project follows the home."""
-    project = run.homes.project
-    made = [*entry.skills(home, names, run.homes), *entry.profiles(home, names, run.homes)]
+def _check_clashes(run: Run, made: list[entry.Made]) -> None:
+    """A loaded role is a skill of the role's name: it may not be a skill
+    the clone already has, nor one with a setup of its own."""
     loaded = sorted({one.role for one in made if one.kind == entry.LOADED})
-
-    # A loaded role is a skill of the role's name: it may not be a skill
-    # the clone already has, nor one with a setup of its own.
     taken = set(run.sources.skills) | set(homes.OWN_SETUP_SKILLS)
     clashes = [role for role in loaded if role in taken]
     if clashes:
@@ -1625,6 +1707,43 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
             + "; rename one of the two, or set load = false"
             for role in clashes
         ])
+
+
+def _fill_project_loaded(run: Run, where: Locations, providers: list[homes.Provider], names: list[str]) -> None:
+    """The loaded-role skills of a project with roles of its own (R5.2),
+    into each provider's project skills directory. No profile is made and
+    nothing of the roles goes into a home."""
+    project = run.homes.project
+    made = entry.skills(where, names, run.homes, project_dirs(run), project=True)
+    _check_clashes(run, made)
+    for provider in providers:
+        place = homes.Place(PROJECT, project / Path(*homes.PROJECT_SKILLS[provider.name]), True)  # type: ignore[operator]
+        for one in made:
+            if one.provider == provider.name and one.kind == entry.LOADED:
+                _loaded_file(run, provider, place, one)
+
+
+def _loaded_file(run: Run, provider: homes.Provider, place: homes.Place, one: entry.Made) -> None:
+    """One file of a loaded role's skill, and its ``load`` point."""
+    detail = {"entry": one.kind, "role": one.role}
+    if one.name.endswith(entry.SKILL_FILE):
+        detail.update({"model": one.model, "effort": one.effort, "tokens": one.tokens,
+                       "limit_tokens": one.limit_tokens, "over_limit": one.over_limit})
+    item = run.file(provider, place, one.name, one.text, one.inputs, detail=detail)
+    if one.name.endswith(entry.SKILL_FILE):
+        _point(run, provider.name, "load", one.role, entry.INVOKE[provider.name].format(role=one.role), item,
+               model=one.model, effort=one.effort, tokens=one.tokens,
+               limit_tokens=one.limit_tokens, over_limit=one.over_limit,
+               provider_name=one.provider_name)
+
+
+def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[homes.Provider],
+                names: list[str]) -> tuple[bool, bool, bool]:
+    """Returns whether the project's ``agent`` key, its ``effortLevel`` key
+    and its Codex block are wanted; the project follows the home."""
+    project = run.homes.project
+    made = [*entry.skills(home, names, run.homes), *entry.profiles(home, names, run.homes)]
+    _check_clashes(run, made)
 
     starting = entry.start_roles(home)
     default = False
@@ -1650,16 +1769,7 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
             place = provider.place(homes.SKILLS)
             for one in made:
                 if one.provider == name and one.kind == entry.LOADED:
-                    detail = {"entry": one.kind, "role": one.role}
-                    if one.name.endswith(entry.SKILL_FILE):
-                        detail.update({"model": one.model, "effort": one.effort, "tokens": one.tokens,
-                                       "limit_tokens": one.limit_tokens, "over_limit": one.over_limit})
-                    item = run.file(provider, place, one.name, one.text, one.inputs, detail=detail)
-                    if one.name.endswith(entry.SKILL_FILE):
-                        _point(run, name, "load", one.role, entry.INVOKE[name].format(role=one.role), item,
-                               model=one.model, effort=one.effort, tokens=one.tokens,
-                               limit_tokens=one.limit_tokens, over_limit=one.over_limit,
-                               provider_name=one.provider_name)
+                    _loaded_file(run, provider, place, one)
         if name == definitions.CLAUDE_CODE and _has_place(provider, homes.AGENTS):
             # As documented, a session does not take the effort of the
             # definition it starts as, so the command names it (see ``entry``).
@@ -1695,11 +1805,34 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
                     "effort": found.effort, "level": PROJECT, **_cache(found),
                 })
 
-    # The starting role as the project's default.
+    return _project_default(run, where, providers, default)
+
+
+def _project_default(run: Run, where: Locations, providers: list[homes.Provider],
+                     default: bool) -> tuple[bool, bool, bool]:
+    """The starting role as the project's default (R5.4), where the settings
+    ask for it: on Claude Code the keys ``agent`` and ``effortLevel``, on
+    Codex the block at the head of the project's ``.codex/config.toml``. For
+    a project with roles of its own the role's definition is the project's,
+    and the way in is named: ``claude --agent`` in the project, a plain
+    ``codex`` with the block. Returns whether the key, the effort and the
+    block are wanted."""
+    project = run.homes.project
+    assert project is not None
+    wanted_key = wanted_effort = wanted_block = False
+    own = definitions.project_roles(where)
     if default:
         role = run.project_facts["starting_role"]
         left = False
         for provider in providers:
+            if own and provider.name == definitions.CLAUDE_CODE:
+                # As documented, a session does not take the effort of the
+                # definition it starts as, so the command names it.
+                session = entry.session_efforts(where, run.homes, project_dirs(run))[role]
+                _point(run, provider.name, "start", role,
+                       entry.start_command(provider.name, role, session.effort) + " in the project",
+                       file=definitions.file_name(provider.name, role), model=session.model,
+                       effort=session.effort, no_effort=None if session.effort is not None else session.why)
             if provider.name == definitions.CLAUDE_CODE and not run.project_changed:
                 left = True   # the keys stay as they are (R6.1); ``fill_entry`` says so
             elif provider.name == definitions.CLAUDE_CODE:
@@ -1721,7 +1854,7 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
                     run.project_facts["codex_default"] = "tracked" if tracked else "unknown"
                     continue
                 wanted_block = True
-                _, content = entry.project_block(where, run.homes)
+                _, content = entry.project_block(where, run.homes, project_dirs(run))
                 taken_keys = _keys_outside(path, content)
                 if taken_keys:
                     raise SetupError(*[
@@ -1734,6 +1867,8 @@ def _fill_entry(run: Run, home: Locations, where: Locations, providers: list[hom
                     ])
                 item = run.block(provider, path, entry.BLOCK_NAME, content, fileops.HEAD)
                 item.detail.update({"role": role})
+                if own:
+                    _point(run, provider.name, "start", role, "a plain `codex` in the project", item)
                 _point(run, provider.name, "project-default", role,
                        f"the block {entry.BLOCK_NAME} at the head of {entry.CODEX_CONFIG}, read in a trusted "
                        "project only; it wins over a profile", status=item.status)

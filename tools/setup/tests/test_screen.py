@@ -217,10 +217,32 @@ class ItemsTests(ScreenCase):
         project = tomllib.loads((self.project / ".agents" / "workflow.toml").read_text(encoding="utf-8"))
         self.assertEqual(project["install"], ["beta"])
 
-    def test_a_project_is_not_offered_roles_the_home_lacks(self) -> None:
+    def test_a_project_is_offered_roles_the_home_lacks_and_ticking_them_ticks_the_skills(self) -> None:
+        self.seed("sample")
+        argv = ("--provider", "claude-code", str(self.project))
+        out = self.typed("2", "", "n", argv=argv)[1]
+        self.assertRegex(out, r"\[ \] roles\n")
+        self.assertNotIn("roles  (from this machine)", out)
+        roles = self.number(out, "roles")
+        code, out, err = self.typed("2", roles, "", "", "", argv=argv)
+        self.assertEqual((code, err), (0, ""), out)
+        self.assertRegex(out, r"\[x\] roles\n")
+        self.assertRegex(out, r"\[x\] alpha  \(needed by the roles\)")
+        self.assertEqual(
+            tomllib.loads((self.project / ".agents" / "workflow.toml").read_text(encoding="utf-8"))["install"],
+            ["roles"])
+        self.assertLinked(self.project / ".claude" / "skills" / "alpha", self.clone / "alpha")
+
+    def test_unticking_roles_on_a_project_keeps_only_skills_the_home_lacks(self) -> None:
         self.seed("alpha")
-        out = self.typed("2", "", "n", argv=("--provider", "claude-code", str(self.project)))[1]
-        self.assertNotIn("] roles", out)
+        argv = ("--provider", "claude-code", str(self.project))
+        out = self.typed("2", "", "n", argv=argv)[1]
+        roles = self.number(out, "roles")
+        code, out, err = self.typed("2", roles, roles, "", "", "", argv=argv)
+        self.assertEqual((code, err), (0, ""), out)
+        file = self.project / ".agents" / "workflow.toml"
+        found = tomllib.loads(file.read_text(encoding="utf-8")).get("install", []) if file.exists() else []
+        self.assertNotIn("alpha", found)
 
 
 class EditedTests(ScreenCase):

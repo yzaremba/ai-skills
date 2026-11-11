@@ -502,6 +502,18 @@ class MissingCase(DoctorCase):
         self.assertQuiet(findings)
         self.assertFinding(findings, doctor.INFO, "no role definition or entry point is installed", "install lacks roles")
 
+    def test_the_roles_line_says_a_project_has_roles_of_its_own(self) -> None:
+        self.write(self.user_file, 'install = ["sample"]\n')
+        self.write(self.project_file, 'install = ["roles"]\n')
+        code, findings = self.only("missing", str(self.project))
+        self.assertEqual(code, 0)
+        self.assertFinding(
+            findings, doctor.INFO,
+            f"roles: not in `install` in {self.user_file}: the process alone; "
+            f"the project has roles of its own, listed in `install` in {self.project_file}",
+        )
+        self.assertNotIn("removes what an earlier run", json.dumps(findings))
+
     def test_a_fault_in_the_selection_does_not_lose_the_missing_check_after_roles_left_out(self) -> None:
         self.roles_off()
         self.ok()

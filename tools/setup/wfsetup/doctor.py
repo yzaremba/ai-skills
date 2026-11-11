@@ -591,9 +591,10 @@ def check_missing(context: Context) -> list[Finding]:
     home_roles = render.roles_report(probe)
     line = render.process_alone_line(home_roles)
     if line is not None:
-        findings.append(info(
-            f"{line}; setup removes what an earlier run generated, unless it was edited by hand"
-        ))
+        # The home's clause ("setup removes what an earlier run generated")
+        # does not fit a project that has roles of its own.
+        own = bool((home_roles or {}).get("project"))
+        findings.append(info(line if own else f"{line}; setup removes what an earlier run generated, unless it was edited by hand"))
     home_rendered = bool(record.home.on_disk)
     project_rendered = record.project is not None and bool(record.project.on_disk)
     home_generated = any(
