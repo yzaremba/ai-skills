@@ -12,7 +12,6 @@ Agent names use underscores where role ids use hyphens (`product_manager`, `code
 ### Session
 
 - **Load a role.** The user types `$<role-id>`; you never load a role yourself.
-- **Compact.** At a phase boundary the Manager asks the user for the `/status` figure and, past about 60% of the model's context window, to run `/compact`.
 - **Switch the loaded role back.** There is no command: the user says it in a message, such as "back to the Manager", and it holds from that message on.
 - **A command the user runs with `!`** starts no turn: you see it with their next message, so ask them to tell you when it is done.
 

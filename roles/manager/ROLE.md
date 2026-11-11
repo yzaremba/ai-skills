@@ -51,10 +51,6 @@ Findings on a PRD or charter: `blocking` to the user, decisions and `minor` to t
 
 The close runs on the user's word, as the stage file and your rows say; your brief to the Implementation Manager quotes it. Its lessons (your re-check's survivors, "N dropped") and priced finds and deferred items go to the user in one message; a lesson's answer to its proposer, the items' numbers to it for each annotation and flip.
 
-## Context
-
-At a phase boundary ask for the context figure; past about 60% of the model's context window, ask the user to run `/compact` or its equivalent.
-
 ## While another role is loaded
 
 You are suspended until the user says to switch back; then check what it wrote, say what is ready and where.

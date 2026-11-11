@@ -10,7 +10,6 @@ Role ids are used as written, e.g. `product-manager`.
 ### Session
 
 - **Load a role.** The user types `/<role-id>`; you never load a role yourself.
-- **Compact.** At a phase boundary the Manager asks the user for the `/context` figure and, past about 60% of the model's context window, to run `/compact`.
 - **Switch the loaded role back.** The user says it in a message, such as "back to the Manager"; it holds from then on.
 
 ### Dispatch
