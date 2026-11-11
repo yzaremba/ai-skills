@@ -59,8 +59,8 @@ The project (``DIR``)
     wrote the project's ``.agents/workflow.toml`` or was given
     ``--manager-default`` or ``--no-manager-default``), or by a run in which
     no role is made for the project at all (``roles`` in neither the home's
-    nor the project's ``install``): the key then names a role whose files that
-    run removes. Any other run leaves them as they are, set or not,
+    nor the project's ``install``) or the effective ``roles.manager_default``
+    is off, whichever settings layer turned it off. Any other run leaves them as they are, set or not,
     and what the record holds of them, even where the home's mapping now
     gives the role another effort (R6.1): the file is tracked, and one
     user's mapping is not the project's. A note says so.
@@ -1639,10 +1639,11 @@ def fill_entry(run: Run) -> None:
         run.fail(*exc.lines)
         return
     if project is not None and not run.errors:
-        # No role is made for the project by this run (roles off in the home,
-        # none of the project's own): the keys name a role that is gone, and
-        # go with it, as with a run that changed the project's choices.
-        gone = not (on or own)
+        # No session starts as a role in the project by this run (no role is
+        # made for it, or the effective manager default is off, whichever
+        # settings layer turned it off): the keys name nothing that starts,
+        # and go, as with a run that changed the project's choices.
+        gone = not run.project_facts.get("manager_default")
         if not run.project_changed and not gone:
             _keys_left(run, project)
         # The effort first: it was set after the role, and the last member
@@ -1897,19 +1898,15 @@ def _keys_left(run: Run, project: Path) -> None:
     """A run that did not change the project's choices leaves the keys
     ``agent`` and ``effortLevel`` of ``.claude/settings.json`` as they are,
     set or not, with their record entries (R6.1): the file is tracked, and
-    the home's mapping of one user is not the project's. Not called where no
-    role is made for the project: the keys then go. One note, where the
-    project's default would set them or the record holds one."""
+    the home's mapping of one user is not the project's. Called only where
+    roles are on and the manager default is on: where either is off, the keys
+    go. One note."""
     if not any(provider.name == definitions.CLAUDE_CODE for provider in _entry_providers(run)):
-        return
-    key = run.roots.key(project / entry.CLAUDE_SETTINGS)
-    held = [name for name in (entry.AGENT_KEY, entry.EFFORT_KEY) if run._recorded(key, "json", "keys", name)]
-    if not (held or run.project_facts.get("manager_default")):
         return
     run.notes.append(
         f"{entry.CLAUDE_SETTINGS}: {entry.AGENT_KEY} and {entry.EFFORT_KEY} are left as they are, and so is what "
         f"the record holds of them: this run did not write {_locations(run, project).project_file}, and only a run that "
-        f"writes it, or one given --manager-default or --no-manager-default, sets, changes or removes them"
+        f"writes it, or one given --manager-default or --no-manager-default, sets, changes or removes them, and so does one where the roles or roles.manager_default are off"
     )
 
 
@@ -2056,7 +2053,7 @@ def execute(found: homes.Homes, sources: Sources, options: Any = None, *, dry_ru
     ``project_changed`` says whether this run changed the project's choices
     (wrote its ``.agents/workflow.toml``); while it is false the project's
     ``agent`` and ``effortLevel`` keys are left as they are (R6.1), unless no
-    role is made for the project (``fill_entry``)."""
+    role is made for the project or its manager default is off (``fill_entry``)."""
     recovered: fileops.Result | None = None
     before = _bytes_of(found.project / entry.CLAUDE_SETTINGS) if found.project is not None else None
     if not dry_run:

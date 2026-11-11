@@ -255,7 +255,8 @@ workflow.toml and workflow.local.toml over the user's):
       workflow.toml, as a flag that changes a value of it does, or one given
       --manager-default or --no-manager-default, or by a run that makes no
       role for the project (`roles` in neither the home's nor the project's
-      install), which takes out what setup set. Any other
+      install) or where the effective roles.manager_default is off, whichever
+      file turned it off, which takes out what setup set. Any other
       run, a refresh, leaves them as they are, set or not, with what the
       install record holds of them, even where the home's mapping now gives
       the role another effort, and a note says so: .claude/settings.json is
@@ -324,7 +325,9 @@ of .claude/settings.json go only with a run that writes
 DIR/.agents/workflow.toml, or one given --manager-default or
 --no-manager-default (even where the file already holds that value), or
 one that makes no role for the project (`roles` in neither the home's nor the
-project's install), which takes out what setup set; any other run leaves them.
+project's install) or where the effective roles.manager_default is off,
+whichever file turned it off, which takes out what setup set; any other run
+leaves them.
 
 The roles are an item of `install`. They are on when the home's effective
 `install` (~/.agents/workflow.toml over the shipped one) holds `roles`. When
@@ -342,7 +345,8 @@ what setup wrote there until a run with that DIR takes out what setup would
 no longer make: the project's own roles, or the starting role of
 roles.manager_default and the definitions that name a role the home no
 longer has; the starting role's keys in .claude/settings.json,
-until a run with that DIR writes its .agents/workflow.toml or is given
+until a run with that DIR makes no role for the project, finds
+roles.manager_default off, writes its .agents/workflow.toml or is given
 --manager-default or --no-manager-default.
 
 A provider that is installed and has no dictionary in the clone, or a
