@@ -183,9 +183,10 @@ for the Claude Code home, then for the project:
 ```bash
 #!/bin/bash
 set -e
+REPO='<repo name>'     # this environment's repository, checked out at /home/user/$REPO
 [ -d ~/.local/share/ai-skills ] || git clone https://github.com/yzaremba/ai-skills.git ~/.local/share/ai-skills
 python3 ~/.local/share/ai-skills/tools/setup/setup.py --yes --provider claude-code
-python3 ~/.local/share/ai-skills/tools/setup/setup.py --yes /home/user/<repo name>
+python3 ~/.local/share/ai-skills/tools/setup/setup.py --yes "/home/user/$REPO"
 ```
 
 The clone is not at `~/ai-skills` because a cloud session keeps its repository at
@@ -195,23 +196,49 @@ project's `install` adds to the home's is missing. A project committed with `"ag
 `.claude/settings.json` starts a fresh session as the Manager.
 
 A project whose sprint docs live in a private sibling repository (see above) runs its
-sprints in the cloud too, when the session's own credentials can also read the sibling.
-The script does not authenticate. Add this to the script, after the lines above:
+sprints in the cloud too. Add the sibling to the environment beside the project, and tick
+both repositories in the session's settings before its first message: only a ticked
+repository is checked out. The setup script cannot clone a private repository itself, as it
+has no credentials. Use this script in place of the one above; it finds where each
+repository was checked out:
 
 ```bash
-[ -d /home/user/<planning repo> ] || git clone https://github.com/<owner>/<planning repo>.git /home/user/<planning repo>
-cd /home/user/<repo name>
+#!/bin/bash
+set -e
+REPO='<repo name>'           # the environment's project repository
+PLANNING='<planning repo>'   # its private planning sibling, attached to the environment too
+
+# Where an attached repository was checked out: /home/user/<name>, or one level below.
+where() {
+  for d in "/home/user/$1" /home/user/*/"$1"; do
+    if [ -e "$d/.git" ]; then echo "$d"; return; fi
+  done
+}
+PROJ=$(where "$REPO")
+PLAN=$(where "$PLANNING")
+echo "project: ${PROJ:-not found}; planning: ${PLAN:-not found}; /home/user has: $(ls /home/user | tr '\n' ' ')"
+[ -n "$PROJ" ]
+
+[ -d ~/.local/share/ai-skills ] || git clone https://github.com/yzaremba/ai-skills.git ~/.local/share/ai-skills
+python3 ~/.local/share/ai-skills/tools/setup/setup.py --yes --provider claude-code
+python3 ~/.local/share/ai-skills/tools/setup/setup.py --yes "$PROJ"
+
+[ -n "$PLAN" ] || { echo "planning repository not found: sprint docs not linked" >&2; exit 0; }
+cd "$PROJ"
 mkdir -p .agents .claude docs/memory .git/info
-printf '[process]\ndocs_dir = "../<planning repo>/docs"\n' > .agents/workflow.local.toml
-printf '{"permissions": {"additionalDirectories": ["/home/user/<planning repo>"]}}\n' > .claude/settings.local.json
-ln -sfn ../../../<planning repo>/memory docs/memory/local
+printf '[process]\ndocs_dir = "%s/docs"\n' "$(realpath --relative-to=. "$PLAN")" > .agents/workflow.local.toml
+printf '{"permissions": {"additionalDirectories": ["%s"]}}\n' "$PLAN" > .claude/settings.local.json
+ln -sfn "$(realpath --relative-to=docs/memory "$PLAN/memory")" docs/memory/local
 for p in /.agents/workflow.local.toml /.claude/settings.local.json /docs/memory/local; do
   grep -qxF "$p" .git/info/exclude 2>/dev/null || echo "$p" >> .git/info/exclude
 done
 ```
 
-The last lines keep the three out of `git status`; a cloud session may not ignore
-them.
+The line it prints in the setup log says where each repository was found. Without the
+sibling the session still starts, with no sprint docs; without the project the setup fails.
+The last lines keep the three local files out of `git status`; a cloud session may not
+ignore them. The session pushes to its own `claude/...` branch in each repository, not to
+`main`: merge the sibling's branch as you would the project's.
 
 ### `multiagent-collab` for Codex and Claude
 
